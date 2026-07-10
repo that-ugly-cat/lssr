@@ -406,6 +406,33 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
 .pipeline-step .pipeline-desc { font-size: 12px; color: var(--muted-2); }
 .pipeline-step:hover .pipeline-num { background: var(--primary-hover); }
 
+/* ── screening progress bar ── */
+.screen-progress {
+  display: flex;
+  height: 14px;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--border);
+}
+.screen-progress .seg { height: 100%; }
+.screen-progress .seg-inc { background: var(--ok); }
+.screen-progress .seg-exc { background: var(--danger); }
+.screen-progress .seg-pend { background: var(--muted-3); }
+.screen-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+.screen-legend .dot {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  vertical-align: -1px; margin-right: 4px;
+}
+.screen-legend .dot-inc { background: var(--ok); }
+.screen-legend .dot-exc { background: var(--danger); }
+.screen-legend .dot-pend { background: var(--muted-3); }
+
 /* ── abstract toggle (records) ── */
 .abstract-toggle { margin-top: 4px; }
 .abstract-toggle > summary { cursor: pointer; list-style: none; }

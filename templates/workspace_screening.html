@@ -3,10 +3,20 @@
 {% block body %}
 {% include "_ws_tabs.html" %}
 
-<div class="stat-grid">
-  <div class="stat-card"><div class="stat-num">{{ counts.pending }}</div><div class="stat-label">Pending</div></div>
-  <div class="stat-card"><div class="stat-num">{{ counts.include }}</div><div class="stat-label">Included</div></div>
-  <div class="stat-card"><div class="stat-num">{{ counts.exclude }}</div><div class="stat-label">Excluded</div></div>
+<div class="card">
+  <div class="screen-progress" title="{{ counts.include }} included · {{ counts.exclude }} excluded · {{ counts.pending }} pending">
+    {% if counts.total > 0 %}
+    {% if counts.include %}<div class="seg seg-inc" style="width: {{ (counts.include / counts.total * 100)|round(2) }}%"></div>{% endif %}
+    {% if counts.exclude %}<div class="seg seg-exc" style="width: {{ (counts.exclude / counts.total * 100)|round(2) }}%"></div>{% endif %}
+    {% if counts.pending %}<div class="seg seg-pend" style="width: {{ (counts.pending / counts.total * 100)|round(2) }}%"></div>{% endif %}
+    {% endif %}
+  </div>
+  <div class="screen-legend">
+    <span><span class="dot dot-inc"></span> ✅ {{ counts.include }} included</span>
+    <span><span class="dot dot-exc"></span> ❌ {{ counts.exclude }} excluded</span>
+    <span><span class="dot dot-pend"></span> ❓ {{ counts.pending }} to do</span>
+    <span class="muted">of {{ counts.total }}</span>
+  </div>
 </div>
 
 <div class="cards-label">Step 5 — Screening 1 (title + abstract)</div>
@@ -49,23 +59,56 @@
   <div id="ft-status" class="flash" style="display:none;"></div>
 </div>
 
+{% set f = filters %}
+{% macro sorth(field, label) %}
+  {%- set no = 'asc' if (f.sort == field and f.order == 'desc') else 'desc' -%}
+  <a class="th-sort" href="?decision={{ f.decision }}&q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f.rtype }}&yf={{ f.yf }}&yt={{ f.yt }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
+{%- endmacro %}
+
 <div class="cards-label">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
+    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude'] else 'muted' }}">all</a>
     {% for d in ['pending','include','exclude'] %}
     · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }}</a>
     {% endfor %}
   </span>
 </div>
 <p class="muted small" style="margin-top:0;">✅ include · ❌ exclude · ❓ pending — set your own with the buttons on the right (a manual decision is locked from the model).</p>
+
+<form method="get" class="filter-bar">
+  <input type="hidden" name="decision" value="{{ f.decision }}">
+  <input type="hidden" name="sort" value="{{ f.sort }}">
+  <input type="hidden" name="order" value="{{ f.order }}">
+  <input type="text" name="q" value="{{ f.q }}" placeholder="Search title / author / abstract" style="max-width:260px;">
+  <select name="source">
+    <option value="">any DB</option>
+    {% for d in dbs_present %}<option value="{{ d }}" {{ 'selected' if f.source == d else '' }}>{{ d }}</option>{% endfor %}
+  </select>
+  <select name="rtype">
+    <option value="">any type</option>
+    {% for t, lbl in [('article','article'),('book','book'),('book_chapter','book chapter'),('grey','grey lit')] %}
+    <option value="{{ t }}" {{ 'selected' if f.rtype == t else '' }}>{{ lbl }}</option>{% endfor %}
+  </select>
+  <input type="number" name="yf" value="{{ f.yf }}" placeholder="year ≥" style="max-width:100px;">
+  <input type="number" name="yt" value="{{ f.yt }}" placeholder="year ≤" style="max-width:100px;">
+  <button class="btn btn-small" type="submit">Filter</button>
+  <a class="btn btn-small" href="/w/{{ ws.id }}/screening?decision={{ f.decision }}">Clear</a>
+</form>
+
 <table class="table">
-  <thead><tr><th>Title</th><th>Screen 1</th><th>Full text</th><th>Set manually</th></tr></thead>
+  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Screen 1</th><th>Full text</th><th>Set manually</th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr>
+      <td class="nowrap">{{ r.year or '—' }}</td>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
-        <div class="muted small">{{ r.year or '' }}{% if r.authors %} · {{ r.authors }}{% endif %}</div>
+        {% if r.type and r.type != 'article' %}<span class="badge badge-muted">{{ r.type.replace('_',' ') }}</span>{% endif %}
+        <div class="muted small">{{ r.authors or '' }}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% endif %}</div>
+        {% if r.abstract %}
+        <details class="abstract-toggle"><summary class="muted small">abstract</summary><div class="small" style="margin-top:4px; max-width:75ch;">{{ r.abstract }}</div></details>
+        {% else %}<div class="muted small" style="font-style:italic;">no abstract</div>{% endif %}
         {% if r.screen1_reason %}<div class="muted small rationale">{{ r.screen1_reason }}</div>{% endif %}
       </td>
       <td class="nowrap">
@@ -101,10 +144,11 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="4" class="muted">No records with this decision.</td></tr>
+    <tr><td colspan="5" class="muted">No records match.</td></tr>
     {% endfor %}
   </tbody>
 </table>
+{% if records|length >= 500 %}<p class="muted small">Showing first 500 — narrow the filter to see more.</p>{% endif %}
 {% endblock %}
 
 {% block scripts %}

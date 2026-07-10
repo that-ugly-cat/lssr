@@ -83,6 +83,33 @@ def _user_api_key(user: User) -> str | None:
     return os.environ.get("ANTHROPIC_API_KEY")
 
 
+def _apply_record_filters(query, q: str, source: str, rtype: str, yf: str, yt: str,
+                          sort: str, order: str):
+    """Shared filter + sort for the Records and Screening tables."""
+    from sqlalchemy import or_
+    if q.strip():
+        like = f"%{q.strip()}%"
+        query = query.filter(or_(Record.title.ilike(like), Record.authors.ilike(like),
+                                 Record.abstract.ilike(like)))
+    if source:
+        query = query.filter(Record.source_dbs_json.like(f'%"{source}"%'))
+    if rtype:
+        query = query.filter(Record.type == rtype)
+    if yf.isdigit():
+        query = query.filter(Record.year >= int(yf))
+    if yt.isdigit():
+        query = query.filter(Record.year <= int(yt))
+    col = {"year": Record.year, "title": Record.title, "id": Record.id}.get(sort, Record.year)
+    direction = (col.desc() if order == "desc" else col.asc()).nullslast()
+    return query.order_by(direction, Record.id.desc())
+
+
+def _dbs_present(db, ws_id: int) -> list:
+    return sorted({d for (raw,) in
+                   db.query(Record.source_dbs_json).filter(Record.workspace_id == ws_id).all()
+                   for d in _fromjson(raw)})
+
+
 # ── Auth ────────────────────────────────────────────────────────────────────
 
 @app.get("/login", response_class=HTMLResponse)
@@ -328,25 +355,10 @@ async def records_page(ws_id: int, request: Request, show: str = "active",
                        yf: str = "", yt: str = "", sort: str = "year", order: str = "desc",
                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
-    from sqlalchemy import or_
     query = db.query(Record).filter(Record.workspace_id == ws.id,
                                     Record.is_removed == (show == "removed"))
-    if q.strip():
-        like = f"%{q.strip()}%"
-        query = query.filter(or_(Record.title.ilike(like), Record.authors.ilike(like),
-                                 Record.abstract.ilike(like)))
-    if source:
-        query = query.filter(Record.source_dbs_json.like(f'%"{source}"%'))
-    if rtype:
-        query = query.filter(Record.type == rtype)
-    if yf.isdigit():
-        query = query.filter(Record.year >= int(yf))
-    if yt.isdigit():
-        query = query.filter(Record.year <= int(yt))
-
-    col = {"year": Record.year, "title": Record.title, "id": Record.id}.get(sort, Record.year)
-    direction = (col.desc() if order == "desc" else col.asc()).nullslast()
-    records = query.order_by(direction, Record.id.desc()).limit(500).all()
+    query = _apply_record_filters(query, q, source, rtype, yf, yt, sort, order)
+    records = query.limit(500).all()
 
     active_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                        Record.is_removed == False).count()  # noqa: E712
@@ -354,9 +366,7 @@ async def records_page(ws_id: int, request: Request, show: str = "active",
                                         Record.is_removed == True).count()  # noqa: E712
     imports = db.query(Import).filter(Import.workspace_id == ws.id).order_by(
         Import.created_at.desc()).limit(10).all()
-    dbs_present = sorted({d for (raw,) in
-                          db.query(Record.source_dbs_json).filter(Record.workspace_id == ws.id).all()
-                          for d in _fromjson(raw)})
+    dbs_present = _dbs_present(db, ws.id)
     return render(request, "workspace_records.html", {
         "user": user, "ws": ws, "tab": "records", "records": records,
         "active_n": active_n, "removed_n": removed_n, "show": show,
@@ -540,6 +550,8 @@ async def delete_criterion(ws_id: int, cid: int, user: User = Depends(get_curren
 
 @app.get("/w/{ws_id}/screening", response_class=HTMLResponse)
 async def screening_page(ws_id: int, request: Request, decision: str = "pending",
+                         q: str = "", source: str = "", rtype: str = "",
+                         yf: str = "", yt: str = "", sort: str = "year", order: str = "desc",
                          user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
 
@@ -548,6 +560,7 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
                                        Record.is_removed == False,  # noqa: E712
                                        Record.screen1_decision == d).count()
     counts = {d: _count(d) for d in ("pending", "include", "exclude")}
+    counts["total"] = counts["pending"] + counts["include"] + counts["exclude"]
     # records the model may (re-)screen: everything not decided by a human
     model_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                       Record.is_removed == False,   # noqa: E712
@@ -555,10 +568,11 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     manual_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                        Record.is_removed == False,  # noqa: E712
                                        Record.screen1_by == "user").count()
-    q = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False)  # noqa: E712
+    tq = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False)  # noqa: E712
     if decision in ("pending", "include", "exclude"):
-        q = q.filter(Record.screen1_decision == decision)
-    records = q.order_by(Record.id.desc()).limit(300).all()
+        tq = tq.filter(Record.screen1_decision == decision)
+    tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
+    records = tq.limit(500).all()
 
     # cost estimate for the screening buttons
     import screening
@@ -585,6 +599,9 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         "model_n": model_n, "manual_n": manual_n, "model": model,
         "est_pending": est_pending, "est_rerun": est_rerun,
         "records": records, "decision": decision,
+        "dbs_present": _dbs_present(db, ws.id),
+        "filters": {"decision": decision, "q": q, "source": source, "rtype": rtype,
+                    "yf": yf, "yt": yt, "sort": sort, "order": order},
         "n_exclusion": len(workspace_criteria(db, ws, "exclusion")),
         "has_key": bool(_user_api_key(user)),
     })
