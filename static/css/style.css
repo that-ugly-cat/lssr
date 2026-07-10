@@ -376,8 +376,37 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
   border-radius: 6px; transition: width 0.3s ease;
 }
 
+/* ── pipeline steps (workspace overview) ── */
+.pipeline-steps {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.pipeline-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  text-align: left;
+}
+.pipeline-step .pipeline-num {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+.pipeline-step .pipeline-label { font-size: 14px; }
+.pipeline-step:hover .pipeline-num { background: var(--primary-hover); }
+
 @media (max-width: 640px) {
   .topbar { padding: 0 12px; }
   .topbar nav { gap: 10px; }
   .page-head { flex-wrap: wrap; }
+  .pipeline-steps { grid-template-columns: 1fr; }
 }

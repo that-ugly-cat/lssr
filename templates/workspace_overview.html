@@ -7,21 +7,27 @@
 
 <div class="cards-label">Pipeline</div>
 <div class="card">
-  <p class="muted small" style="margin-top:0;">
-    Built in phases (see <code>SPEC.md</code>). Steps 1–4 are live.
-  </p>
-  <ol style="line-height:2; padding-left:1.2em;">
-    <li><a href="/w/{{ ws.id }}/query">Query &amp; refinement (PubMed)</a> <span class="badge badge-ok">live</span></li>
-    <li><a href="/w/{{ ws.id }}/query">Query translation (Scopus / WoS / …)</a> <span class="badge badge-ok">live</span></li>
-    <li><a href="/w/{{ ws.id }}/records">Run &amp; import results (BibTeX / RIS)</a> <span class="badge badge-ok">live</span></li>
-    <li><a href="/w/{{ ws.id }}/records">Deduplication</a> <span class="badge badge-ok">live</span></li>
-    <li>Screening 1 — title + abstract <span class="badge badge-muted">Fase 2</span></li>
-    <li>Full-text download <span class="badge badge-muted">Fase 2</span></li>
-    <li>paper2md conversion <span class="badge badge-muted">Fase 2</span></li>
-    <li>Screening 2 — full text <span class="badge badge-muted">Fase 2</span></li>
-    <li>Assessment <span class="badge badge-muted">Fase 3</span></li>
-    <li>Synthesis &amp; public page <span class="badge badge-muted">Fase 3</span></li>
-  </ol>
+  <p class="muted small" style="margin-top:0;">All ten steps are live. Jump to any stage:</p>
+  {% set steps = [
+    (1, 'Query &amp; refinement (PubMed)', 'query'),
+    (2, 'Query translation (Scopus / WoS / …)', 'query'),
+    (3, 'Run &amp; import results (BibTeX / RIS)', 'records'),
+    (4, 'Deduplication', 'records'),
+    (5, 'Screening 1 — title + abstract', 'screening'),
+    (6, 'Full-text download', 'screening'),
+    (7, 'paper2md conversion', 'screening'),
+    (8, 'Screening 2 — full text', 'assessment'),
+    (9, 'Assessment', 'assessment'),
+    (10, 'Synthesis &amp; public page', 'synthesis')
+  ] %}
+  <div class="pipeline-steps">
+    {% for n, label, tab in steps %}
+    <a class="btn pipeline-step" href="/w/{{ ws.id }}/{{ tab if tab != 'overview' else '' }}">
+      <span class="pipeline-num">{{ n }}</span>
+      <span class="pipeline-label">{{ label }}</span>
+    </a>
+    {% endfor %}
+  </div>
 </div>
 
 <div class="cards-label">Iterations (living review)</div>
