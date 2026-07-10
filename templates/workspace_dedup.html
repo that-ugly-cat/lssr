@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Deduplicate — {{ ws.name }}{% endblock %}
+{% block body %}
+{% include "_ws_tabs.html" %}
+
+<div class="page-head">
+  <div class="cards-label" style="margin:0;">Deduplication review</div>
+  <a class="btn btn-small" href="/w/{{ ws.id }}/records">← Back to records</a>
+</div>
+
+{% if merged >= 0 %}
+<div class="flash flash-ok" style="display:block;">
+  Auto-merged {{ merged }} certain duplicate{{ '' if merged == 1 else 's' }}
+  (same DOI, URL, or identical title + author + year).
+</div>
+{% endif %}
+
+{% if clusters %}
+<p class="muted small">
+  {{ clusters|length }} uncertain cluster{{ '' if clusters|length == 1 else 's' }} — same or near-identical
+  titles that aren't a certain match. Pick the version to keep and merge, or mark them as distinct.
+</p>
+{% for c in clusters %}
+<div class="card">
+  <form method="post" action="/w/{{ ws.id }}/records/dedup/merge">
+    <input type="hidden" name="ids" value="{{ c.ids }}">
+    {% for r in c.records %}
+    <label class="check-row" style="align-items:flex-start;">
+      <input type="radio" name="survivor" value="{{ r.id }}" {{ 'checked' if r.id == c.survivor_id else '' }}>
+      <span>
+        <strong>{{ r.title or '(untitled)' }}</strong>
+        {% if r.id == c.survivor_id %}<span class="badge badge-ok">most complete</span>{% endif %}
+        <div class="muted small">
+          {{ r.year or 'n.d.' }}{% if r.authors %} · {{ r.authors }}{% endif %}
+          {% if r.doi %} · doi:{{ r.doi }}{% endif %}
+          {% if r.abstract %} · abstract{% endif %}
+          {% for db in (r.source_dbs_json or '[]')|fromjson %} · {{ db }}{% endfor %}
+        </div>
+      </span>
+    </label>
+    {% endfor %}
+    <div style="margin-top:10px; display:flex; gap:8px;">
+      <button class="btn btn-primary btn-small" type="submit">Merge into selected</button>
+      <button class="btn btn-small" type="submit"
+              formaction="/w/{{ ws.id }}/records/dedup/keep">Keep as distinct</button>
+    </div>
+  </form>
+</div>
+{% endfor %}
+{% else %}
+<div class="card"><p class="muted" style="margin:0;">No uncertain duplicates. The pool is clean.</p></div>
+{% endif %}
+{% endblock %}

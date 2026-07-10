@@ -38,6 +38,16 @@ def _md(text: str) -> str:
 
 templates.env.filters["markdown"] = _md
 
+
+def _fromjson(raw):
+    try:
+        return json.loads(raw) if raw else []
+    except (ValueError, TypeError):
+        return []
+
+
+templates.env.filters["fromjson"] = _fromjson
+
 init_db()
 
 
@@ -397,6 +407,61 @@ async def restore_record(ws_id: int, rid: int, user: User = Depends(get_current_
         rec.removed_reason = None
         db.commit()
     return RedirectResponse(f"/w/{ws_id}/records?show=removed", status_code=302)
+
+
+# ── Manual dedup pass (step 4, on demand) ───────────────────────────────────
+
+@app.post("/w/{ws_id}/records/dedup/run")
+async def dedup_run(ws_id: int, user: User = Depends(get_current_user),
+                    db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    import dedup
+    merged = dedup.auto_dedup(db, ws.id)
+    return RedirectResponse(f"/w/{ws_id}/records/dedup?merged={merged}", status_code=302)
+
+
+@app.get("/w/{ws_id}/records/dedup", response_class=HTMLResponse)
+async def dedup_page(ws_id: int, request: Request, merged: int = -1,
+                     user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    import dedup
+    from ingest import _record_as_ref, completeness
+    raw = dedup.uncertain_clusters(db, ws.id)
+    clusters = []
+    for c in raw:
+        best = max(c, key=lambda r: (completeness(_record_as_ref(r)), -r.id))
+        clusters.append({"records": c, "survivor_id": best.id,
+                         "ids": ",".join(str(r.id) for r in c)})
+    return render(request, "workspace_dedup.html", {
+        "user": user, "ws": ws, "tab": "records", "clusters": clusters, "merged": merged,
+    })
+
+
+@app.post("/w/{ws_id}/records/dedup/merge")
+async def dedup_merge(ws_id: int, survivor: int = Form(...), ids: str = Form(...),
+                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+    recs = db.query(Record).filter(Record.id.in_(id_list), Record.workspace_id == ws.id,
+                                   Record.is_removed == False).all()  # noqa: E712
+    survivor_rec = next((r for r in recs if r.id == survivor), None)
+    if survivor_rec:
+        import dedup
+        for r in recs:
+            if r.id != survivor_rec.id:
+                dedup.merge_records(db, survivor_rec, r)
+        db.commit()
+    return RedirectResponse(f"/w/{ws_id}/records/dedup", status_code=302)
+
+
+@app.post("/w/{ws_id}/records/dedup/keep")
+async def dedup_keep(ws_id: int, ids: str = Form(...),
+                     user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+    import dedup
+    dedup.dismiss_cluster(db, ws.id, id_list)
+    return RedirectResponse(f"/w/{ws_id}/records/dedup", status_code=302)
 
 
 # ── Settings: criteria & model (steps 5, 8, 9) ──────────────────────────────

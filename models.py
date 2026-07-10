@@ -157,6 +157,16 @@ class Import(Base):
     workspace = relationship("Workspace")
 
 
+class DedupDismissal(Base):
+    """Remembers record pairs the user marked 'not duplicates' during a manual
+    dedup pass, so the uncertain-cluster scan won't surface them again."""
+    __tablename__ = "dedup_dismissals"
+    id           = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    pair_key     = Column(String, nullable=False)   # "min_id-max_id"
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+
 class RawReference(Base):
     """A single reference as parsed from a source, before dedup. Kept for
     provenance and to reconstruct 'keep the most complete' decisions."""

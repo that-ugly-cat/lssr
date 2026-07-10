@@ -35,37 +35,21 @@
   {% endif %}
 </div>
 
-<div class="cards-label">Add a record manually</div>
-<div class="card">
-  <form method="post" action="/w/{{ ws.id }}/records/add">
-    <label>Title <input type="text" name="title" required></label>
-    <div class="inline-form">
-      <label style="flex:2;">Authors <input type="text" name="authors"></label>
-      <label style="flex:1;">Year <input type="text" name="year"></label>
-    </div>
-    <div class="inline-form">
-      <label style="flex:1;">DOI <input type="text" name="doi"></label>
-      <label style="flex:1;">Source <input type="text" name="source"></label>
-      <label style="flex:1;">Type
-        <select name="type">
-          <option value="article">Article</option>
-          <option value="book">Book</option>
-          <option value="book_chapter">Book chapter</option>
-          <option value="grey">Grey literature</option>
-        </select>
-      </label>
-    </div>
-    <label>Abstract <textarea name="abstract" rows="2"></textarea></label>
-    <button class="btn btn-small" type="submit">Add record</button>
-  </form>
-</div>
-
-<div class="cards-label">
-  Pool
-  <span style="font-weight:400; text-transform:none; letter-spacing:0;">
-    · <a href="/w/{{ ws.id }}/records?show=active" class="{{ '' if show=='removed' else 'muted' }}">Active</a>
-    · <a href="/w/{{ ws.id }}/records?show=removed" class="{{ 'muted' if show!='removed' else '' }}">Removed</a>
-  </span>
+<div class="page-head" style="margin-top:6px;">
+  <div class="cards-label" style="margin:0;">
+    Pool
+    <span style="font-weight:400; text-transform:none; letter-spacing:0;">
+      · <a href="/w/{{ ws.id }}/records?show=active" class="{{ '' if show=='removed' else 'muted' }}">Active</a>
+      · <a href="/w/{{ ws.id }}/records?show=removed" class="{{ 'muted' if show!='removed' else '' }}">Removed</a>
+    </span>
+  </div>
+  <div style="display:flex; gap:8px;">
+    <form method="post" action="/w/{{ ws.id }}/records/dedup/run">
+      <button class="btn btn-small" type="submit">Deduplicate</button>
+    </form>
+    <button class="btn btn-small" type="button"
+            onclick="document.getElementById('add-rec').classList.add('open')">Add record</button>
+  </div>
 </div>
 <table class="table">
   <thead><tr><th>Year</th><th>Title</th><th>Source</th><th>DBs</th><th></th></tr></thead>
@@ -99,4 +83,34 @@
   </tbody>
 </table>
 {% if records|length >= 500 %}<p class="muted small">Showing first 500.</p>{% endif %}
+
+<div class="overlay" id="add-rec">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Add a record</div>
+      <button class="modal-close" type="button" onclick="document.getElementById('add-rec').classList.remove('open')">&times;</button>
+    </div>
+    <form method="post" action="/w/{{ ws.id }}/records/add">
+      <label>Title <input type="text" name="title" required></label>
+      <div class="inline-form">
+        <label style="flex:2;">Authors <input type="text" name="authors"></label>
+        <label style="flex:1;">Year <input type="text" name="year"></label>
+      </div>
+      <div class="inline-form">
+        <label style="flex:1;">DOI <input type="text" name="doi"></label>
+        <label style="flex:1;">Source <input type="text" name="source"></label>
+        <label style="flex:1;">Type
+          <select name="type">
+            <option value="article">Article</option>
+            <option value="book">Book</option>
+            <option value="book_chapter">Book chapter</option>
+            <option value="grey">Grey literature</option>
+          </select>
+        </label>
+      </div>
+      <label>Abstract <textarea name="abstract" rows="2"></textarea></label>
+      <button class="btn btn-primary" type="submit" style="margin-top:12px;">Add record</button>
+    </form>
+  </div>
+</div>
 {% endblock %}
