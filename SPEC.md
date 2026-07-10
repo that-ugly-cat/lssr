@@ -225,10 +225,15 @@ pubblica può mostrare "ultimo aggiornamento: …" e l'evoluzione dei conteggi.
   dedup incrementale (DOI + fuzzy, tiene il più completo), add/remove manuale,
   chiave Anthropic per-utente. Moduli: `pubmed.py`, `ingest.py`, `translate.py`,
   `crypto.py`.
-- **Fase 2 — Screening** (passi 5–8): screening 1, download full text, paper2md,
-  screening 2.
-- **Fase 3 — Assessment & sintesi** (passi 9–10): assessment, sintesi narrativa,
-  pagina pubblica + PRISMA.
+- **Fase 2 — Screening 1 & full text** (passi 5–7) *(fatta)*: criteri di
+  workspace (exclusion/inclusion/assessment), screening 1 su titolo+abstract
+  (job LLM parallelo, cost log, decisioni sticky), download full text via
+  Unpaywall + conversione paper2md, upload manuale PDF. Moduli: `screening.py`,
+  `fulltext.py`. Screening 2 (passo 8) accorpato alla Fase 3 con l'assessment
+  (decisione 8+9 integrati).
+- **Fase 3 — Screening 2 + assessment & sintesi** (passi 8–10): chiamata unica
+  condizionale sul full text (inclusione + assessment per criterio), sintesi
+  narrativa, pagina pubblica + PRISMA.
 - **Fase 4 — Living**: iterazioni, decisioni sticky, refresh on demand.
 - **Fase 5 — Automazione DB** (opzionale): API Scopus/WoS per il passo 3.
 
