@@ -267,6 +267,51 @@ class UserCostLog(Base):
     recorded_at   = Column(DateTime, default=datetime.utcnow)
 
 
+# ── Assessment (step 9) & synthesis (step 10) ──────────────────────────────────
+
+class Assessment(Base):
+    """One finding per (record, assessment criterion), produced by the combined
+    screening-2 + assessment call. Re-generated per iteration."""
+    __tablename__ = "assessments"
+    id           = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    record_id    = Column(Integer, ForeignKey("records.id"), nullable=False)
+    criterion_id = Column(Integer, ForeignKey("criteria.id"), nullable=False)
+    finding      = Column(Text, nullable=True)
+    citation     = Column(Text, nullable=True)   # quote / locator from the full text
+    model        = Column(String, nullable=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+    record    = relationship("Record")
+    criterion = relationship("Criterion")
+
+
+class Synthesis(Base):
+    """The public deliverable (step 10): one per workspace, regenerated on demand.
+    Visible at /r/{token} only when published."""
+    __tablename__ = "syntheses"
+    id           = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False, unique=True)
+    prisma_json  = Column(Text, nullable=True)
+    published    = Column(Boolean, default=False)
+    generated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    blocks = relationship("SynthesisBlock", back_populates="synthesis",
+                          cascade="all, delete-orphan")
+
+
+class SynthesisBlock(Base):
+    __tablename__ = "synthesis_blocks"
+    id           = Column(Integer, primary_key=True)
+    synthesis_id = Column(Integer, ForeignKey("syntheses.id"), nullable=False)
+    criterion_id = Column(Integer, ForeignKey("criteria.id"), nullable=True)
+    heading      = Column(String, nullable=True)
+    narrative    = Column(Text, nullable=True)
+    position     = Column(Integer, default=0)
+
+    synthesis = relationship("Synthesis", back_populates="blocks")
+
+
 # ── Init / helpers ────────────────────────────────────────────────────────────
 
 def init_db():

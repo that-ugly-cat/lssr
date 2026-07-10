@@ -29,6 +29,15 @@ app = FastAPI(title="LSSR")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
 
+
+def _md(text: str) -> str:
+    import markdown as _mdlib
+    from markupsafe import Markup
+    return Markup(_mdlib.markdown(text or "", extensions=["extra", "nl2br"]))
+
+
+templates.env.filters["markdown"] = _md
+
 init_db()
 
 
@@ -165,7 +174,14 @@ async def public_review(token: str, request: Request, db: Session = Depends(get_
                                          PublicShare.active == True).first()  # noqa: E712
     if not share:
         raise HTTPException(404, "Not found")
-    return render(request, "public_review.html", {"user": None, "ws": share.workspace})
+    from models import Synthesis
+    syn = db.query(Synthesis).filter(Synthesis.workspace_id == share.workspace_id,
+                                     Synthesis.published == True).first()  # noqa: E712
+    prisma = json.loads(syn.prisma_json) if (syn and syn.prisma_json) else None
+    blocks = sorted(syn.blocks, key=lambda b: b.position) if syn else []
+    return render(request, "public_review.html", {
+        "user": None, "ws": share.workspace, "syn": syn, "prisma": prisma, "blocks": blocks,
+    })
 
 
 # ── Profile (Anthropic API key) ─────────────────────────────────────────────
@@ -508,6 +524,108 @@ async def upload_fulltext(ws_id: int, rid: int, file: UploadFile = File(...),
     except Exception as exc:
         raise HTTPException(502, f"Conversion failed: {exc}")
     return RedirectResponse(f"/w/{ws_id}/screening?decision=include", status_code=302)
+
+
+# ── Assessment: combined screening 2 + assessment (steps 8-9) ───────────────
+
+@app.get("/w/{ws_id}/assessment", response_class=HTMLResponse)
+async def assessment_page(ws_id: int, request: Request, user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    from models import Assessment
+    records = (db.query(Record)
+                 .filter(Record.workspace_id == ws.id, Record.is_removed == False,  # noqa: E712
+                         Record.screen1_decision == "include").order_by(Record.id.desc()).all())
+    findings = {}
+    for a in db.query(Assessment).filter(Assessment.workspace_id == ws.id).all():
+        findings.setdefault(a.record_id, []).append(a)
+    ready = sum(1 for r in records if r.full_text_status == "converted"
+                and r.screen2_decision == "pending")
+    return render(request, "workspace_assessment.html", {
+        "user": user, "ws": ws, "tab": "assessment", "records": records,
+        "findings": findings, "ready": ready,
+        "n_assessment": len(workspace_criteria(db, ws, "assessment")),
+        "has_key": bool(_user_api_key(user)),
+    })
+
+
+@app.post("/w/{ws_id}/assessment/run")
+async def run_assessment(ws_id: int, user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    api_key = _user_api_key(user)
+    if not api_key:
+        raise HTTPException(400, "Set your Anthropic API key in your profile first")
+    import assessment
+    job = assessment.get_job(ws.id)
+    if job and job.get("status") == "running":
+        raise HTTPException(409, "Assessment already in progress")
+    assessment.start_assessment(ws.id, api_key, user.id)
+    return RedirectResponse(f"/w/{ws_id}/assessment", status_code=302)
+
+
+@app.get("/w/{ws_id}/assessment/status")
+async def assessment_status(ws_id: int, user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    _load_ws(db, user, ws_id)
+    import assessment
+    return JSONResponse(assessment.get_job(ws_id) or {"status": "idle"})
+
+
+# ── Synthesis (step 10) ─────────────────────────────────────────────────────
+
+@app.get("/w/{ws_id}/synthesis", response_class=HTMLResponse)
+async def synthesis_page(ws_id: int, request: Request, user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    from models import Synthesis
+    syn = db.query(Synthesis).filter(Synthesis.workspace_id == ws.id).first()
+    prisma = json.loads(syn.prisma_json) if (syn and syn.prisma_json) else None
+    blocks = sorted(syn.blocks, key=lambda b: b.position) if syn else []
+    shares = db.query(PublicShare).filter(PublicShare.workspace_id == ws.id,
+                                          PublicShare.active == True).all()  # noqa: E712
+    return render(request, "workspace_synthesis.html", {
+        "user": user, "ws": ws, "tab": "synthesis", "syn": syn, "prisma": prisma,
+        "blocks": blocks, "shares": shares, "has_key": bool(_user_api_key(user)),
+        "is_owner": ws.owner_id == user.id or user.is_admin,
+    })
+
+
+@app.post("/w/{ws_id}/synthesis/run")
+async def run_synthesis(ws_id: int, user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    api_key = _user_api_key(user)
+    if not api_key:
+        raise HTTPException(400, "Set your Anthropic API key in your profile first")
+    import synthesis
+    job = synthesis.get_job(ws.id)
+    if job and job.get("status") == "running":
+        raise HTTPException(409, "Synthesis already in progress")
+    synthesis.start_synthesis(ws.id, api_key, user.id)
+    return RedirectResponse(f"/w/{ws_id}/synthesis", status_code=302)
+
+
+@app.get("/w/{ws_id}/synthesis/status")
+async def synthesis_status(ws_id: int, user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    _load_ws(db, user, ws_id)
+    import synthesis
+    return JSONResponse(synthesis.get_job(ws_id) or {"status": "idle"})
+
+
+@app.post("/w/{ws_id}/synthesis/publish")
+async def toggle_publish(ws_id: int, user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    if not (ws.owner_id == user.id or user.is_admin):
+        raise HTTPException(403, "Owner required")
+    from models import Synthesis
+    syn = db.query(Synthesis).filter(Synthesis.workspace_id == ws.id).first()
+    if syn:
+        syn.published = not syn.published
+        db.commit()
+    return RedirectResponse(f"/w/{ws_id}/synthesis", status_code=302)
 
 
 @app.get("/health")

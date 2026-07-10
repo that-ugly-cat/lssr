@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Assessment — {{ ws.name }}{% endblock %}
+{% block body %}
+{% include "_ws_tabs.html" %}
+
+<div class="cards-label">Steps 8–9 — Screening 2 + assessment (full text)</div>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">
+    One conditional call per full text: inclusion decision, and — only if
+    included — a finding per assessment criterion. Excluded records cost no
+    assessment tokens.
+  </p>
+  {% if n_assessment == 0 %}
+  <div class="flash flash-error" style="display:block;">Define assessment criteria in <a href="/w/{{ ws.id }}/settings">Settings</a> first.</div>
+  {% elif not has_key %}
+  <div class="flash flash-error" style="display:block;">Set your Anthropic API key in <a href="/profile">your profile</a> first.</div>
+  {% endif %}
+  <form method="post" action="/w/{{ ws.id }}/assessment/run" id="as-form">
+    <button class="btn btn-primary" type="submit" id="as-btn"
+      {{ 'disabled' if (n_assessment == 0 or not has_key or ready == 0) else '' }}>
+      Run on {{ ready }} full texts
+    </button>
+    <span class="muted small">Only records included at screening 1 with converted full text, still pending.</span>
+  </form>
+  <div id="as-status" class="flash" style="display:none;"></div>
+</div>
+
+<table class="table">
+  <thead><tr><th>Title</th><th>Screen 2</th><th>Findings</th></tr></thead>
+  <tbody>
+    {% for r in records %}
+    <tr>
+      <td>
+        <strong>{{ r.title or '(untitled)' }}</strong>
+        <div class="muted small">{{ r.year or '' }}{% if r.authors %} · {{ r.authors }}{% endif %}</div>
+      </td>
+      <td class="nowrap">
+        {% if r.screen2_decision == 'include' %}<span class="badge badge-ok">include</span>
+        {% elif r.screen2_decision == 'exclude' %}<span class="badge" style="background:var(--danger-bg);color:var(--danger);">exclude</span>
+        {% elif r.full_text_status != 'converted' %}<span class="badge badge-muted">no full text</span>
+        {% else %}<span class="badge badge-muted">pending</span>{% endif %}
+        {% if r.screen2_reason %}<div class="muted small rationale">{{ r.screen2_reason }}</div>{% endif %}
+      </td>
+      <td class="small">
+        {% for a in findings.get(r.id, []) %}
+        <div style="margin-bottom:6px;">
+          <strong>{{ a.criterion.label if a.criterion else '?' }}:</strong> {{ a.finding }}
+          {% if a.citation %}<div class="muted" style="font-style:italic;">“{{ a.citation }}”</div>{% endif %}
+        </div>
+        {% else %}<span class="muted">—</span>{% endfor %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3" class="muted">No records included at screening 1 yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const asForm = document.getElementById('as-form');
+if (asForm) {
+  const box = document.getElementById('as-status'), btn = document.getElementById('as-btn');
+  async function poll() {
+    const j = await (await fetch('/w/{{ ws.id }}/assessment/status')).json();
+    if (j.status === 'idle') return;
+    box.style.display = 'block';
+    if (j.status === 'running') {
+      btn.disabled = true; box.className = 'flash';
+      box.textContent = (j.message || 'running') + (j.total ? ` (${j.done}/${j.total})` : '');
+      setTimeout(poll, 2000);
+    } else if (j.status === 'done') {
+      box.className = 'flash flash-ok'; box.textContent = j.message || 'Done.';
+      setTimeout(() => location.reload(), 1500);
+    } else if (j.status === 'error') {
+      box.className = 'flash flash-error'; box.textContent = 'Error: ' + (j.message || 'unknown');
+      btn.disabled = false;
+    }
+  }
+  asForm.addEventListener('submit', () => setTimeout(poll, 800));
+  poll();
+}
+</script>
+{% endblock %}

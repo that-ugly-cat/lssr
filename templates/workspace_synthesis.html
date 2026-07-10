@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Synthesis — {{ ws.name }}{% endblock %}
+{% block body %}
+{% include "_ws_tabs.html" %}
+
+<div class="cards-label">Step 10 — Synthesis</div>
+<div class="card">
+  {% if not has_key %}
+  <div class="flash flash-error" style="display:block;">Set your Anthropic API key in <a href="/profile">your profile</a> first.</div>
+  {% endif %}
+  <form method="post" action="/w/{{ ws.id }}/synthesis/run" id="sy-form" style="display:inline;">
+    <button class="btn btn-primary" type="submit" id="sy-btn" {{ 'disabled' if not has_key else '' }}>
+      {{ 'Regenerate synthesis' if syn else 'Generate synthesis' }}
+    </button>
+  </form>
+  {% if syn %}
+  <form method="post" action="/w/{{ ws.id }}/synthesis/publish" style="display:inline;">
+    <button class="btn" type="submit">{{ 'Unpublish' if syn.published else 'Publish' }}</button>
+  </form>
+  <span class="muted small">Generated {{ syn.generated_at.strftime('%Y-%m-%d %H:%M') }}
+    {% if syn.published %}· <span class="badge badge-ok">published</span>{% else %}· <span class="badge badge-muted">draft</span>{% endif %}</span>
+  {% endif %}
+  <div id="sy-status" class="flash" style="display:none;"></div>
+</div>
+
+{% if syn and syn.published and shares %}
+<div class="card">
+  <p class="muted small" style="margin:0;">Public link{{ 's' if shares|length > 1 else '' }}:
+    {% for s in shares %}<code>/r/{{ s.token }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+    (manage in <a href="/w/{{ ws.id }}">Overview</a>)</p>
+</div>
+{% elif syn and syn.published %}
+<div class="flash" style="display:block;">Published, but no public link yet — create one in <a href="/w/{{ ws.id }}">Overview</a>.</div>
+{% endif %}
+
+{% if prisma %}{% include "_prisma.html" %}{% endif %}
+
+{% for b in blocks %}
+<div class="cards-label">{{ b.heading }}</div>
+<div class="card">{{ b.narrative | markdown }}</div>
+{% else %}
+{% if syn %}<p class="muted">No synthesis blocks — add assessment criteria and run the assessment first.</p>{% endif %}
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const syForm = document.getElementById('sy-form');
+if (syForm) {
+  const box = document.getElementById('sy-status'), btn = document.getElementById('sy-btn');
+  async function poll() {
+    const j = await (await fetch('/w/{{ ws.id }}/synthesis/status')).json();
+    if (j.status === 'idle') return;
+    box.style.display = 'block';
+    if (j.status === 'running') {
+      btn.disabled = true; box.className = 'flash';
+      box.textContent = (j.message || 'running') + (j.total ? ` (${j.done}/${j.total})` : '');
+      setTimeout(poll, 2000);
+    } else if (j.status === 'done') {
+      box.className = 'flash flash-ok'; box.textContent = j.message || 'Done.';
+      setTimeout(() => location.reload(), 1200);
+    } else if (j.status === 'error') {
+      box.className = 'flash flash-error'; box.textContent = 'Error: ' + (j.message || 'unknown');
+      btn.disabled = false;
+    }
+  }
+  syForm.addEventListener('submit', () => setTimeout(poll, 800));
+  poll();
+}
+</script>
+{% endblock %}

@@ -3,10 +3,22 @@
 {% block body %}
 <h1>{{ ws.name }}</h1>
 {% if ws.research_question %}<p class="muted">{{ ws.research_question }}</p>{% endif %}
+
+{% if syn %}
+<p class="muted small">Living scoping review · last updated {{ syn.generated_at.strftime('%Y-%m-%d') }}</p>
+
+{% for b in blocks %}
+<div class="cards-label">{{ b.heading }}</div>
+<div class="card">{{ b.narrative | markdown }}</div>
+{% endfor %}
+
+{% if prisma %}{% include "_prisma.html" %}{% endif %}
+<p class="muted small" style="margin-top:20px;">Generated with LSSR — Living Systematic Scoping Review.</p>
+{% else %}
 <div class="card">
   <p class="muted" style="margin:0;">
-    The public synthesis (narrative findings per criterion + PRISMA diagram)
-    will appear here once this review is published. — LSSR
+    The synthesis for this review has not been published yet. — LSSR
   </p>
 </div>
+{% endif %}
 {% endblock %}

@@ -1,0 +1,16 @@
+<div class="card">
+  <h2>PRISMA flow</h2>
+  <table class="table">
+    <tbody>
+      <tr><td>Records identified (all databases)</td><td class="ta-right"><strong>{{ prisma.identified }}</strong></td></tr>
+      <tr><td>Duplicates removed</td><td class="ta-right">{{ prisma.duplicates_removed }}</td></tr>
+      <tr><td>Records screened (title + abstract)</td><td class="ta-right"><strong>{{ prisma.screened }}</strong></td></tr>
+      <tr><td>Excluded at screening 1</td><td class="ta-right">{{ prisma.excluded_screen1 }}</td></tr>
+      <tr><td>Full texts sought</td><td class="ta-right">{{ prisma.fulltext_sought }}</td></tr>
+      <tr><td>Full texts not retrieved</td><td class="ta-right">{{ prisma.fulltext_not_retrieved }}</td></tr>
+      <tr><td>Full texts assessed</td><td class="ta-right">{{ prisma.assessed }}</td></tr>
+      <tr><td>Excluded at screening 2</td><td class="ta-right">{{ prisma.excluded_screen2 }}</td></tr>
+      <tr><td><strong>Studies included in the review</strong></td><td class="ta-right"><strong>{{ prisma.included_final }}</strong></td></tr>
+    </tbody>
+  </table>
+</div>
