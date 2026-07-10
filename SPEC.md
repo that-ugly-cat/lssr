@@ -218,10 +218,13 @@ pubblica può mostrare "ultimo aggiornamento: …" e l'evoluzione dei conteggi.
 
 ## 8. Roadmap di sviluppo
 
-- **Fase 0 — Fondazione** *(questa sessione)*: repo, stack, auth, multiutente,
-  multiworkspace, public share, UI base, deploy skeleton. *(in corso)*
-- **Fase 1 — Ingest & dedup** (passi 1–4): query PubMed + raffinamento, import
-  BibTeX/RIS, dedup, add/remove manuale.
+- **Fase 0 — Fondazione** *(fatta)*: repo, stack, auth, multiutente,
+  multiworkspace, public share, UI base, deploy skeleton.
+- **Fase 1 — Ingest & dedup** (passi 1–4) *(fatta)*: query PubMed +
+  raffinamento (frequenze MeSH/keyword), traduzione LLM, import BibTeX/RIS,
+  dedup incrementale (DOI + fuzzy, tiene il più completo), add/remove manuale,
+  chiave Anthropic per-utente. Moduli: `pubmed.py`, `ingest.py`, `translate.py`,
+  `crypto.py`.
 - **Fase 2 — Screening** (passi 5–8): screening 1, download full text, paper2md,
   screening 2.
 - **Fase 3 — Assessment & sintesi** (passi 9–10): assessment, sintesi narrativa,
