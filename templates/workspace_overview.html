@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ ws.name }} — LSSR{% endblock %}
+{% block body %}
+<div class="ws-header">
+  <div class="page-head">
+    <h1>{{ ws.name }}</h1>
+    <a class="btn" href="/">← All reviews</a>
+  </div>
+  {% if ws.research_question %}<p class="muted">{{ ws.research_question }}</p>{% endif %}
+</div>
+
+<div class="cards-label">Pipeline</div>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">
+    The 10-step pipeline is built in phases (see <code>SPEC.md</code>).
+    Foundation is live; steps below are scaffolding.
+  </p>
+  <ol style="line-height:2; padding-left:1.2em;">
+    <li>Query &amp; refinement (PubMed) <span class="badge badge-muted">Fase 1</span></li>
+    <li>Query translation (Scopus / WoS / …) <span class="badge badge-muted">Fase 1</span></li>
+    <li>Run &amp; import results (BibTeX / RIS) <span class="badge badge-muted">Fase 1</span></li>
+    <li>Deduplication <span class="badge badge-muted">Fase 1</span></li>
+    <li>Screening 1 — title + abstract <span class="badge badge-muted">Fase 2</span></li>
+    <li>Full-text download <span class="badge badge-muted">Fase 2</span></li>
+    <li>paper2md conversion <span class="badge badge-muted">Fase 2</span></li>
+    <li>Screening 2 — full text <span class="badge badge-muted">Fase 2</span></li>
+    <li>Assessment <span class="badge badge-muted">Fase 3</span></li>
+    <li>Synthesis &amp; public page <span class="badge badge-muted">Fase 3</span></li>
+  </ol>
+</div>
+
+<div class="cards-label">Public sharing (read-only)</div>
+<div class="card">
+  {% if shares %}
+  <table class="table">
+    <thead><tr><th>Public link</th><th></th></tr></thead>
+    <tbody>
+      {% for s in shares %}
+      <tr>
+        <td><code>/r/{{ s.token }}</code></td>
+        <td class="ta-right">
+          {% if is_owner %}
+          <form method="post" action="/share/{{ s.id }}/revoke" style="display:inline;">
+            <button class="btn btn-danger btn-small" type="submit">Revoke</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted small" style="margin-top:0;">No public links yet.</p>
+  {% endif %}
+  {% if is_owner %}
+  <form method="post" action="/w/{{ ws.id }}/share" style="margin-top:10px;">
+    <button class="btn" type="submit">Create public link</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

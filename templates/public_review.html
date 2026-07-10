@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ ws.name }}{% endblock %}
+{% block body %}
+<h1>{{ ws.name }}</h1>
+{% if ws.research_question %}<p class="muted">{{ ws.research_question }}</p>{% endif %}
+<div class="card">
+  <p class="muted" style="margin:0;">
+    The public synthesis (narrative findings per criterion + PRISMA diagram)
+    will appear here once this review is published. — LSSR
+  </p>
+</div>
+{% endblock %}

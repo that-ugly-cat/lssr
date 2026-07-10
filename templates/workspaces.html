@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Reviews — LSSR{% endblock %}
+{% block body %}
+<div class="page-head">
+  <h1>Reviews</h1>
+  <button class="btn btn-primary" onclick="document.getElementById('new-ws').classList.add('open')">New review</button>
+</div>
+
+{% if workspaces %}
+<div class="ws-grid">
+  {% for w in workspaces %}
+  <a class="ws-card" href="/w/{{ w.id }}">
+    <div class="ws-card-head">
+      <strong>{{ w.name }}</strong>
+      {% if w.owner_id == user.id %}<span class="badge badge-muted">owner</span>{% endif %}
+    </div>
+    {% if w.research_question %}<p class="muted small">{{ w.research_question }}</p>{% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card"><p class="muted">No reviews yet. Create your first one.</p></div>
+{% endif %}
+
+<div class="overlay" id="new-ws">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">New review</div>
+      <button class="modal-close" onclick="document.getElementById('new-ws').classList.remove('open')">&times;</button>
+    </div>
+    <form method="post" action="/workspaces">
+      <label>Name <input type="text" name="name" required></label>
+      <label>Research question <textarea name="research_question" rows="2"></textarea></label>
+      <label>Description <textarea name="description" rows="2"></textarea></label>
+      <button class="btn btn-primary" type="submit" style="margin-top:12px;">Create</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

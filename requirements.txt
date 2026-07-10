@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+sqlalchemy
+bcrypt
+python-jose[cryptography]
+cryptography
+anthropic
+requests
+pandas
+bibtexparser
+rispy
+rapidfuzz

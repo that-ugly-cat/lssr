@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}LSSR{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css?v=1">
+  {% block head %}{% endblock %}
+</head>
+<body>
+{% if user %}
+<header class="topbar">
+  <a class="brand" href="/">LSSR</a>
+  <nav>
+    <a href="/">Reviews</a>
+    {% if user.is_admin %}<a href="/admin">Admin</a>{% endif %}
+    <a href="/logout" class="btn-link">Log out</a>
+  </nav>
+</header>
+{% endif %}
+<main class="container">
+{% block body %}{% endblock %}
+</main>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,16 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lssr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8013:8013"
+    env_file:
+      - .env
+    # Guardrail on the shared 4 GB / 2-CPU box: cap RAM so an LLM burst can't
+    # starve the other containers.
+    mem_limit: 1000m
+    volumes:
+      - ./data:/app/data
