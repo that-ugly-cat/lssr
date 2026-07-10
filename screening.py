@@ -102,7 +102,8 @@ def screen_record(client, system_prompt: str, title: str, abstract: str,
 
 # ── Background job ─────────────────────────────────────────────────────────────
 
-def _run(workspace_id: int, api_key: str, user_id: int | None):
+def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = False):
+    from sqlalchemy import or_
     from models import (Record, SessionLocal, UserCostLog, Workspace,
                         calc_cost, workspace_criteria)
     import anthropic
@@ -112,10 +113,14 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
         ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
         model = ws.screening_model or "claude-haiku-4-5"
         system = build_system(ws.research_question, workspace_criteria(db, ws, "exclusion"))
-        pending = (db.query(Record)
-                     .filter(Record.workspace_id == workspace_id,
-                             Record.is_removed == False,            # noqa: E712
-                             Record.screen1_decision == "pending").all())
+        # never touch records a human decided; re-run also re-screens model-decided ones
+        q = (db.query(Record)
+               .filter(Record.workspace_id == workspace_id,
+                       Record.is_removed == False,                  # noqa: E712
+                       or_(Record.screen1_by.is_(None), Record.screen1_by != "user")))
+        if not rerun:
+            q = q.filter(Record.screen1_decision == "pending")
+        pending = q.all()
         total = len(pending)
         _set(workspace_id, {"status": "running", "message": f"Screening {total} records…",
                             "total": total, "done": 0, "included": 0, "excluded": 0,
@@ -174,5 +179,6 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
         db.close()
 
 
-def start_screen1(workspace_id: int, api_key: str, user_id: int | None):
-    threading.Thread(target=_run, args=(workspace_id, api_key, user_id), daemon=True).start()
+def start_screen1(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = False):
+    threading.Thread(target=_run, args=(workspace_id, api_key, user_id, rerun),
+                     daemon=True).start()

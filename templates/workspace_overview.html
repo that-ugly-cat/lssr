@@ -7,24 +7,22 @@
 
 <div class="cards-label">Pipeline</div>
 <div class="card">
-  <p class="muted small" style="margin-top:0;">All ten steps are live. Jump to any stage:</p>
-  {% set steps = [
-    (1, 'Query &amp; refinement (PubMed)', 'query'),
-    (2, 'Query translation (Scopus / WoS / …)', 'query'),
-    (3, 'Run &amp; import results (BibTeX / RIS)', 'records'),
-    (4, 'Deduplication', 'records'),
-    (5, 'Screening 1 — title + abstract', 'screening'),
-    (6, 'Full-text download', 'screening'),
-    (7, 'paper2md conversion', 'screening'),
-    (8, 'Screening 2 — full text', 'assessment'),
-    (9, 'Assessment', 'assessment'),
-    (10, 'Synthesis &amp; public page', 'synthesis')
+  <p class="muted small" style="margin-top:0;">Jump to any stage:</p>
+  {% set stages = [
+    (1, 'Query', 'Search & translate (PubMed → Scopus / WoS / …)', 'query'),
+    (2, 'Records', 'Import, deduplicate & curate the pool', 'records'),
+    (3, 'Screening', 'Title/abstract screening & full-text retrieval', 'screening'),
+    (4, 'Assessment', 'Full-text screening & per-criterion findings', 'assessment'),
+    (5, 'Synthesis', 'Narrative synthesis, PRISMA & public page', 'synthesis')
   ] %}
   <div class="pipeline-steps">
-    {% for n, label, tab in steps %}
-    <a class="btn pipeline-step" href="/w/{{ ws.id }}/{{ tab if tab != 'overview' else '' }}">
+    {% for n, label, desc, tab in stages %}
+    <a class="btn pipeline-step" href="/w/{{ ws.id }}/{{ tab }}">
       <span class="pipeline-num">{{ n }}</span>
-      <span class="pipeline-label">{{ label }}</span>
+      <span class="pipeline-text">
+        <span class="pipeline-label">{{ label }}</span>
+        <span class="pipeline-desc">{{ desc }}</span>
+      </span>
     </a>
     {% endfor %}
   </div>

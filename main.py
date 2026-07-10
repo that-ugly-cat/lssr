@@ -527,12 +527,20 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
                                        Record.is_removed == False,  # noqa: E712
                                        Record.screen1_decision == d).count()
     counts = {d: _count(d) for d in ("pending", "include", "exclude")}
+    # records the model may (re-)screen: everything not decided by a human
+    model_n = db.query(Record).filter(Record.workspace_id == ws.id,
+                                      Record.is_removed == False,   # noqa: E712
+                                      Record.screen1_by == "model").count()
+    manual_n = db.query(Record).filter(Record.workspace_id == ws.id,
+                                       Record.is_removed == False,  # noqa: E712
+                                       Record.screen1_by == "user").count()
     q = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False)  # noqa: E712
     if decision in ("pending", "include", "exclude"):
         q = q.filter(Record.screen1_decision == decision)
     records = q.order_by(Record.id.desc()).limit(300).all()
     return render(request, "workspace_screening.html", {
         "user": user, "ws": ws, "tab": "screening", "counts": counts,
+        "model_n": model_n, "manual_n": manual_n,
         "records": records, "decision": decision,
         "n_exclusion": len(workspace_criteria(db, ws, "exclusion")),
         "has_key": bool(_user_api_key(user)),
@@ -540,7 +548,7 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
 
 
 @app.post("/w/{ws_id}/screening/run")
-async def run_screening(ws_id: int, user: User = Depends(get_current_user),
+async def run_screening(ws_id: int, rerun: str = Form(""), user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     api_key = _user_api_key(user)
@@ -550,7 +558,7 @@ async def run_screening(ws_id: int, user: User = Depends(get_current_user),
     job = get_job(ws.id)
     if job and job.get("status") == "running":
         raise HTTPException(409, "Screening already in progress")
-    start_screen1(ws.id, api_key, user.id)
+    start_screen1(ws.id, api_key, user.id, rerun=bool(rerun))
     return RedirectResponse(f"/w/{ws_id}/screening", status_code=302)
 
 
