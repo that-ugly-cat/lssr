@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Records — {{ ws.name }}{% endblock %}
+{% block body %}
+{% include "_ws_tabs.html" %}
+
+<div class="stat-grid">
+  <div class="stat-card"><div class="stat-num">{{ active_n }}</div><div class="stat-label">Records</div></div>
+  <div class="stat-card"><div class="stat-num">{{ removed_n }}</div><div class="stat-label">Removed</div></div>
+</div>
+
+<div class="cards-label">Step 3 — Import references</div>
+<div class="card">
+  <form method="post" action="/w/{{ ws.id }}/records/import" enctype="multipart/form-data" class="inline-form">
+    <input type="file" name="file" accept=".bib,.bibtex,.ris,.nbib" required>
+    <select name="database">
+      <option value="scopus">Scopus</option>
+      <option value="wos">Web of Science</option>
+      <option value="cinahl">CINAHL</option>
+      <option value="jstor">JSTOR</option>
+      <option value="pubmed">PubMed</option>
+      <option value="other">Other</option>
+    </select>
+    <button class="btn btn-primary btn-small" type="submit">Import BibTeX / RIS</button>
+  </form>
+  {% if imports %}
+  <table class="table" style="margin-top:12px;">
+    <thead><tr><th>Source</th><th>DB</th><th>Parsed</th><th>New</th><th>Merged</th></tr></thead>
+    <tbody>
+      {% for imp in imports %}
+      <tr><td>{{ imp.source_name or imp.fmt }}</td><td>{{ imp.database }}</td>
+          <td>{{ imp.raw_count }}</td><td>{{ imp.new_count }}</td><td>{{ imp.merged_count }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<div class="cards-label">Add a record manually</div>
+<div class="card">
+  <form method="post" action="/w/{{ ws.id }}/records/add">
+    <label>Title <input type="text" name="title" required></label>
+    <div class="inline-form">
+      <label style="flex:2;">Authors <input type="text" name="authors"></label>
+      <label style="flex:1;">Year <input type="text" name="year"></label>
+    </div>
+    <div class="inline-form">
+      <label style="flex:1;">DOI <input type="text" name="doi"></label>
+      <label style="flex:1;">Source <input type="text" name="source"></label>
+      <label style="flex:1;">Type
+        <select name="type">
+          <option value="article">Article</option>
+          <option value="book">Book</option>
+          <option value="book_chapter">Book chapter</option>
+          <option value="grey">Grey literature</option>
+        </select>
+      </label>
+    </div>
+    <label>Abstract <textarea name="abstract" rows="2"></textarea></label>
+    <button class="btn btn-small" type="submit">Add record</button>
+  </form>
+</div>
+
+<div class="cards-label">
+  Pool
+  <span style="font-weight:400; text-transform:none; letter-spacing:0;">
+    · <a href="/w/{{ ws.id }}/records?show=active" class="{{ '' if show=='removed' else 'muted' }}">Active</a>
+    · <a href="/w/{{ ws.id }}/records?show=removed" class="{{ 'muted' if show!='removed' else '' }}">Removed</a>
+  </span>
+</div>
+<table class="table">
+  <thead><tr><th>Year</th><th>Title</th><th>Source</th><th>DBs</th><th></th></tr></thead>
+  <tbody>
+    {% for r in records %}
+    <tr>
+      <td class="nowrap">{{ r.year or '—' }}</td>
+      <td>
+        <strong>{{ r.title or '(untitled)' }}</strong>
+        <div class="muted small">{{ r.authors or '' }}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% endif %}</div>
+      </td>
+      <td class="small">{{ r.source or '' }}</td>
+      <td class="small">
+        {% for db in json.loads(r.source_dbs_json or '[]') %}<span class="badge badge-muted">{{ db }}</span> {% endfor %}
+      </td>
+      <td class="ta-right nowrap">
+        {% if show == 'removed' %}
+        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/restore" style="display:inline;">
+          <button class="btn btn-small" type="submit">Restore</button>
+        </form>
+        {% else %}
+        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/remove" style="display:inline;">
+          <button class="btn btn-danger btn-small" type="submit">Remove</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="muted">No records yet. Run a PubMed search or import a file.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if records|length >= 500 %}<p class="muted small">Showing first 500.</p>{% endif %}
+{% endblock %}

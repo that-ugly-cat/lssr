@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Profile — LSSR{% endblock %}
+{% block body %}
+<h1>Profile</h1>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">{{ user.name }} · {{ user.email }}</p>
+</div>
+
+<div class="cards-label">Anthropic API key</div>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">
+    Used for LLM steps (query translation, screening, assessment). Stored
+    encrypted at rest. {% if has_key %}<span class="badge badge-ok">key set</span>{% endif %}
+  </p>
+  <form method="post" action="/profile/api-key">
+    <label>API key
+      <input type="password" name="api_key" placeholder="{{ 'leave blank to remove' if has_key else 'sk-ant-…' }}">
+    </label>
+    <button class="btn btn-primary btn-small" type="submit">Save</button>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,9 @@
+<div class="page-head">
+  <h1>{{ ws.name }}</h1>
+  <a class="btn" href="/">← All reviews</a>
+</div>
+<div class="tabs">
+  <a href="/w/{{ ws.id }}" class="{{ 'active' if tab == 'overview' else '' }}">Overview</a>
+  <a href="/w/{{ ws.id }}/query" class="{{ 'active' if tab == 'query' else '' }}">Query</a>
+  <a href="/w/{{ ws.id }}/records" class="{{ 'active' if tab == 'records' else '' }}">Records</a>
+</div>
