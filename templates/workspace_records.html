@@ -35,12 +35,18 @@
   {% endif %}
 </div>
 
+{% set f = filters %}
+{% macro sorth(field, label) %}
+  {%- set no = 'asc' if (f.sort == field and f.order == 'desc') else 'desc' -%}
+  <a class="th-sort" href="?show={{ f.show }}&q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f.rtype }}&yf={{ f.yf }}&yt={{ f.yt }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
+{%- endmacro %}
+
 <div class="page-head" style="margin-top:6px;">
   <div class="cards-label" style="margin:0;">
     Pool
     <span style="font-weight:400; text-transform:none; letter-spacing:0;">
-      · <a href="/w/{{ ws.id }}/records?show=active" class="{{ '' if show=='removed' else 'muted' }}">Active</a>
-      · <a href="/w/{{ ws.id }}/records?show=removed" class="{{ 'muted' if show!='removed' else '' }}">Removed</a>
+      · <a href="/w/{{ ws.id }}/records?show=active" class="{{ '' if show=='removed' else 'muted' }}">Active ({{ active_n }})</a>
+      · <a href="/w/{{ ws.id }}/records?show=removed" class="{{ 'muted' if show!='removed' else '' }}">Removed ({{ removed_n }})</a>
     </span>
   </div>
   <div style="display:flex; gap:8px;">
@@ -51,19 +57,44 @@
             onclick="document.getElementById('add-rec').classList.add('open')">Add record</button>
   </div>
 </div>
+
+<form method="get" class="filter-bar">
+  <input type="hidden" name="show" value="{{ f.show }}">
+  <input type="hidden" name="sort" value="{{ f.sort }}">
+  <input type="hidden" name="order" value="{{ f.order }}">
+  <input type="text" name="q" value="{{ f.q }}" placeholder="Search title / author / abstract" style="max-width:260px;">
+  <select name="source">
+    <option value="">any DB</option>
+    {% for d in dbs_present %}<option value="{{ d }}" {{ 'selected' if f.source == d else '' }}>{{ d }}</option>{% endfor %}
+  </select>
+  <select name="rtype">
+    <option value="">any type</option>
+    {% for t, lbl in [('article','article'),('book','book'),('book_chapter','book chapter'),('grey','grey lit')] %}
+    <option value="{{ t }}" {{ 'selected' if f.rtype == t else '' }}>{{ lbl }}</option>{% endfor %}
+  </select>
+  <input type="number" name="yf" value="{{ f.yf }}" placeholder="year ≥" style="max-width:100px;">
+  <input type="number" name="yt" value="{{ f.yt }}" placeholder="year ≤" style="max-width:100px;">
+  <button class="btn btn-small" type="submit">Filter</button>
+  <a class="btn btn-small" href="/w/{{ ws.id }}/records?show={{ f.show }}">Clear</a>
+</form>
+
 <table class="table">
-  <thead><tr><th>Year</th><th>Title</th><th>Source</th><th>DBs</th><th></th></tr></thead>
+  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Source</th><th>DBs</th><th></th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr>
       <td class="nowrap">{{ r.year or '—' }}</td>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
+        {% if r.type and r.type != 'article' %}<span class="badge badge-muted">{{ r.type.replace('_',' ') }}</span>{% endif %}
         <div class="muted small">{{ r.authors or '' }}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% endif %}</div>
+        {% if r.abstract %}
+        <details class="abstract-toggle"><summary class="muted small">abstract</summary><div class="small" style="margin-top:4px; max-width:75ch;">{{ r.abstract }}</div></details>
+        {% else %}<div class="muted small" style="font-style:italic;">no abstract</div>{% endif %}
       </td>
       <td class="small">{{ r.source or '' }}</td>
       <td class="small">
-        {% for db in json.loads(r.source_dbs_json or '[]') %}<span class="badge badge-muted">{{ db }}</span> {% endfor %}
+        {% for db in r.source_dbs_json|fromjson %}<span class="badge badge-muted">{{ db }}</span> {% endfor %}
       </td>
       <td class="ta-right nowrap">
         {% if show == 'removed' %}
@@ -78,11 +109,11 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="5" class="muted">No records yet. Run a PubMed search or import a file.</td></tr>
+    <tr><td colspan="5" class="muted">No records match. Adjust the filter, or run a PubMed search / import a file.</td></tr>
     {% endfor %}
   </tbody>
 </table>
-{% if records|length >= 500 %}<p class="muted small">Showing first 500.</p>{% endif %}
+{% if records|length >= 500 %}<p class="muted small">Showing first 500 — narrow the filter to see more.</p>{% endif %}
 
 <div class="overlay" id="add-rec">
   <div class="modal">

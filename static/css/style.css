@@ -406,6 +406,13 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
 .pipeline-step .pipeline-desc { font-size: 12px; color: var(--muted-2); }
 .pipeline-step:hover .pipeline-num { background: var(--primary-hover); }
 
+/* ── abstract toggle (records) ── */
+.abstract-toggle { margin-top: 4px; }
+.abstract-toggle > summary { cursor: pointer; list-style: none; }
+.abstract-toggle > summary::-webkit-details-marker { display: none; }
+.abstract-toggle > summary::before { content: '▸ '; color: var(--muted-3); }
+.abstract-toggle[open] > summary::before { content: '▾ '; }
+
 @media (max-width: 640px) {
   .topbar { padding: 0 12px; }
   .topbar nav { gap: 10px; }

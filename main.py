@@ -324,24 +324,45 @@ async def translate_route(ws_id: int, database: str, user: User = Depends(get_cu
 
 @app.get("/w/{ws_id}/records", response_class=HTMLResponse)
 async def records_page(ws_id: int, request: Request, show: str = "active",
+                       q: str = "", source: str = "", rtype: str = "",
+                       yf: str = "", yt: str = "", sort: str = "year", order: str = "desc",
                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
-    q = db.query(Record).filter(Record.workspace_id == ws.id)
-    if show == "removed":
-        q = q.filter(Record.is_removed == True)  # noqa: E712
-    else:
-        q = q.filter(Record.is_removed == False)  # noqa: E712
-    records = q.order_by(Record.year.desc().nullslast(), Record.id.desc()).limit(500).all()
+    from sqlalchemy import or_
+    query = db.query(Record).filter(Record.workspace_id == ws.id,
+                                    Record.is_removed == (show == "removed"))
+    if q.strip():
+        like = f"%{q.strip()}%"
+        query = query.filter(or_(Record.title.ilike(like), Record.authors.ilike(like),
+                                 Record.abstract.ilike(like)))
+    if source:
+        query = query.filter(Record.source_dbs_json.like(f'%"{source}"%'))
+    if rtype:
+        query = query.filter(Record.type == rtype)
+    if yf.isdigit():
+        query = query.filter(Record.year >= int(yf))
+    if yt.isdigit():
+        query = query.filter(Record.year <= int(yt))
+
+    col = {"year": Record.year, "title": Record.title, "id": Record.id}.get(sort, Record.year)
+    direction = (col.desc() if order == "desc" else col.asc()).nullslast()
+    records = query.order_by(direction, Record.id.desc()).limit(500).all()
+
     active_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                        Record.is_removed == False).count()  # noqa: E712
     removed_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                         Record.is_removed == True).count()  # noqa: E712
     imports = db.query(Import).filter(Import.workspace_id == ws.id).order_by(
         Import.created_at.desc()).limit(10).all()
+    dbs_present = sorted({d for (raw,) in
+                          db.query(Record.source_dbs_json).filter(Record.workspace_id == ws.id).all()
+                          for d in _fromjson(raw)})
     return render(request, "workspace_records.html", {
         "user": user, "ws": ws, "tab": "records", "records": records,
         "active_n": active_n, "removed_n": removed_n, "show": show,
-        "imports": imports, "json": json,
+        "imports": imports, "dbs_present": dbs_present,
+        "filters": {"show": show, "q": q, "source": source, "rtype": rtype,
+                    "yf": yf, "yt": yt, "sort": sort, "order": order},
     })
 
 
