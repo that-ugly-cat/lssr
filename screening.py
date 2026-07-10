@@ -68,6 +68,23 @@ def build_system(research_question: str | None, exclusion_criteria: list) -> str
                           criteria=crit or "(no exclusion criteria defined)")
 
 
+# ── Cost estimate (rough, ~4 chars/token; ignores prompt caching, so it reads as
+#    an upper bound) ─────────────────────────────────────────────────────────────
+
+CHARS_PER_TOKEN = 4
+EST_OUTPUT_TOKENS = 80  # the short include/exclude JSON reply
+
+
+def estimate_cost(model: str, system_prompt: str, n: int, content_chars: int) -> float:
+    from models import calc_cost
+    if n <= 0:
+        return 0.0
+    sys_tokens = max(1, len(system_prompt) // CHARS_PER_TOKEN)
+    tokens_in = n * sys_tokens + content_chars // CHARS_PER_TOKEN
+    tokens_out = n * EST_OUTPUT_TOKENS
+    return calc_cost(model, tokens_in, tokens_out)
+
+
 def _parse(content: str) -> dict | None:
     content = content.strip()
     m = re.search(r"```(?:json)?\s*([\s\S]*?)```", content)

@@ -559,9 +559,31 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     if decision in ("pending", "include", "exclude"):
         q = q.filter(Record.screen1_decision == decision)
     records = q.order_by(Record.id.desc()).limit(300).all()
+
+    # cost estimate for the screening buttons
+    import screening
+    from sqlalchemy import func
+    model = ws.screening_model or "claude-haiku-4-5"
+    system = screening.build_system(ws.research_question, workspace_criteria(db, ws, "exclusion"))
+
+    def _chars(*filters):
+        expr = func.coalesce(func.length(Record.title), 0) + func.coalesce(func.length(Record.abstract), 0)
+        return db.query(func.coalesce(func.sum(expr), 0)).filter(
+            Record.workspace_id == ws.id, Record.is_removed == False, *filters).scalar() or 0  # noqa: E712
+    pending_chars = _chars(Record.screen1_decision == "pending")
+    model_chars = _chars(Record.screen1_by == "model")
+
+    def _fmt(x):
+        if x <= 0:
+            return "$0.00"
+        return "<$0.01" if x < 0.01 else f"${x:.2f}"
+    est_pending = _fmt(screening.estimate_cost(model, system, counts["pending"], pending_chars))
+    est_rerun = _fmt(screening.estimate_cost(model, system, counts["pending"] + model_n,
+                                             pending_chars + model_chars))
     return render(request, "workspace_screening.html", {
         "user": user, "ws": ws, "tab": "screening", "counts": counts,
-        "model_n": model_n, "manual_n": manual_n,
+        "model_n": model_n, "manual_n": manual_n, "model": model,
+        "est_pending": est_pending, "est_rerun": est_rerun,
         "records": records, "decision": decision,
         "n_exclusion": len(workspace_criteria(db, ws, "exclusion")),
         "has_key": bool(_user_api_key(user)),

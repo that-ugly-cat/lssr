@@ -17,17 +17,23 @@
   <div class="flash flash-error" style="display:block;">Set your Anthropic API key in <a href="/profile">your profile</a> first.</div>
   {% endif %}
   <form method="post" action="/w/{{ ws.id }}/screening/run" id="scr-form" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-    <button class="btn btn-primary" type="submit" name="rerun" value="" id="scr-btn"
-      {{ 'disabled' if (n_exclusion == 0 or not has_key or counts.pending == 0) else '' }}>
-      Run on {{ counts.pending }} pending
-    </button>
+    <span style="display:inline-flex; flex-direction:column; align-items:flex-start;">
+      <button class="btn btn-primary" type="submit" name="rerun" value="" id="scr-btn"
+        {{ 'disabled' if (n_exclusion == 0 or not has_key or counts.pending == 0) else '' }}>
+        Run on {{ counts.pending }} pending
+      </button>
+      <span class="muted small">est. {{ est_pending }}</span>
+    </span>
     {% if model_n > 0 %}
-    <button class="btn" type="submit" name="rerun" value="1"
-      {{ 'disabled' if (n_exclusion == 0 or not has_key) else '' }}>
-      Re-run on {{ counts.pending + model_n }} (model + pending)
-    </button>
+    <span style="display:inline-flex; flex-direction:column; align-items:flex-start;">
+      <button class="btn" type="submit" name="rerun" value="1"
+        {{ 'disabled' if (n_exclusion == 0 or not has_key) else '' }}>
+        Re-run on {{ counts.pending + model_n }} (model + pending)
+      </button>
+      <span class="muted small">est. {{ est_rerun }}</span>
+    </span>
     {% endif %}
-    <span class="muted small">Model errs toward inclusion. Manual decisions ({{ manual_n }}) are protected — the model skips them, even on re-run.</span>
+    <span class="muted small">{{ model }} · errs toward inclusion. Manual decisions ({{ manual_n }}) are protected — skipped even on re-run.</span>
   </form>
   <div id="scr-status" class="flash" style="display:none;"></div>
 </div>
