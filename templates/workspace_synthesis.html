@@ -48,23 +48,28 @@
 const syForm = document.getElementById('sy-form');
 if (syForm) {
   const box = document.getElementById('sy-status'), btn = document.getElementById('sy-btn');
+  let sawRunning = false;
   async function poll() {
     const j = await (await fetch('/w/{{ ws.id }}/synthesis/status')).json();
     if (j.status === 'idle') return;
-    box.style.display = 'block';
     if (j.status === 'running') {
-      btn.disabled = true; box.className = 'flash';
+      sawRunning = true;
+      btn.disabled = true; box.style.display = 'block'; box.className = 'flash';
       box.textContent = (j.message || 'running') + (j.total ? ` (${j.done}/${j.total})` : '');
       setTimeout(poll, 2000);
     } else if (j.status === 'done') {
-      box.className = 'flash flash-ok'; box.textContent = j.message || 'Done.';
-      setTimeout(() => location.reload(), 1200);
+      if (sawRunning) {
+        box.style.display = 'block'; box.className = 'flash flash-ok';
+        box.textContent = j.message || 'Done.';
+        setTimeout(() => location.reload(), 1200);
+      }
     } else if (j.status === 'error') {
-      box.className = 'flash flash-error'; box.textContent = 'Error: ' + (j.message || 'unknown');
+      box.style.display = 'block'; box.className = 'flash flash-error';
+      box.textContent = 'Error: ' + (j.message || 'unknown');
       btn.disabled = false;
     }
   }
-  syForm.addEventListener('submit', () => setTimeout(poll, 800));
+  syForm.addEventListener('submit', () => { sawRunning = true; setTimeout(poll, 800); });
   poll();
 }
 </script>

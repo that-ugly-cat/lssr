@@ -76,28 +76,34 @@ const runForm = document.getElementById('run-form');
 if (runForm) {
   const box = document.getElementById('run-status');
   const btn = document.getElementById('run-btn');
+  let sawRunning = false;
   async function poll() {
     const r = await fetch('/w/{{ ws.id }}/pubmed/status');
     const j = await r.json();
     if (j.status === 'idle') return;
-    box.style.display = 'block';
     if (j.status === 'searching' || j.status === 'downloading') {
+      sawRunning = true;
       btn.disabled = true;
+      box.style.display = 'block';
       box.className = 'flash';
       const prog = j.total ? ` (${j.downloaded}/${j.total})` : '';
       box.textContent = (j.message || j.status) + prog;
       setTimeout(poll, 2000);
     } else if (j.status === 'done') {
-      box.className = 'flash flash-ok';
-      box.textContent = j.message || 'Done.';
-      setTimeout(() => location.reload(), 1500);
+      if (sawRunning) {
+        box.style.display = 'block';
+        box.className = 'flash flash-ok';
+        box.textContent = j.message || 'Done.';
+        setTimeout(() => location.reload(), 1500);
+      }
     } else if (j.status === 'error') {
+      box.style.display = 'block';
       box.className = 'flash flash-error';
       box.textContent = 'Error: ' + (j.message || 'unknown');
       btn.disabled = false;
     }
   }
-  runForm.addEventListener('submit', () => setTimeout(poll, 800));
+  runForm.addEventListener('submit', () => { sawRunning = true; setTimeout(poll, 800); });
   poll();
 }
 </script>
