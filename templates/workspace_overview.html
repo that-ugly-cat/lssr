@@ -24,6 +24,34 @@
   </ol>
 </div>
 
+<div class="cards-label">Iterations (living review)</div>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">
+    Refresh re-runs the searches and re-deduplicates; screening and assessment
+    only touch newly found records, so past decisions carry forward.
+  </p>
+  {% if iterations %}
+  <table class="table">
+    <thead><tr><th>#</th><th>Started</th><th>Status</th><th>New records</th></tr></thead>
+    <tbody>
+      {% for it in iterations %}
+      <tr>
+        <td>{{ it.number }}</td>
+        <td class="small">{{ it.started_at.strftime('%Y-%m-%d %H:%M') if it.started_at else '' }}</td>
+        <td>{% if it.status == 'open' %}<span class="badge badge-ok">open</span>{% else %}<span class="badge badge-muted">closed</span>{% endif %}</td>
+        <td>{{ iter_new.get(it.id, 0) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted small">No iterations yet — the first starts when you run a search or import.</p>
+  {% endif %}
+  <form method="post" action="/w/{{ ws.id }}/iterations/new" style="margin-top:10px;">
+    <button class="btn" type="submit">Start new iteration (refresh)</button>
+  </form>
+</div>
+
 <div class="cards-label">Public sharing (read-only)</div>
 <div class="card">
   {% if shares %}

@@ -135,11 +135,40 @@ async def workspace_overview(ws_id: int, request: Request,
     members = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == ws.id).all()
     shares = db.query(PublicShare).filter(PublicShare.workspace_id == ws.id,
                                           PublicShare.active == True).all()  # noqa: E712
+    from models import Iteration
+    iterations = (db.query(Iteration).filter(Iteration.workspace_id == ws.id)
+                    .order_by(Iteration.number.desc()).all())
+    iter_new = {it.id: db.query(Record).filter(Record.workspace_id == ws.id,
+                                               Record.first_seen_iter_id == it.id).count()
+                for it in iterations}
     return render(request, "workspace_overview.html", {
         "user": user, "ws": ws,
         "is_owner": ws.owner_id == user.id or user.is_admin,
         "members": members, "shares": shares,
+        "iterations": iterations, "iter_new": iter_new,
     })
+
+
+@app.post("/w/{ws_id}/iterations/new")
+async def new_iteration(ws_id: int, user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """Refresh: close the current iteration and open the next. Subsequent
+    searches/imports attach here; dedup marks existing records last_seen to this
+    iteration, new records get first_seen here, and screening/assessment only
+    touch still-pending records — the living-review loop."""
+    ws = _load_ws(db, user, ws_id)
+    from datetime import datetime as _dt
+    from models import Iteration
+    latest = (db.query(Iteration).filter(Iteration.workspace_id == ws.id)
+                .order_by(Iteration.number.desc()).first())
+    if latest is None:
+        db.add(Iteration(workspace_id=ws.id, number=1, status="open"))
+    else:
+        latest.status = "closed"
+        latest.completed_at = _dt.utcnow()
+        db.add(Iteration(workspace_id=ws.id, number=latest.number + 1, status="open"))
+    db.commit()
+    return RedirectResponse(f"/w/{ws_id}", status_code=302)
 
 
 # ── Public read-only sharing ────────────────────────────────────────────────
