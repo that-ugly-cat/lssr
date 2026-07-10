@@ -231,11 +231,17 @@ pubblica può mostrare "ultimo aggiornamento: …" e l'evoluzione dei conteggi.
   Unpaywall + conversione paper2md, upload manuale PDF. Moduli: `screening.py`,
   `fulltext.py`. Screening 2 (passo 8) accorpato alla Fase 3 con l'assessment
   (decisione 8+9 integrati).
-- **Fase 3 — Screening 2 + assessment & sintesi** (passi 8–10): chiamata unica
-  condizionale sul full text (inclusione + assessment per criterio), sintesi
-  narrativa, pagina pubblica + PRISMA.
-- **Fase 4 — Living**: iterazioni, decisioni sticky, refresh on demand.
-- **Fase 5 — Automazione DB** (opzionale): API Scopus/WoS per il passo 3.
+- **Fase 3 — Screening 2 + assessment & sintesi** (passi 8–10) *(fatta)*:
+  chiamata unica condizionale sul full text (inclusione + assessment per
+  criterio), sintesi narrativa per criterio con citazioni, pagina pubblica +
+  PRISMA. Moduli: `assessment.py`, `synthesis.py`.
+- **Fase 4 — Living** *(fatta)*: iterazioni con refresh on demand; dedup
+  incrementale (last_seen) + decisioni sticky = ri-ricerca senza rifare il
+  lavoro già deciso.
+- **Fase 5 — Automazione DB** (opzionale, non fatta): API Scopus/WoS per il passo 3.
+
+**Stato: pipeline completa (passi 1–10) funzionante e smoke-testata. Restano
+deploy sul VPS (`lssr.borant.eu:8013`) e la pagina wiki.**
 
 ---
 
