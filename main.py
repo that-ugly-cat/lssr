@@ -19,9 +19,9 @@ from auth import (
     create_token, get_current_user, get_user_or_none, hash_password, verify_password,
 )
 from models import (
-    DATABASES, Import, PublicShare, Record, SearchQuery, User, Workspace,
+    DATABASES, PRICING, Criterion, Import, PublicShare, Record, User, Workspace,
     WorkspaceMember, can_access, current_iteration, get_db, get_query, init_db,
-    new_share_token, upsert_query, user_workspaces,
+    new_share_token, upsert_query, user_workspaces, workspace_criteria,
 )
 
 BASE = Path(__file__).parent
@@ -352,6 +352,162 @@ async def restore_record(ws_id: int, rid: int, user: User = Depends(get_current_
         rec.removed_reason = None
         db.commit()
     return RedirectResponse(f"/w/{ws_id}/records?show=removed", status_code=302)
+
+
+# ── Settings: criteria & model (steps 5, 8, 9) ──────────────────────────────
+
+@app.get("/w/{ws_id}/settings", response_class=HTMLResponse)
+async def settings_page(ws_id: int, request: Request, user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    return render(request, "workspace_settings.html", {
+        "user": user, "ws": ws, "tab": "settings",
+        "exclusion": workspace_criteria(db, ws, "exclusion"),
+        "inclusion": workspace_criteria(db, ws, "inclusion"),
+        "assessment": workspace_criteria(db, ws, "assessment"),
+        "models": list(PRICING.keys()),
+    })
+
+
+@app.post("/w/{ws_id}/settings/model")
+async def set_model(ws_id: int, screening_model: str = Form(...),
+                    user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    if screening_model in PRICING:
+        ws.screening_model = screening_model
+        db.commit()
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+
+
+@app.post("/w/{ws_id}/criteria/add")
+async def add_criterion(ws_id: int, kind: str = Form(...), label: str = Form(...),
+                        description: str = Form(""), user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    if kind not in ("exclusion", "inclusion", "assessment") or not label.strip():
+        raise HTTPException(400, "Invalid criterion")
+    pos = db.query(Criterion).filter(Criterion.workspace_id == ws.id,
+                                     Criterion.kind == kind).count()
+    db.add(Criterion(workspace_id=ws.id, kind=kind, label=label.strip(),
+                     description=description.strip() or None, position=pos))
+    db.commit()
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+
+
+@app.post("/w/{ws_id}/criteria/{cid}/delete")
+async def delete_criterion(ws_id: int, cid: int, user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    c = db.query(Criterion).filter(Criterion.id == cid, Criterion.workspace_id == ws.id).first()
+    if c:
+        db.delete(c)
+        db.commit()
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+
+
+# ── Screening 1 (step 5) ────────────────────────────────────────────────────
+
+@app.get("/w/{ws_id}/screening", response_class=HTMLResponse)
+async def screening_page(ws_id: int, request: Request, decision: str = "pending",
+                         user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+
+    def _count(d):
+        return db.query(Record).filter(Record.workspace_id == ws.id,
+                                       Record.is_removed == False,  # noqa: E712
+                                       Record.screen1_decision == d).count()
+    counts = {d: _count(d) for d in ("pending", "include", "exclude")}
+    q = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False)  # noqa: E712
+    if decision in ("pending", "include", "exclude"):
+        q = q.filter(Record.screen1_decision == decision)
+    records = q.order_by(Record.id.desc()).limit(300).all()
+    return render(request, "workspace_screening.html", {
+        "user": user, "ws": ws, "tab": "screening", "counts": counts,
+        "records": records, "decision": decision,
+        "n_exclusion": len(workspace_criteria(db, ws, "exclusion")),
+        "has_key": bool(_user_api_key(user)),
+    })
+
+
+@app.post("/w/{ws_id}/screening/run")
+async def run_screening(ws_id: int, user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    api_key = _user_api_key(user)
+    if not api_key:
+        raise HTTPException(400, "Set your Anthropic API key in your profile first")
+    from screening import get_job, start_screen1
+    job = get_job(ws.id)
+    if job and job.get("status") == "running":
+        raise HTTPException(409, "Screening already in progress")
+    start_screen1(ws.id, api_key, user.id)
+    return RedirectResponse(f"/w/{ws_id}/screening", status_code=302)
+
+
+@app.get("/w/{ws_id}/screening/status")
+async def screening_status(ws_id: int, user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    _load_ws(db, user, ws_id)
+    from screening import get_job
+    return JSONResponse(get_job(ws_id) or {"status": "idle"})
+
+
+@app.post("/w/{ws_id}/records/{rid}/screen1")
+async def override_screen1(ws_id: int, rid: int, decision: str = Form(...),
+                           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    if decision not in ("include", "exclude", "pending"):
+        raise HTTPException(400, "Invalid decision")
+    rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
+    if rec:
+        from datetime import datetime
+        rec.screen1_decision = decision
+        rec.screen1_by = "user"
+        rec.screen1_reason = "manual override"
+        rec.screen1_at = datetime.utcnow()
+        db.commit()
+    return RedirectResponse(f"/w/{ws_id}/screening?decision={decision}", status_code=302)
+
+
+# ── Full text: download + paper2md (steps 6-7) ──────────────────────────────
+
+@app.post("/w/{ws_id}/fulltext/run")
+async def run_fulltext(ws_id: int, user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    import fulltext
+    job = fulltext.get_job(ws.id)
+    if job and job.get("status") == "running":
+        raise HTTPException(409, "Full-text fetch already in progress")
+    email = os.environ.get("UNPAYWALL_EMAIL") or ws.owner.email
+    fulltext.start_fulltext(ws.id, email, fulltext.paper2md_url())
+    return RedirectResponse(f"/w/{ws_id}/screening?decision=include", status_code=302)
+
+
+@app.get("/w/{ws_id}/fulltext/status")
+async def fulltext_status(ws_id: int, user: User = Depends(get_current_user),
+                          db: Session = Depends(get_db)):
+    _load_ws(db, user, ws_id)
+    import fulltext
+    return JSONResponse(fulltext.get_job(ws_id) or {"status": "idle"})
+
+
+@app.post("/w/{ws_id}/records/{rid}/fulltext/upload")
+async def upload_fulltext(ws_id: int, rid: int, file: UploadFile = File(...),
+                          user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
+    if not rec:
+        raise HTTPException(404, "Record not found")
+    pdf_bytes = await file.read()
+    if pdf_bytes[:4] != b"%PDF":
+        raise HTTPException(400, "File does not look like a PDF")
+    import fulltext
+    try:
+        fulltext.ingest_uploaded_pdf(db, ws.id, rec, pdf_bytes, fulltext.paper2md_url())
+    except Exception as exc:
+        raise HTTPException(502, f"Conversion failed: {exc}")
+    return RedirectResponse(f"/w/{ws_id}/screening?decision=include", status_code=302)
 
 
 @app.get("/health")

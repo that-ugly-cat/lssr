@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Settings — {{ ws.name }}{% endblock %}
+{% block body %}
+{% include "_ws_tabs.html" %}
+
+<div class="cards-label">Screening / assessment model</div>
+<div class="card">
+  <form method="post" action="/w/{{ ws.id }}/settings/model" class="inline-form">
+    <select name="screening_model">
+      {% for m in models %}
+      <option value="{{ m }}" {{ 'selected' if ws.screening_model == m else '' }}>{{ m }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-small" type="submit">Save model</button>
+  </form>
+  <p class="muted small">Haiku is cheapest and fine for title/abstract screening; Sonnet/Opus for harder judgment.</p>
+</div>
+
+{% set sets = [
+  ('exclusion', 'Exclusion criteria (screening 1 — title + abstract)', exclusion),
+  ('inclusion', 'Inclusion criteria (screening 2 — full text)', inclusion),
+  ('assessment', 'Assessment criteria (step 9 — findings extraction)', assessment)
+] %}
+{% for kind, heading, items in sets %}
+<div class="cards-label">{{ heading }}</div>
+<div class="card">
+  {% for c in items %}
+  <div class="cb-card">
+    <div class="cb-card-head">
+      <div class="cb-card-title">{{ c.label }}</div>
+      <form method="post" action="/w/{{ ws.id }}/criteria/{{ c.id }}/delete">
+        <button class="btn btn-danger btn-small" type="submit">Delete</button>
+      </form>
+    </div>
+    {% if c.description %}<p class="cb-card-desc">{{ c.description }}</p>{% endif %}
+  </div>
+  {% else %}
+  <p class="muted small" style="margin-top:0;">None yet.</p>
+  {% endfor %}
+  <form method="post" action="/w/{{ ws.id }}/criteria/add" style="margin-top:10px;">
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <label>Label <input type="text" name="label" required></label>
+    <label>Description / guidance <textarea name="description" rows="2"></textarea></label>
+    <button class="btn btn-small" type="submit">Add {{ kind }} criterion</button>
+  </form>
+</div>
+{% endfor %}
+{% endblock %}

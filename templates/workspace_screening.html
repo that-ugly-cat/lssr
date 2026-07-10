@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Screening — {{ ws.name }}{% endblock %}
+{% block body %}
+{% include "_ws_tabs.html" %}
+
+<div class="stat-grid">
+  <div class="stat-card"><div class="stat-num">{{ counts.pending }}</div><div class="stat-label">Pending</div></div>
+  <div class="stat-card"><div class="stat-num">{{ counts.include }}</div><div class="stat-label">Included</div></div>
+  <div class="stat-card"><div class="stat-num">{{ counts.exclude }}</div><div class="stat-label">Excluded</div></div>
+</div>
+
+<div class="cards-label">Step 5 — Screening 1 (title + abstract)</div>
+<div class="card">
+  {% if n_exclusion == 0 %}
+  <div class="flash flash-error" style="display:block;">Define exclusion criteria in <a href="/w/{{ ws.id }}/settings">Settings</a> first.</div>
+  {% elif not has_key %}
+  <div class="flash flash-error" style="display:block;">Set your Anthropic API key in <a href="/profile">your profile</a> first.</div>
+  {% endif %}
+  <form method="post" action="/w/{{ ws.id }}/screening/run" id="scr-form">
+    <button class="btn btn-primary" type="submit" id="scr-btn"
+      {{ 'disabled' if (n_exclusion == 0 or not has_key or counts.pending == 0) else '' }}>
+      Run screening 1 on {{ counts.pending }} pending
+    </button>
+    <span class="muted small">Model errs toward inclusion; decisions are sticky.</span>
+  </form>
+  <div id="scr-status" class="flash" style="display:none;"></div>
+</div>
+
+<div class="cards-label">Steps 6–7 — Full text (included records)</div>
+<div class="card">
+  <form method="post" action="/w/{{ ws.id }}/fulltext/run" id="ft-form">
+    <button class="btn" type="submit" id="ft-btn" {{ 'disabled' if counts.include == 0 else '' }}>
+      Fetch full texts (Unpaywall → paper2md)
+    </button>
+    <span class="muted small">Downloads open-access PDFs and converts them; upload the rest manually below.</span>
+  </form>
+  <div id="ft-status" class="flash" style="display:none;"></div>
+</div>
+
+<div class="cards-label">
+  Records
+  <span style="font-weight:400; text-transform:none; letter-spacing:0;">
+    {% for d in ['pending','include','exclude'] %}
+    · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }}</a>
+    {% endfor %}
+  </span>
+</div>
+<table class="table">
+  <thead><tr><th>Title</th><th>Screen 1</th><th>Full text</th><th></th></tr></thead>
+  <tbody>
+    {% for r in records %}
+    <tr>
+      <td>
+        <strong>{{ r.title or '(untitled)' }}</strong>
+        <div class="muted small">{{ r.year or '' }}{% if r.authors %} · {{ r.authors }}{% endif %}</div>
+        {% if r.screen1_reason %}<div class="muted small rationale">{{ r.screen1_reason }}</div>{% endif %}
+      </td>
+      <td class="nowrap">
+        {% if r.screen1_decision == 'include' %}<span class="badge badge-ok">include</span>
+        {% elif r.screen1_decision == 'exclude' %}<span class="badge" style="background:var(--danger-bg);color:var(--danger);">exclude</span>
+        {% else %}<span class="badge badge-muted">pending</span>{% endif %}
+        {% if r.screen1_by %}<div class="muted small">{{ r.screen1_by }}</div>{% endif %}
+      </td>
+      <td class="nowrap small">
+        {% if r.full_text_status == 'converted' %}<span class="badge badge-ok">converted</span>
+        {% elif r.full_text_status == 'fetched' %}<span class="badge badge-warn">PDF only</span>
+        {% elif r.full_text_status == 'url' %}<a href="{{ r.full_text_url }}" target="_blank" rel="noopener" class="badge badge-warn">OA link</a>
+        {% elif r.full_text_status == 'failed' %}<span class="badge badge-muted">not found</span>
+        {% else %}<span class="muted">—</span>{% endif %}
+        {% if r.screen1_decision == 'include' and r.full_text_status != 'converted' %}
+        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/fulltext/upload" enctype="multipart/form-data" style="margin-top:4px;">
+          <input type="file" name="file" accept=".pdf" required style="font-size:11px;">
+          <button class="btn btn-small" type="submit">Upload PDF</button>
+        </form>
+        {% endif %}
+      </td>
+      <td class="ta-right nowrap">
+        {% for d in ['include','exclude','pending'] %}
+        {% if r.screen1_decision != d %}
+        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/screen1" style="display:inline;">
+          <input type="hidden" name="decision" value="{{ d }}">
+          <button class="btn btn-small" type="submit" title="Set {{ d }}">{{ d[:3] }}</button>
+        </form>
+        {% endif %}
+        {% endfor %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">No records with this decision.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function poller(formId, statusId, btnId, url, runningStates) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  const box = document.getElementById(statusId), btn = document.getElementById(btnId);
+  async function poll() {
+    const j = await (await fetch(url)).json();
+    if (j.status === 'idle') return;
+    box.style.display = 'block';
+    if (j.status === 'running') {
+      if (btn) btn.disabled = true;
+      box.className = 'flash';
+      const prog = j.total ? ` (${j.done}/${j.total})` : '';
+      box.textContent = (j.message || 'running') + prog;
+      setTimeout(poll, 2000);
+    } else if (j.status === 'done') {
+      box.className = 'flash flash-ok';
+      box.textContent = j.message || 'Done.';
+      setTimeout(() => location.reload(), 1500);
+    } else if (j.status === 'error') {
+      box.className = 'flash flash-error';
+      box.textContent = 'Error: ' + (j.message || 'unknown');
+      if (btn) btn.disabled = false;
+    }
+  }
+  form.addEventListener('submit', () => setTimeout(poll, 800));
+  poll();
+}
+poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status');
+poller('ft-form', 'ft-status', 'ft-btn', '/w/{{ ws.id }}/fulltext/status');
+</script>
+{% endblock %}

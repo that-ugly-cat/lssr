@@ -18,7 +18,7 @@ import secrets
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, String, Text, create_engine,
+    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
@@ -60,6 +60,7 @@ class Workspace(Base):
     name              = Column(String, nullable=False)
     description       = Column(Text, nullable=True)
     research_question = Column(Text, nullable=True)
+    screening_model   = Column(String, default="claude-haiku-4-5")
     owner_id          = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at        = Column(DateTime, default=datetime.utcnow)
 
@@ -198,8 +199,10 @@ class Record(Base):
     first_seen_iter_id = Column(Integer, ForeignKey("iterations.id"), nullable=True)
     last_seen_iter_id  = Column(Integer, ForeignKey("iterations.id"), nullable=True)
     # full text (steps 6-7)
-    full_text_path = Column(String, nullable=True)
-    full_text_md   = Column(Text, nullable=True)
+    full_text_status = Column(String, default="none")  # none | url | fetched | converted | failed
+    full_text_url    = Column(String, nullable=True)   # OA URL fallback when direct download is blocked
+    full_text_path   = Column(String, nullable=True)
+    full_text_md     = Column(Text, nullable=True)
     # sticky screening decisions (steps 5, 8) — unused in Fase 1, schema-ready
     screen1_decision = Column(String, default="pending")  # include | exclude | pending
     screen1_reason   = Column(Text, nullable=True)
@@ -217,6 +220,53 @@ class Record(Base):
                              cascade="all, delete-orphan")
 
 
+# ── Criteria (steps 5, 8, 9) ───────────────────────────────────────────────────
+
+class Criterion(Base):
+    """Unified table for the three criterion sets defined in a workspace:
+      exclusion → screening 1 (title+abstract), inclusion → screening 2 (full
+      text), assessment → step 9. `description` becomes the LLM guidance."""
+    __tablename__ = "criteria"
+    id           = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    kind         = Column(String, nullable=False)   # exclusion | inclusion | assessment
+    label        = Column(String, nullable=False)
+    description  = Column(Text, nullable=True)
+    position     = Column(Integer, default=0)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+    workspace = relationship("Workspace", backref="criteria")
+
+
+# ── Cost tracking (LLM steps) ──────────────────────────────────────────────────
+
+# Pricing per million tokens (input, output) — approximate, update when Anthropic
+# changes rates. Mirrors the AutoCode table.
+PRICING: dict[str, tuple[float, float]] = {
+    "claude-haiku-4-5": (0.8,   4.0),
+    "claude-sonnet-5":  (3.0,  15.0),
+    "claude-opus-4-8":  (15.0, 75.0),
+}
+DEFAULT_SCREENING_MODEL = "claude-haiku-4-5"
+
+
+def calc_cost(model: str, tokens_in: int, tokens_out: int) -> float:
+    p = PRICING.get(model, PRICING[DEFAULT_SCREENING_MODEL])
+    return (tokens_in * p[0] + tokens_out * p[1]) / 1_000_000
+
+
+class UserCostLog(Base):
+    __tablename__ = "user_cost_log"
+    id            = Column(Integer, primary_key=True)
+    user_id       = Column(Integer, ForeignKey("users.id"), nullable=True)
+    workspace_id  = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    step          = Column(String, nullable=False)  # screen1 | screen2 | assessment | translate | synthesis
+    input_tokens  = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    cost_usd      = Column(Float, default=0.0)
+    recorded_at   = Column(DateTime, default=datetime.utcnow)
+
+
 # ── Init / helpers ────────────────────────────────────────────────────────────
 
 def init_db():
@@ -226,8 +276,9 @@ def init_db():
     from sqlalchemy import text
     with engine.connect() as conn:
         for stmt in [
-            # placeholder for future additive columns, e.g.:
-            # "ALTER TABLE workspaces ADD COLUMN research_question TEXT",
+            "ALTER TABLE workspaces ADD COLUMN screening_model VARCHAR DEFAULT 'claude-haiku-4-5'",
+            "ALTER TABLE records ADD COLUMN full_text_status VARCHAR DEFAULT 'none'",
+            "ALTER TABLE records ADD COLUMN full_text_url VARCHAR",
         ]:
             try:
                 conn.execute(text(stmt))
@@ -277,6 +328,12 @@ def current_iteration(db, workspace: "Workspace") -> "Iteration":
         db.commit()
         db.refresh(it)
     return it
+
+
+def workspace_criteria(db, workspace: "Workspace", kind: str) -> list["Criterion"]:
+    return (db.query(Criterion)
+              .filter(Criterion.workspace_id == workspace.id, Criterion.kind == kind)
+              .order_by(Criterion.position, Criterion.id).all())
 
 
 def get_query(db, workspace: "Workspace", database: str) -> "SearchQuery | None":
