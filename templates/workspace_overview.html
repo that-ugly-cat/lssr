@@ -11,9 +11,10 @@
   {% set stages = [
     (1, 'Query', 'Search & translate (PubMed → Scopus / WoS / …)', 'query'),
     (2, 'Records', 'Import, deduplicate & curate the pool', 'records'),
-    (3, 'Screening', 'Title/abstract screening & full-text retrieval', 'screening'),
-    (4, 'Assessment', 'Full-text screening & per-criterion findings', 'assessment'),
-    (5, 'Synthesis', 'Narrative synthesis, PRISMA & public page', 'synthesis')
+    (3, 'Screening', 'Title/abstract screening vs exclusion criteria', 'screening'),
+    (4, 'Full text', 'Retrieve open-access PDFs & convert to markdown', 'fulltext'),
+    (5, 'Assessment', 'Full-text screening & per-criterion findings', 'assessment'),
+    (6, 'Synthesis', 'Narrative synthesis, PRISMA & public page', 'synthesis')
   ] %}
   <div class="pipeline-steps">
     {% for n, label, desc, tab in stages %}

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Full text — {{ ws.name }}{% endblock %}
+{% block body %}
+{% include "_ws_tabs.html" %}
+
+<div class="cards-label">Steps 6–7 — Full-text retrieval (screening-1 included)</div>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">
+    Two passes: first fetch open-access PDFs from Unpaywall, then upload the ones
+    it can't reach, then convert every stored PDF to markdown with paper2md.
+    Converted full texts flow to Assessment.
+  </p>
+  <div class="ft-counts muted small">
+    <span>📄 {{ ft.included }} included</span> ·
+    <span>⬇️ {{ ft.to_fetch }} to fetch</span> ·
+    <span>📥 {{ ft.fetched }} PDF ready</span> ·
+    <span>✅ {{ ft.converted }} converted</span>
+  </div>
+
+  <div style="display:flex; gap:24px; flex-wrap:wrap; margin-top:12px;">
+    <div style="flex:1; min-width:240px;">
+      <form method="post" action="/w/{{ ws.id }}/fulltext/fetch" id="ft-fetch-form">
+        <button class="btn" type="submit" id="ft-fetch-btn"
+          {{ 'disabled' if ft.to_fetch == 0 else '' }}>
+          1 · Fetch {{ ft.to_fetch }} OA PDFs
+        </button>
+        <span class="muted small">Unpaywall → PDF</span>
+      </form>
+      <div class="progress-wrap" id="ft-fetch-prog" style="display:none;">
+        <div class="progress"><div class="progress-fill" id="ft-fetch-fill"></div></div>
+      </div>
+      <div id="ft-fetch-status" class="flash" style="display:none;"></div>
+    </div>
+    <div style="flex:1; min-width:240px;">
+      <form method="post" action="/w/{{ ws.id }}/fulltext/convert" id="ft-conv-form">
+        <button class="btn" type="submit" id="ft-conv-btn"
+          {{ 'disabled' if ft.fetched == 0 else '' }}>
+          2 · Convert {{ ft.fetched }} PDFs
+        </button>
+        <span class="muted small">paper2md → markdown</span>
+      </form>
+      <div class="progress-wrap" id="ft-conv-prog" style="display:none;">
+        <div class="progress"><div class="progress-fill" id="ft-conv-fill"></div></div>
+      </div>
+      <div id="ft-conv-status" class="flash" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<table class="table">
+  <thead><tr><th>Title</th><th>Full text</th></tr></thead>
+  <tbody>
+    {% for r in records %}
+    <tr>
+      <td>
+        <strong>{{ r.title or '(untitled)' }}</strong>
+        <div class="muted small">{{ r.year or '' }}{% if r.authors %} · {{ r.authors }}{% endif %}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% endif %}</div>
+      </td>
+      <td class="nowrap small">
+        {% if r.full_text_status == 'converted' %}<span class="badge badge-ok">converted</span>
+        {% elif r.full_text_status == 'fetched' %}<span class="badge badge-warn">PDF only</span>
+        {% elif r.full_text_status == 'url' %}<a href="{{ r.full_text_url }}" target="_blank" rel="noopener" class="badge badge-warn">OA link</a>
+        {% elif r.full_text_status == 'failed' %}<span class="badge badge-muted">not found</span>
+        {% else %}<span class="muted">—</span>{% endif %}
+        {% if r.full_text_status != 'converted' %}
+        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/fulltext/upload" enctype="multipart/form-data" style="margin-top:4px;">
+          <input type="file" name="file" accept=".pdf" required style="font-size:11px;">
+          <button class="btn btn-small" type="submit">Upload PDF</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="2" class="muted">No records included at screening 1 yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% include "_step_done.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function poller(formId, statusId, btnId, url, progId, fillId) {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  const box = document.getElementById(statusId), btn = document.getElementById(btnId);
+  const prog = progId ? document.getElementById(progId) : null;
+  const fill = fillId ? document.getElementById(fillId) : null;
+  let sawRunning = false;
+  function setBar(j) {
+    if (!prog || !fill) return;
+    prog.style.display = 'flex';
+    fill.style.width = (j.total ? Math.round((j.done / j.total) * 100) : 0) + '%';
+  }
+  async function poll() {
+    const j = await (await fetch(url)).json();
+    if (j.status === 'idle') return;
+    if (j.status === 'running') {
+      sawRunning = true;
+      if (btn) btn.disabled = true;
+      box.style.display = 'block'; box.className = 'flash';
+      box.textContent = (j.message || 'running') + (j.total ? ` (${j.done}/${j.total})` : '');
+      setBar(j);
+      setTimeout(poll, 2000);
+    } else if (j.status === 'done') {
+      if (sawRunning) {
+        box.style.display = 'block'; box.className = 'flash flash-ok';
+        box.textContent = j.message || 'Done.';
+        setBar({done: 1, total: 1});
+        setTimeout(() => location.reload(), 1800);
+      }
+    } else if (j.status === 'error') {
+      box.style.display = 'block'; box.className = 'flash flash-error';
+      box.textContent = 'Error: ' + (j.message || 'unknown');
+      if (btn) btn.disabled = false;
+    }
+  }
+  form.addEventListener('submit', () => { sawRunning = true; setTimeout(poll, 800); });
+  poll();
+}
+poller('ft-fetch-form', 'ft-fetch-status', 'ft-fetch-btn', '/w/{{ ws.id }}/fulltext/fetch/status', 'ft-fetch-prog', 'ft-fetch-fill');
+poller('ft-conv-form', 'ft-conv-status', 'ft-conv-btn', '/w/{{ ws.id }}/fulltext/convert/status', 'ft-conv-prog', 'ft-conv-fill');
+</script>
+{% endblock %}

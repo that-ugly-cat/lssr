@@ -505,7 +505,7 @@ def current_iteration(db, workspace: "Workspace") -> "Iteration":
     return it
 
 
-PIPELINE_STEPS = ["query", "records", "screening", "assessment", "synthesis"]
+PIPELINE_STEPS = ["query", "records", "screening", "fulltext", "assessment", "synthesis"]
 
 
 def workspace_steps_done(workspace: "Workspace") -> set:
