@@ -48,17 +48,6 @@
   <div id="scr-status" class="flash" style="display:none;"></div>
 </div>
 
-<div class="cards-label">Steps 6–7 — Full text (included records)</div>
-<div class="card">
-  <form method="post" action="/w/{{ ws.id }}/fulltext/run" id="ft-form">
-    <button class="btn" type="submit" id="ft-btn" {{ 'disabled' if counts.include == 0 else '' }}>
-      Fetch full texts (Unpaywall → paper2md)
-    </button>
-    <span class="muted small">Downloads open-access PDFs and converts them; upload the rest manually below.</span>
-  </form>
-  <div id="ft-status" class="flash" style="display:none;"></div>
-</div>
-
 {% set f = filters %}
 {% macro sorth(field, label) %}
   {%- set no = 'asc' if (f.sort == field and f.order == 'desc') else 'desc' -%}
@@ -97,7 +86,7 @@
 </form>
 
 <table class="table">
-  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Screen 1</th><th>Full text</th><th>Set manually</th></tr></thead>
+  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Screen 1</th><th>Set manually</th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr>
@@ -118,19 +107,6 @@
         {% if r.screen1_by == 'user' %}<span class="badge badge-model">manual</span>
         {% elif r.screen1_by == 'model' %}<span class="badge badge-muted">model</span>{% endif %}
       </td>
-      <td class="nowrap small">
-        {% if r.full_text_status == 'converted' %}<span class="badge badge-ok">converted</span>
-        {% elif r.full_text_status == 'fetched' %}<span class="badge badge-warn">PDF only</span>
-        {% elif r.full_text_status == 'url' %}<a href="{{ r.full_text_url }}" target="_blank" rel="noopener" class="badge badge-warn">OA link</a>
-        {% elif r.full_text_status == 'failed' %}<span class="badge badge-muted">not found</span>
-        {% else %}<span class="muted">—</span>{% endif %}
-        {% if r.screen1_decision == 'include' and r.full_text_status != 'converted' %}
-        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/fulltext/upload" enctype="multipart/form-data" style="margin-top:4px;">
-          <input type="file" name="file" accept=".pdf" required style="font-size:11px;">
-          <button class="btn btn-small" type="submit">Upload PDF</button>
-        </form>
-        {% endif %}
-      </td>
       <td class="ta-right nowrap">
         {% set emoji = {'include': '✅', 'exclude': '❌', 'pending': '❓'} %}
         {% for d in ['include','exclude','pending'] %}
@@ -144,7 +120,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="5" class="muted">No records match.</td></tr>
+    <tr><td colspan="4" class="muted">No records match.</td></tr>
     {% endfor %}
   </tbody>
 </table>
@@ -187,6 +163,5 @@ function poller(formId, statusId, btnId, url, runningStates) {
   poll();
 }
 poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status');
-poller('ft-form', 'ft-status', 'ft-btn', '/w/{{ ws.id }}/fulltext/status');
 </script>
 {% endblock %}

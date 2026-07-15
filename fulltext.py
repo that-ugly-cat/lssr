@@ -1,15 +1,21 @@
 """
-Full-text acquisition (step 6) + paper2md conversion (step 7).
+Full-text acquisition (step 6) + paper2md conversion (step 7), as two separate
+on-demand passes so the human can slot manual PDFs in between.
 
-Step 6: try Unpaywall for an OA PDF (adapted from RevMaster's pdf_fetch). If the
-PDF downloads, store it; if only a URL is available, keep it as a fallback for
-manual retrieval. Manual PDF upload covers everything Unpaywall can't reach.
+Pass 1 — FETCH (Unpaywall, adapted from RevMaster's pdf_fetch): for every
+included record without a PDF yet, ask Unpaywall for an OA PDF. If it downloads,
+store it (status "fetched"); if only a URL is available, keep it as a fallback
+for manual retrieval (status "url"); otherwise "failed". No paper2md here.
 
-Step 7: send the PDF to the paper2md service (POST /convert) and store the clean
-markdown on the record. No reimplementation — paper2md already does the hard part.
+Between the passes the human uploads the PDFs Unpaywall couldn't reach — each
+upload just stores the file (status "fetched"), no conversion yet.
 
-Batch runs as a background thread over the included pool (screen1 = include) whose
-full text isn't converted yet. JOBS keyed by workspace_id.
+Pass 2 — CONVERT (paper2md): send every stored-but-unconverted PDF to the
+paper2md service (POST /convert) and store the clean markdown. No reimplementation
+— paper2md already does the hard part.
+
+Both passes run as background threads. JOBS are keyed by (workspace_id, kind)
+where kind is "fetch" or "convert", so their progress bars poll independently.
 """
 import os
 import threading
@@ -20,24 +26,24 @@ import requests
 DATA_ROOT = Path("data/fulltext")
 UA = {"User-Agent": "Mozilla/5.0 (compatible; LSSR/1.0)"}
 
-JOBS: dict[int, dict] = {}
+JOBS: dict[tuple[int, str], dict] = {}
 _lock = threading.Lock()
 
 
-def get_job(workspace_id: int) -> dict | None:
+def get_job(workspace_id: int, kind: str) -> dict | None:
     with _lock:
-        return JOBS.get(workspace_id)
+        return JOBS.get((workspace_id, kind))
 
 
-def _set(workspace_id: int, data: dict):
+def _set(workspace_id: int, kind: str, data: dict):
     with _lock:
-        JOBS[workspace_id] = data
+        JOBS[(workspace_id, kind)] = data
 
 
-def _update(workspace_id: int, **kw):
+def _update(workspace_id: int, kind: str, **kw):
     with _lock:
-        if workspace_id in JOBS:
-            JOBS[workspace_id].update(kw)
+        if (workspace_id, kind) in JOBS:
+            JOBS[(workspace_id, kind)].update(kw)
 
 
 # ── Unpaywall (step 6) ─────────────────────────────────────────────────────────
@@ -85,7 +91,7 @@ def pdf_to_markdown(pdf_bytes: bytes, paper2md_url: str) -> str:
     return data.get("markdown") or data.get("text") or ""
 
 
-# ── Single-record pipeline ─────────────────────────────────────────────────────
+# ── PDF storage + single-record conversion ──────────────────────────────────────
 
 def _store_pdf(workspace_id: int, record_id: int, pdf_bytes: bytes) -> Path:
     d = DATA_ROOT / str(workspace_id)
@@ -110,16 +116,18 @@ def convert_stored_pdf(db, rec, paper2md_url: str) -> str:
     return "converted"
 
 
-def ingest_uploaded_pdf(db, workspace_id: int, rec, pdf_bytes: bytes, paper2md_url: str):
-    """Manual upload path (synchronous): store + convert one record's PDF."""
+def store_uploaded_pdf(db, workspace_id: int, rec, pdf_bytes: bytes):
+    """Manual upload path: store the PDF and mark it fetched. Conversion is
+    deferred to the paper2md pass, so uploads work even if paper2md is down."""
     path = _store_pdf(workspace_id, rec.id, pdf_bytes)
     rec.full_text_path = str(path)
     rec.full_text_status = "fetched"
     db.commit()
-    return convert_stored_pdf(db, rec, paper2md_url)
 
 
-def _process_record(db, workspace_id: int, rec, email: str, paper2md_url: str) -> str:
+# ── Pass 1: fetch (Unpaywall) ───────────────────────────────────────────────────
+
+def _fetch_record(db, workspace_id: int, rec, email: str) -> str:
     doi = (rec.doi or "").strip()
     if not doi:
         rec.full_text_status = "failed"
@@ -140,15 +148,10 @@ def _process_record(db, workspace_id: int, rec, email: str, paper2md_url: str) -
     rec.full_text_path = str(path)
     rec.full_text_status = "fetched"
     db.commit()
-    try:
-        return convert_stored_pdf(db, rec, paper2md_url)
-    except Exception:
-        return "fetched"
+    return "fetched"
 
 
-# ── Batch background job ───────────────────────────────────────────────────────
-
-def _run(workspace_id: int, email: str, paper2md_url: str):
+def _run_fetch(workspace_id: int, email: str):
     from models import Record, SessionLocal
     db = SessionLocal()
     try:
@@ -158,32 +161,67 @@ def _run(workspace_id: int, email: str, paper2md_url: str):
                              Record.screen1_decision == "include",
                              Record.full_text_status.in_(["none", "failed", "url"])).all())
         total = len(targets)
-        _set(workspace_id, {"status": "running", "message": f"Fetching {total} full texts…",
-                            "total": total, "done": 0, "converted": 0, "url_only": 0, "failed": 0})
-        converted = url_only = failed = 0
+        _set(workspace_id, "fetch", {"status": "running", "message": f"Fetching {total} OA PDFs…",
+                                     "total": total, "done": 0, "fetched": 0, "url_only": 0, "failed": 0})
+        fetched = url_only = failed = 0
         for i, rec in enumerate(targets):
-            outcome = _process_record(db, workspace_id, rec, email, paper2md_url)
-            if outcome == "converted":
-                converted += 1
+            outcome = _fetch_record(db, workspace_id, rec, email)
+            if outcome == "fetched":
+                fetched += 1
             elif outcome == "url":
                 url_only += 1
-            elif outcome in ("failed", "fetched"):
+            else:
                 failed += 1
-            _update(workspace_id, done=i + 1, converted=converted,
+            _update(workspace_id, "fetch", done=i + 1, fetched=fetched,
                     url_only=url_only, failed=failed)
-        _set(workspace_id, {"status": "done",
-                            "message": f"Done. {converted} converted, {url_only} URL-only, {failed} unresolved.",
-                            "total": total, "done": total, "converted": converted,
-                            "url_only": url_only, "failed": failed})
+        _set(workspace_id, "fetch", {"status": "done",
+                                     "message": f"Done. {fetched} PDFs fetched, {url_only} OA link only, {failed} not found. Upload the rest, then convert.",
+                                     "total": total, "done": total, "fetched": fetched,
+                                     "url_only": url_only, "failed": failed})
     except Exception as exc:
-        _set(workspace_id, {"status": "error", "message": str(exc), "error": str(exc)})
+        _set(workspace_id, "fetch", {"status": "error", "message": str(exc), "error": str(exc)})
     finally:
         db.close()
 
 
-def start_fulltext(workspace_id: int, email: str, paper2md_url: str):
-    threading.Thread(target=_run, args=(workspace_id, email, paper2md_url),
-                     daemon=True).start()
+def start_fetch(workspace_id: int, email: str):
+    threading.Thread(target=_run_fetch, args=(workspace_id, email), daemon=True).start()
+
+
+# ── Pass 2: convert (paper2md) ──────────────────────────────────────────────────
+
+def _run_convert(workspace_id: int, paper2md_url: str):
+    from models import Record, SessionLocal
+    db = SessionLocal()
+    try:
+        targets = (db.query(Record)
+                     .filter(Record.workspace_id == workspace_id,
+                             Record.is_removed == False,            # noqa: E712
+                             Record.screen1_decision == "include",
+                             Record.full_text_status == "fetched").all())
+        total = len(targets)
+        _set(workspace_id, "convert", {"status": "running", "message": f"Converting {total} PDFs…",
+                                       "total": total, "done": 0, "converted": 0, "failed": 0})
+        converted = failed = 0
+        for i, rec in enumerate(targets):
+            try:
+                convert_stored_pdf(db, rec, paper2md_url)
+                converted += 1
+            except Exception:
+                failed += 1          # PDF kept, status reverted to "fetched"
+            _update(workspace_id, "convert", done=i + 1, converted=converted, failed=failed)
+        _set(workspace_id, "convert", {"status": "done",
+                                       "message": f"Done. {converted} converted, {failed} failed.",
+                                       "total": total, "done": total,
+                                       "converted": converted, "failed": failed})
+    except Exception as exc:
+        _set(workspace_id, "convert", {"status": "error", "message": str(exc), "error": str(exc)})
+    finally:
+        db.close()
+
+
+def start_convert(workspace_id: int, paper2md_url: str):
+    threading.Thread(target=_run_convert, args=(workspace_id, paper2md_url), daemon=True).start()
 
 
 def paper2md_url() -> str:

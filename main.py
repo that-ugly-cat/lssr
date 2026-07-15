@@ -647,27 +647,47 @@ async def override_screen1(ws_id: int, rid: int, decision: str = Form(...),
     return RedirectResponse(f"/w/{ws_id}/screening?decision={decision}", status_code=302)
 
 
-# ── Full text: download + paper2md (steps 6-7) ──────────────────────────────
+# ── Full text: fetch (Unpaywall) + convert (paper2md), two passes (steps 6-7) ─
 
-@app.post("/w/{ws_id}/fulltext/run")
-async def run_fulltext(ws_id: int, user: User = Depends(get_current_user),
-                       db: Session = Depends(get_db)):
+@app.post("/w/{ws_id}/fulltext/fetch")
+async def run_fulltext_fetch(ws_id: int, user: User = Depends(get_current_user),
+                             db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     import fulltext
-    job = fulltext.get_job(ws.id)
+    job = fulltext.get_job(ws.id, "fetch")
     if job and job.get("status") == "running":
         raise HTTPException(409, "Full-text fetch already in progress")
     email = os.environ.get("UNPAYWALL_EMAIL") or ws.owner.email
-    fulltext.start_fulltext(ws.id, email, fulltext.paper2md_url())
-    return RedirectResponse(f"/w/{ws_id}/screening?decision=include", status_code=302)
+    fulltext.start_fetch(ws.id, email)
+    return RedirectResponse(f"/w/{ws_id}/assessment", status_code=302)
 
 
-@app.get("/w/{ws_id}/fulltext/status")
-async def fulltext_status(ws_id: int, user: User = Depends(get_current_user),
-                          db: Session = Depends(get_db)):
+@app.get("/w/{ws_id}/fulltext/fetch/status")
+async def fulltext_fetch_status(ws_id: int, user: User = Depends(get_current_user),
+                                db: Session = Depends(get_db)):
     _load_ws(db, user, ws_id)
     import fulltext
-    return JSONResponse(fulltext.get_job(ws_id) or {"status": "idle"})
+    return JSONResponse(fulltext.get_job(ws_id, "fetch") or {"status": "idle"})
+
+
+@app.post("/w/{ws_id}/fulltext/convert")
+async def run_fulltext_convert(ws_id: int, user: User = Depends(get_current_user),
+                               db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    import fulltext
+    job = fulltext.get_job(ws.id, "convert")
+    if job and job.get("status") == "running":
+        raise HTTPException(409, "Conversion already in progress")
+    fulltext.start_convert(ws.id, fulltext.paper2md_url())
+    return RedirectResponse(f"/w/{ws_id}/assessment", status_code=302)
+
+
+@app.get("/w/{ws_id}/fulltext/convert/status")
+async def fulltext_convert_status(ws_id: int, user: User = Depends(get_current_user),
+                                  db: Session = Depends(get_db)):
+    _load_ws(db, user, ws_id)
+    import fulltext
+    return JSONResponse(fulltext.get_job(ws_id, "convert") or {"status": "idle"})
 
 
 @app.post("/w/{ws_id}/records/{rid}/fulltext/upload")
@@ -681,11 +701,8 @@ async def upload_fulltext(ws_id: int, rid: int, file: UploadFile = File(...),
     if pdf_bytes[:4] != b"%PDF":
         raise HTTPException(400, "File does not look like a PDF")
     import fulltext
-    try:
-        fulltext.ingest_uploaded_pdf(db, ws.id, rec, pdf_bytes, fulltext.paper2md_url())
-    except Exception as exc:
-        raise HTTPException(502, f"Conversion failed: {exc}")
-    return RedirectResponse(f"/w/{ws_id}/screening?decision=include", status_code=302)
+    fulltext.store_uploaded_pdf(db, ws.id, rec, pdf_bytes)
+    return RedirectResponse(f"/w/{ws_id}/assessment", status_code=302)
 
 
 # ── Assessment: combined screening 2 + assessment (steps 8-9) ───────────────
@@ -703,9 +720,14 @@ async def assessment_page(ws_id: int, request: Request, user: User = Depends(get
         findings.setdefault(a.record_id, []).append(a)
     ready = sum(1 for r in records if r.full_text_status == "converted"
                 and r.screen2_decision == "pending")
+    # full-text pass counts (over the screen-1 included pool)
+    ft = {"included": len(records),
+          "to_fetch": sum(1 for r in records if r.full_text_status in ("none", "failed", "url")),
+          "fetched": sum(1 for r in records if r.full_text_status == "fetched"),
+          "converted": sum(1 for r in records if r.full_text_status == "converted")}
     return render(request, "workspace_assessment.html", {
         "user": user, "ws": ws, "tab": "assessment", "records": records,
-        "findings": findings, "ready": ready,
+        "findings": findings, "ready": ready, "ft": ft,
         "n_assessment": len(workspace_criteria(db, ws, "assessment")),
         "has_key": bool(_user_api_key(user)),
     })
