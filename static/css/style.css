@@ -475,3 +475,35 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
 @media (max-width: 1240px) {
   .crit-rail .crit-panel { width: 210px; }
 }
+
+/* pipeline step marked done */
+.pipeline-done .pipeline-num,
+.pipeline-done:hover .pipeline-num { background: var(--ok); color: #0b1a10; }
+
+/* ── public review page ── */
+.pub-steps { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 24px; }
+.pub-step {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 999px; font-size: 13px;
+  border: 1px solid var(--border); text-transform: capitalize;
+}
+.pub-step.done { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+.pub-step.pending { color: var(--muted-2); }
+.pub-step-mark { font-weight: 700; }
+.pub-query {
+  white-space: pre-wrap; word-break: break-word; margin: 4px 0 0;
+  background: var(--card-hover); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; font-size: 12px; font-family: ui-monospace, monospace;
+}
+.pub-block-label { font-size: 13px; font-weight: 600; margin: 16px 0 8px; color: var(--muted-2); }
+.pub-types { display: flex; flex-wrap: wrap; gap: 8px; }
+.pub-hist {
+  display: flex; align-items: flex-end; gap: 2px; height: 140px;
+  border-bottom: 1px solid var(--border); padding-top: 4px;
+}
+.pub-bar { flex: 1 1 0; min-width: 2px; height: 100%; display: flex; align-items: flex-end; }
+.pub-bar-fill { width: 100%; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 1px; }
+.pub-bar:hover .pub-bar-fill { background: var(--accent-light); }
+.pub-hist-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted-2); margin-top: 4px; }
+.pub-cloud { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; line-height: 1.6; }
+.pub-cloud span { color: var(--accent-light); }

@@ -17,8 +17,8 @@
   ] %}
   <div class="pipeline-steps">
     {% for n, label, desc, tab in stages %}
-    <a class="btn pipeline-step" href="/w/{{ ws.id }}/{{ tab }}">
-      <span class="pipeline-num">{{ n }}</span>
+    <a class="btn pipeline-step {{ 'pipeline-done' if tab in steps_done else '' }}" href="/w/{{ ws.id }}/{{ tab }}">
+      <span class="pipeline-num">{% if tab in steps_done %}✓{% else %}{{ n }}{% endif %}</span>
       <span class="pipeline-text">
         <span class="pipeline-label">{{ label }}</span>
         <span class="pipeline-desc">{{ desc }}</span>

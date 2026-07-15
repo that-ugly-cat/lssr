@@ -184,6 +184,8 @@
   </tbody>
 </table>
 {% if records|length >= 500 %}<p class="muted small">Showing first 500 — narrow the filter to see more.</p>{% endif %}
+
+{% include "_step_done.html" %}
 {% endblock %}
 
 {% block scripts %}

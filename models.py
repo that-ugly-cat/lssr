@@ -13,6 +13,7 @@ Migration strategy (borant house pattern): init_db() runs ALTER TABLE for each
 new column on every startup; SQLite raises on duplicates, caught and ignored
 (additive only).
 """
+import json
 import os
 import secrets
 from datetime import datetime
@@ -66,6 +67,7 @@ class Workspace(Base):
     # screening; 2 = classic blind double screening). The LLM pre-screens either
     # way; with 0 human votes its decision stands (sole-screener mode).
     screen1_reviewers_required = Column(Integer, default=1)
+    steps_done_json   = Column(Text, nullable=True)   # JSON list of completed pipeline steps
     owner_id          = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at        = Column(DateTime, default=datetime.utcnow)
 
@@ -421,6 +423,7 @@ def init_db():
         for stmt in [
             "ALTER TABLE workspaces ADD COLUMN screening_model VARCHAR DEFAULT 'claude-haiku-4-5'",
             "ALTER TABLE workspaces ADD COLUMN screen1_reviewers_required INTEGER DEFAULT 1",
+            "ALTER TABLE workspaces ADD COLUMN steps_done_json VARCHAR",
             "ALTER TABLE records ADD COLUMN full_text_status VARCHAR DEFAULT 'none'",
             "ALTER TABLE records ADD COLUMN full_text_url VARCHAR",
         ]:
@@ -500,6 +503,24 @@ def current_iteration(db, workspace: "Workspace") -> "Iteration":
         db.commit()
         db.refresh(it)
     return it
+
+
+PIPELINE_STEPS = ["query", "records", "screening", "assessment", "synthesis"]
+
+
+def workspace_steps_done(workspace: "Workspace") -> set:
+    try:
+        v = json.loads(workspace.steps_done_json) if workspace.steps_done_json else []
+        return set(v) if isinstance(v, list) else set()
+    except (ValueError, TypeError):
+        return set()
+
+
+def set_step_done(db, workspace: "Workspace", step: str, done: bool):
+    s = workspace_steps_done(workspace)
+    s.add(step) if done else s.discard(step)
+    workspace.steps_done_json = json.dumps(sorted(s))
+    db.commit()
 
 
 def workspace_criteria(db, workspace: "Workspace", kind: str) -> list["Criterion"]:

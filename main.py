@@ -16,12 +16,14 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from auth import (
-    create_token, get_current_user, get_user_or_none, hash_password, verify_password,
+    create_token, get_current_user, get_user_or_none, hash_password, require_admin,
+    verify_password,
 )
 from models import (
-    DATABASES, PRICING, Criterion, Import, PublicShare, Record, User, Workspace,
-    WorkspaceMember, can_access, current_iteration, get_db, get_query, init_db,
-    new_share_token, upsert_query, user_workspaces, workspace_criteria,
+    DATABASES, PIPELINE_STEPS, PRICING, Criterion, Import, PublicShare, Record, User,
+    Workspace, WorkspaceMember, can_access, current_iteration, get_db, get_query, init_db,
+    new_share_token, set_step_done, upsert_query, user_workspaces, workspace_criteria,
+    workspace_steps_done,
 )
 
 BASE = Path(__file__).parent
@@ -181,9 +183,19 @@ async def workspace_overview(ws_id: int, request: Request,
     return render(request, "workspace_overview.html", {
         "user": user, "ws": ws,
         "is_owner": ws.owner_id == user.id or user.is_admin,
-        "members": members, "shares": shares,
+        "members": members, "shares": shares, "steps_done": workspace_steps_done(ws),
         "iterations": iterations, "iter_new": iter_new,
     })
+
+
+@app.post("/w/{ws_id}/steps/{step}/toggle")
+async def toggle_step_done(ws_id: int, step: str, user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    if step not in PIPELINE_STEPS:
+        raise HTTPException(400, "Unknown step")
+    set_step_done(db, ws, step, step not in workspace_steps_done(ws))
+    return RedirectResponse(f"/w/{ws_id}/{step}", status_code=302)
 
 
 @app.post("/w/{ws_id}/iterations/new")
@@ -232,21 +244,68 @@ async def revoke_share(share_id: int, user: User = Depends(get_current_user),
     raise HTTPException(403, "Owner required")
 
 
+def _public_stats(db, ws_id: int) -> dict:
+    """Records + screening stats for the public page: year histogram, type
+    counts, keyword cloud, screening breakdown."""
+    from collections import Counter
+    recs = db.query(Record).filter(Record.workspace_id == ws_id,
+                                   Record.is_removed == False).all()  # noqa: E712
+    years = Counter(r.year for r in recs if r.year)
+    year_hist, ymin, ymax = [], None, None
+    if years:
+        ymin, ymax = min(years), max(years)
+        peak = max(years.values())
+        year_hist = [{"year": y, "count": years.get(y, 0),
+                      "pct": round(years.get(y, 0) / peak * 100) if peak else 0}
+                     for y in range(ymin, ymax + 1)]
+    type_lbl = {"article": "papers", "book": "books",
+                "book_chapter": "book chapters", "grey": "grey literature"}
+    types = Counter(r.type or "article" for r in recs)
+    type_counts = [{"label": type_lbl.get(t, t), "count": c} for t, c in types.most_common()]
+    kw = Counter()
+    for r in recs:
+        for k in _fromjson(r.keywords_json):
+            term = (k or "").strip().lower()
+            if term:
+                kw[term] += 1
+    top = kw.most_common(45)
+    kwpeak = top[0][1] if top else 1
+    keywords = [{"term": t, "count": c, "size": round(0.85 + 1.75 * (c / kwpeak), 2)}
+                for t, c in top]
+    def sc(d):
+        return sum(1 for r in recs if r.screen1_decision == d)
+    screen = {d: sc(d) for d in ("include", "maybe", "exclude", "conflict", "pending")}
+    screen["total"] = len(recs)
+    return {"n_records": len(recs), "year_hist": year_hist, "year_min": ymin,
+            "year_max": ymax, "type_counts": type_counts, "keywords": keywords,
+            "screen": screen}
+
+
 @app.get("/r/{token}", response_class=HTMLResponse)
 async def public_review(token: str, request: Request, db: Session = Depends(get_db)):
-    """Public, no-login view. Exposes ONLY the synthesis page (step 10).
-    Placeholder until Fase 3 builds the Synthesis entity."""
+    """Public, no-login view. Shows a progress line and — per step marked done —
+    the queries, record stats, screening breakdown, and the published synthesis."""
     share = db.query(PublicShare).filter(PublicShare.token == token,
                                          PublicShare.active == True).first()  # noqa: E712
     if not share:
         raise HTTPException(404, "Not found")
+    ws = share.workspace
+    steps_done = workspace_steps_done(ws)
     from models import Synthesis
-    syn = db.query(Synthesis).filter(Synthesis.workspace_id == share.workspace_id,
+    syn = db.query(Synthesis).filter(Synthesis.workspace_id == ws.id,
                                      Synthesis.published == True).first()  # noqa: E712
     prisma = json.loads(syn.prisma_json) if (syn and syn.prisma_json) else None
     blocks = sorted(syn.blocks, key=lambda b: b.position) if syn else []
+    queries = []
+    if "query" in steps_done:
+        queries = [(q.database, q.query_string) for q in
+                   sorted(ws.queries, key=lambda q: (q.database != "pubmed", q.database))
+                   if q.query_string]
+    stats = _public_stats(db, ws.id)
     return render(request, "public_review.html", {
-        "user": None, "ws": share.workspace, "syn": syn, "prisma": prisma, "blocks": blocks,
+        "user": None, "ws": ws, "syn": syn, "prisma": prisma, "blocks": blocks,
+        "steps": PIPELINE_STEPS, "steps_done": steps_done,
+        "queries": queries, "stats": stats,
     })
 
 
@@ -267,6 +326,69 @@ async def set_api_key(api_key: str = Form(...), user: User = Depends(get_current
     return RedirectResponse("/profile", status_code=302)
 
 
+# ── Admin: user management ──────────────────────────────────────────────────
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page(request: Request, error: str = "", user: User = Depends(require_admin),
+                     db: Session = Depends(get_db)):
+    users = db.query(User).order_by(User.id).all()
+    owned = {u.id: db.query(Workspace).filter(Workspace.owner_id == u.id).count() for u in users}
+    return render(request, "admin.html", {"user": user, "users": users, "owned": owned,
+                                          "error": error})
+
+
+@app.post("/admin/users")
+async def admin_create_user(email: str = Form(...), name: str = Form(...),
+                            password: str = Form(...), is_admin: str = Form(""),
+                            user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    email = email.strip().lower()
+    if not email or not name.strip() or len(password) < 8:
+        return RedirectResponse("/admin?error=Email,+name+and+an+8%2B+char+password+are+required",
+                                status_code=302)
+    if db.query(User).filter(User.email == email).first():
+        return RedirectResponse("/admin?error=That+email+already+exists", status_code=302)
+    db.add(User(email=email, name=name.strip(), hashed_password=hash_password(password),
+                is_admin=bool(is_admin), is_active=True))
+    db.commit()
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{uid}/toggle-active")
+async def admin_toggle_active(uid: int, user: User = Depends(require_admin),
+                              db: Session = Depends(get_db)):
+    if uid == user.id:
+        return RedirectResponse("/admin?error=You+can%27t+deactivate+yourself", status_code=302)
+    target = db.query(User).filter(User.id == uid).first()
+    if target:
+        target.is_active = not target.is_active
+        db.commit()
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{uid}/toggle-admin")
+async def admin_toggle_admin(uid: int, user: User = Depends(require_admin),
+                             db: Session = Depends(get_db)):
+    if uid == user.id:
+        return RedirectResponse("/admin?error=You+can%27t+change+your+own+admin+flag", status_code=302)
+    target = db.query(User).filter(User.id == uid).first()
+    if target:
+        target.is_admin = not target.is_admin
+        db.commit()
+    return RedirectResponse("/admin", status_code=302)
+
+
+@app.post("/admin/users/{uid}/reset-password")
+async def admin_reset_password(uid: int, password: str = Form(...),
+                               user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    if len(password) < 8:
+        return RedirectResponse("/admin?error=Password+must+be+8%2B+characters", status_code=302)
+    target = db.query(User).filter(User.id == uid).first()
+    if target:
+        target.hashed_password = hash_password(password)
+        db.commit()
+    return RedirectResponse("/admin", status_code=302)
+
+
 # ── Query strategy (steps 1-2) ──────────────────────────────────────────────
 
 @app.get("/w/{ws_id}/query", response_class=HTMLResponse)
@@ -278,7 +400,7 @@ async def query_page(ws_id: int, request: Request, user: User = Depends(get_curr
     translations = [(d, get_query(db, ws, d)) for d in DATABASES if d != "pubmed"]
     freqs = term_frequencies(db, ws.id, top_n=30)
     return render(request, "workspace_query.html", {
-        "user": user, "ws": ws, "tab": "query", "pubmed": pubmed,
+        "user": user, "ws": ws, "tab": "query", "steps_done": workspace_steps_done(ws), "pubmed": pubmed,
         "translations": translations, "freqs": freqs,
         "has_key": bool(_user_api_key(user)),
     })
@@ -368,7 +490,8 @@ async def records_page(ws_id: int, request: Request, show: str = "active",
         Import.created_at.desc()).limit(10).all()
     dbs_present = _dbs_present(db, ws.id)
     return render(request, "workspace_records.html", {
-        "user": user, "ws": ws, "tab": "records", "records": records,
+        "user": user, "ws": ws, "tab": "records", "steps_done": workspace_steps_done(ws),
+        "records": records,
         "active_n": active_n, "removed_n": removed_n, "show": show,
         "imports": imports, "dbs_present": dbs_present,
         "filters": {"show": show, "q": q, "source": source, "rtype": rtype,
@@ -733,7 +856,8 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     est_rerun = _fmt(screening.estimate_cost(model, system, counts["pending"] + model_n,
                                              pending_chars + model_chars))
     return render(request, "workspace_screening.html", {
-        "user": user, "ws": ws, "tab": "screening", "counts": counts,
+        "user": user, "ws": ws, "tab": "screening", "steps_done": workspace_steps_done(ws),
+        "counts": counts,
         "model_n": model_n, "manual_n": manual_n, "model": model,
         "est_pending": est_pending, "est_rerun": est_rerun,
         "records": records, "decision": decision,
@@ -905,7 +1029,8 @@ async def assessment_page(ws_id: int, request: Request, user: User = Depends(get
           "fetched": sum(1 for r in records if r.full_text_status == "fetched"),
           "converted": sum(1 for r in records if r.full_text_status == "converted")}
     return render(request, "workspace_assessment.html", {
-        "user": user, "ws": ws, "tab": "assessment", "records": records,
+        "user": user, "ws": ws, "tab": "assessment", "steps_done": workspace_steps_done(ws),
+        "records": records,
         "findings": findings, "ready": ready, "ft": ft,
         "n_assessment": len(workspace_criteria(db, ws, "assessment")),
         "has_key": bool(_user_api_key(user)),
@@ -948,7 +1073,8 @@ async def synthesis_page(ws_id: int, request: Request, user: User = Depends(get_
     shares = db.query(PublicShare).filter(PublicShare.workspace_id == ws.id,
                                           PublicShare.active == True).all()  # noqa: E712
     return render(request, "workspace_synthesis.html", {
-        "user": user, "ws": ws, "tab": "synthesis", "syn": syn, "prisma": prisma,
+        "user": user, "ws": ws, "tab": "synthesis", "steps_done": workspace_steps_done(ws),
+        "syn": syn, "prisma": prisma,
         "blocks": blocks, "shares": shares, "has_key": bool(_user_api_key(user)),
         "is_owner": ws.owner_id == user.id or user.is_admin,
     })

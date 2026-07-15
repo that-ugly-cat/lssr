@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Admin — users{% endblock %}
+{% block body %}
+<div class="page-head">
+  <h1>User administration</h1>
+  <a class="btn" href="/">← Reviews</a>
+</div>
+
+{% if error %}<div class="flash flash-error" style="display:block;">{{ error }}</div>{% endif %}
+
+<div class="cards-label">Create a user</div>
+<div class="card">
+  <form method="post" action="/admin/users" class="inline-form">
+    <label>Name <input type="text" name="name" required></label>
+    <label>Email <input type="email" name="email" required></label>
+    <label>Password <input type="password" name="password" minlength="8" required placeholder="8+ chars"></label>
+    <label class="check-row" style="align-self:end;"><input type="checkbox" name="is_admin" value="1"> admin</label>
+    <button class="btn btn-primary btn-small" type="submit" style="align-self:end;">Create</button>
+  </form>
+  <p class="muted small">The user signs in with this email and password; they can change their own API key later in their profile.</p>
+</div>
+
+<div class="cards-label">Users ({{ users|length }})</div>
+<div class="card">
+  <table class="table">
+    <thead><tr><th>Name</th><th>Email</th><th>Reviews</th><th>Role</th><th>Status</th><th class="ta-right">Actions</th></tr></thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.name }}{% if u.id == user.id %} <span class="badge badge-muted">you</span>{% endif %}</td>
+        <td class="small">{{ u.email }}</td>
+        <td>{{ owned.get(u.id, 0) }}</td>
+        <td>{% if u.is_admin %}<span class="badge badge-model">admin</span>{% else %}<span class="badge badge-muted">user</span>{% endif %}</td>
+        <td>{% if u.is_active %}<span class="badge badge-ok">active</span>{% else %}<span class="badge" style="background:var(--danger-bg);color:var(--danger);">disabled</span>{% endif %}</td>
+        <td class="ta-right nowrap">
+          {% if u.id != user.id %}
+          <form method="post" action="/admin/users/{{ u.id }}/toggle-admin" style="display:inline;">
+            <button class="btn btn-small" type="submit">{{ 'Revoke admin' if u.is_admin else 'Make admin' }}</button>
+          </form>
+          <form method="post" action="/admin/users/{{ u.id }}/toggle-active" style="display:inline;">
+            <button class="btn btn-small" type="submit">{{ 'Disable' if u.is_active else 'Enable' }}</button>
+          </form>
+          {% endif %}
+          <details class="pw-reset" style="display:inline-block;">
+            <summary class="btn btn-small" style="list-style:none;">Reset password</summary>
+            <form method="post" action="/admin/users/{{ u.id }}/reset-password" class="inline-form" style="margin-top:6px;">
+              <input type="password" name="password" minlength="8" required placeholder="new password" style="max-width:160px;">
+              <button class="btn btn-small btn-danger" type="submit">Set</button>
+            </form>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

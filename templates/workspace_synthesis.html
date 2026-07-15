@@ -41,6 +41,8 @@
 {% else %}
 {% if syn %}<p class="muted">No synthesis blocks — add assessment criteria and run the assessment first.</p>{% endif %}
 {% endfor %}
+
+{% include "_step_done.html" %}
 {% endblock %}
 
 {% block scripts %}

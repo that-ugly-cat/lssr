@@ -1,0 +1,10 @@
+<div class="card step-done" style="margin-top:16px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+  <form method="post" action="/w/{{ ws.id }}/steps/{{ tab }}/toggle" style="margin:0;">
+    <label class="check-row" style="margin:0; cursor:pointer;">
+      <input type="checkbox" name="done" value="1" {{ 'checked' if tab in steps_done else '' }} onchange="this.form.submit()">
+      <span>Mark <strong>{{ tab }}</strong> as done</span>
+    </label>
+  </form>
+  {% if tab in steps_done %}<span class="badge badge-ok">✓ done</span>{% endif %}
+  <span class="muted small">Adds a ✓ to this step in Overview{% if tab in ['query', 'records', 'screening'] %}, and shows it on the public link when shared{% endif %}.</span>
+</div>
