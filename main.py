@@ -702,16 +702,75 @@ async def settings_page(ws_id: int, request: Request, member_error: int = 0,
                         user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
+    from models import ensure_extraction_fields, workspace_extraction_fields
+    ensure_extraction_fields(db, ws)
     members = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == ws.id).all()
+    fields = workspace_extraction_fields(db, ws)
     return render(request, "workspace_settings.html", {
         "user": user, "ws": ws, "tab": "settings",
         "exclusion": workspace_criteria(db, ws, "exclusion"),
         "inclusion": workspace_criteria(db, ws, "inclusion"),
-        "assessment": workspace_criteria(db, ws, "assessment"),
+        "fields": fields, "field_keys": [f.key for f in fields],
+        "field_types": ["text", "textarea", "number", "select", "multiselect"],
         "models": list(PRICING.keys()),
         "members": members, "owner": ws.owner, "member_error": bool(member_error),
         "is_owner": ws.owner_id == user.id or user.is_admin,
     })
+
+
+# ── Extraction fields (step 9 schema) ───────────────────────────────────────
+
+@app.post("/w/{ws_id}/fields/add")
+async def add_field(ws_id: int, label: str = Form(...), field_type: str = Form("text"),
+                    options: str = Form(""), show_if_key: str = Form(""),
+                    show_if_values: str = Form(""),
+                    user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    from models import ExtractionField, slug_field_key, workspace_extraction_fields
+    if field_type not in ("text", "textarea", "number", "select", "multiselect") or not label.strip():
+        raise HTTPException(400, "Invalid field")
+    existing = workspace_extraction_fields(db, ws)
+    key = slug_field_key(label, {f.key for f in existing})
+    opts = [o.strip() for o in options.splitlines() if o.strip()] \
+        if field_type in ("select", "multiselect") else []
+    sivals = [v.strip() for v in show_if_values.split(",") if v.strip()]
+    pos = max((f.position for f in existing), default=-1) + 1
+    db.add(ExtractionField(
+        workspace_id=ws.id, key=key, label=label.strip(), field_type=field_type,
+        options_json=json.dumps(opts) if opts else None,
+        show_if_key=show_if_key.strip() or None,
+        show_if_values_json=json.dumps(sivals) if sivals else None,
+        builtin=False, position=pos))
+    db.commit()
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+
+
+@app.post("/w/{ws_id}/fields/{fid}/delete")
+async def delete_field(ws_id: int, fid: int, user: User = Depends(get_current_user),
+                       db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    from models import ExtractionField
+    f = db.query(ExtractionField).filter(ExtractionField.id == fid,
+                                         ExtractionField.workspace_id == ws.id).first()
+    if f:
+        db.delete(f)
+        db.commit()
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+
+
+@app.post("/w/{ws_id}/fields/{fid}/move")
+async def move_field(ws_id: int, fid: int, dir: str = Form(...),
+                     user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    from models import workspace_extraction_fields
+    fields = workspace_extraction_fields(db, ws)
+    idx = next((i for i, f in enumerate(fields) if f.id == fid), None)
+    if idx is not None:
+        swap = idx - 1 if dir == "up" else idx + 1
+        if 0 <= swap < len(fields):
+            fields[idx].position, fields[swap].position = fields[swap].position, fields[idx].position
+            db.commit()
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
 
 
 @app.post("/w/{ws_id}/settings/model")

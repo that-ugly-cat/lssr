@@ -15,6 +15,7 @@ new column on every startup; SQLite raises on duplicates, caught and ignored
 """
 import json
 import os
+import re
 import secrets
 from datetime import datetime
 
@@ -253,6 +254,124 @@ class Criterion(Base):
     created_at   = Column(DateTime, default=datetime.utcnow)
 
     workspace = relationship("Workspace", backref="criteria")
+
+
+# ── Structured extraction (step 9): field schema + per-reviewer values ─────────
+
+class ExtractionField(Base):
+    """One field in a workspace's data-extraction form. Builtin fields (country,
+    study year, study type, methodology) are seeded and editable; project fields
+    are user-added. `show_if_*` gates a field on another field's value."""
+    __tablename__ = "extraction_fields"
+    id            = Column(Integer, primary_key=True)
+    workspace_id  = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    key           = Column(String, nullable=False)   # stable machine name
+    label         = Column(String, nullable=False)
+    help          = Column(Text, nullable=True)
+    field_type    = Column(String, nullable=False, default="text")  # text|textarea|number|select|multiselect
+    options_json  = Column(Text, nullable=True)      # JSON list for select/multiselect
+    show_if_key   = Column(String, nullable=True)    # parent field key
+    show_if_values_json = Column(Text, nullable=True)  # JSON list of parent values that reveal this
+    builtin       = Column(Boolean, default=False)
+    position      = Column(Integer, default=0)
+
+    __table_args__ = (UniqueConstraint("workspace_id", "key", name="uq_extraction_field_key"),)
+
+    def options(self) -> list:
+        try:
+            v = json.loads(self.options_json) if self.options_json else []
+            return v if isinstance(v, list) else []
+        except (ValueError, TypeError):
+            return []
+
+    def show_if_values(self) -> list:
+        try:
+            v = json.loads(self.show_if_values_json) if self.show_if_values_json else []
+            return v if isinstance(v, list) else []
+        except (ValueError, TypeError):
+            return []
+
+
+class Extraction(Base):
+    """A record's extraction values, per reviewer. reviewer_kind: model (LLM
+    draft) | user (a reviewer's own) | final (owner-curated, authoritative)."""
+    __tablename__ = "extractions"
+    id            = Column(Integer, primary_key=True)
+    workspace_id  = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    record_id     = Column(Integer, ForeignKey("records.id"), nullable=False)
+    reviewer_kind = Column(String, nullable=False)   # model | user | final
+    reviewer_id   = Column(Integer, ForeignKey("users.id"), nullable=True)
+    values_json   = Column(Text, nullable=True)      # {field_key: value}
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("record_id", "reviewer_kind", "reviewer_id",
+                                       name="uq_extraction_reviewer"),)
+
+    reviewer = relationship("User")
+
+    def values(self) -> dict:
+        try:
+            v = json.loads(self.values_json) if self.values_json else {}
+            return v if isinstance(v, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+
+
+def slug_field_key(label: str, taken: set) -> str:
+    base = re.sub(r"[^a-z0-9]+", "_", (label or "field").lower()).strip("_")[:40] or "field"
+    key, i = base, 2
+    while key in taken:
+        key = f"{base}_{i}"
+        i += 1
+    return key
+
+
+def workspace_extraction_fields(db, workspace) -> list:
+    return (db.query(ExtractionField)
+              .filter(ExtractionField.workspace_id == workspace.id)
+              .order_by(ExtractionField.position, ExtractionField.id).all())
+
+
+def ensure_extraction_fields(db, workspace):
+    """Seed builtin fields the first time; migrate any legacy free-text
+    assessment criteria into textarea project fields. Runs once per workspace."""
+    if db.query(ExtractionField).filter(ExtractionField.workspace_id == workspace.id).count() > 0:
+        return
+    from extraction_defaults import builtin_fields
+    taken, pos = set(), 0
+    for f in builtin_fields():
+        taken.add(f["key"])
+        db.add(ExtractionField(
+            workspace_id=workspace.id, key=f["key"], label=f["label"], help=f.get("help"),
+            field_type=f["field_type"], options_json=json.dumps(f.get("options") or []) or None,
+            show_if_key=f.get("show_if_key"),
+            show_if_values_json=json.dumps(f["show_if_values"]) if f.get("show_if_values") else None,
+            builtin=True, position=pos))
+        pos += 1
+    for c in workspace_criteria(db, workspace, "assessment"):
+        key = slug_field_key(c.label, taken)
+        taken.add(key)
+        db.add(ExtractionField(workspace_id=workspace.id, key=key, label=c.label,
+                               help=c.description, field_type="textarea",
+                               builtin=False, position=pos))
+        pos += 1
+    db.commit()
+
+
+def upsert_extraction(db, workspace, record, reviewer_kind, reviewer_id, values: dict):
+    row = (db.query(Extraction)
+             .filter(Extraction.record_id == record.id,
+                     Extraction.reviewer_kind == reviewer_kind,
+                     Extraction.reviewer_id == reviewer_id).first())
+    if row is None:
+        row = Extraction(workspace_id=workspace.id, record_id=record.id,
+                         reviewer_kind=reviewer_kind, reviewer_id=reviewer_id)
+        db.add(row)
+    row.values_json = json.dumps(values)
+    row.updated_at = datetime.utcnow()
+    db.flush()
+    return row
 
 
 # ── Screening decisions (per reviewer, steps 5 & 8) ────────────────────────────
