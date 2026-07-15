@@ -55,14 +55,14 @@ Exclude a record if it meets one or more of these exclusion criteria:
 
 Rules:
 - This is a first-pass title/abstract screen. Apply the exclusion criteria
-  whenever one is met, and exclude records clearly off-topic for the research
-  question.
-- Full-text screening follows, so only when a record is genuinely borderline
-  (missing abstract, ambiguous scope) should you lean toward inclusion. Do not
-  include a record just because you are unsure it is relevant.
+  whenever one is met, and exclude records clearly off-topic.
+- Use "maybe" when you genuinely cannot tell from the title and abstract alone
+  (missing abstract, ambiguous scope). Do NOT default to "include" out of
+  caution — park the uncertain ones as "maybe" for a human to look at.
+- Reserve "include" for records that clearly fit and meet no exclusion criterion.
 
 Return ONLY a JSON object, no prose, no code fences:
-  {{"decision": "include" | "exclude", "reason": "<one sentence; name the criterion if excluding>"}}"""
+  {{"decision": "include" | "exclude" | "maybe", "reason": "<one sentence; name the criterion if excluding>"}}"""
 
 
 def build_system(research_question: str | None, exclusion_criteria: list) -> str:
@@ -115,7 +115,8 @@ def screen_record(client, system_prompt: str, title: str, abstract: str,
     )
     text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
     parsed = _parse(text) or {}
-    decision = "exclude" if str(parsed.get("decision", "")).lower() == "exclude" else "include"
+    d = str(parsed.get("decision", "")).lower()
+    decision = d if d in ("include", "exclude", "maybe") else "maybe"  # park the unparseable
     reason = parsed.get("reason", "") or ""
     return decision, reason, resp.usage.input_tokens, resp.usage.output_tokens
 
@@ -150,16 +151,17 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
         pending = [r for r in q.all() if r.id not in human_ids]
         total = len(pending)
         _set(workspace_id, {"status": "running", "message": f"Screening {total} records…",
-                            "total": total, "done": 0, "included": 0, "excluded": 0,
+                            "total": total, "done": 0, "included": 0, "excluded": 0, "maybe": 0,
                             "cost_usd": 0.0})
         if total == 0:
             _set(workspace_id, {"status": "done", "message": "Nothing to screen.",
-                                "total": 0, "done": 0, "included": 0, "excluded": 0, "cost_usd": 0.0})
+                                "total": 0, "done": 0, "included": 0, "excluded": 0, "maybe": 0,
+                                "cost_usd": 0.0})
             return
 
         client = anthropic.Anthropic(api_key=api_key)
         tin = tout = 0
-        included = excluded = 0
+        included = excluded = maybe = 0
 
         def work(rec):
             d, r, i, o = screen_record(client, system, rec.title or "", rec.abstract or "", model)
@@ -173,7 +175,7 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
                 try:
                     _, decision, reason, i, o = fut.result()
                 except Exception as exc:
-                    decision, reason, i, o = "include", f"screening error: {exc}", 0, 0
+                    decision, reason, i, o = "maybe", f"screening error: {exc}", 0, 0
                 rec = db.query(Record).filter(Record.id == rec_id).first()
                 upsert_screen_decision(db, rec, "screen1", "model", None, decision, reason)
                 recompute_record_screen1(db, ws, rec)
@@ -181,13 +183,15 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
                 tout += o
                 if decision == "exclude":
                     excluded += 1
+                elif decision == "maybe":
+                    maybe += 1
                 else:
                     included += 1
                 done += 1
                 if done % 5 == 0:
                     db.commit()
                 _update(workspace_id, done=done, included=included, excluded=excluded,
-                        cost_usd=round(calc_cost(model, tin, tout), 4))
+                        maybe=maybe, cost_usd=round(calc_cost(model, tin, tout), 4))
         db.commit()
 
         cost = calc_cost(model, tin, tout)
@@ -195,9 +199,9 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
                            input_tokens=tin, output_tokens=tout, cost_usd=cost))
         db.commit()
         _set(workspace_id, {"status": "done",
-                            "message": f"Done. {included} included, {excluded} excluded.",
+                            "message": f"Done. {included} included, {excluded} excluded, {maybe} maybe.",
                             "total": total, "done": total, "included": included,
-                            "excluded": excluded, "cost_usd": round(cost, 4)})
+                            "excluded": excluded, "maybe": maybe, "cost_usd": round(cost, 4)})
     except Exception as exc:
         _set(workspace_id, {"status": "error", "message": str(exc), "error": str(exc)})
     finally:

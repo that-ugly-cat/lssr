@@ -684,8 +684,8 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         return db.query(Record).filter(Record.workspace_id == ws.id,
                                        Record.is_removed == False,  # noqa: E712
                                        Record.screen1_decision == d).count()
-    counts = {d: _count(d) for d in ("pending", "include", "exclude", "conflict")}
-    counts["total"] = counts["pending"] + counts["include"] + counts["exclude"] + counts["conflict"]
+    counts = {d: _count(d) for d in ("pending", "include", "exclude", "maybe", "conflict")}
+    counts["total"] = sum(counts[d] for d in ("pending", "include", "exclude", "maybe", "conflict"))
     # records the model may (re-)screen: everything not decided by a human
     model_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                       Record.is_removed == False,   # noqa: E712
@@ -694,7 +694,7 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
                                        Record.is_removed == False,  # noqa: E712
                                        Record.screen1_by.in_(["human", "adjudicator", "conflict"])).count()
     tq = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False)  # noqa: E712
-    if decision in ("pending", "include", "exclude", "conflict"):
+    if decision in ("pending", "include", "exclude", "maybe", "conflict"):
         tq = tq.filter(Record.screen1_decision == decision)
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
     records = tq.limit(500).all()
@@ -744,6 +744,7 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         "filters": {"decision": decision, "q": q, "source": source, "rtype": rtype,
                     "yf": yf, "yt": yt, "sort": sort, "order": order},
         "n_exclusion": len(workspace_criteria(db, ws, "exclusion")),
+        "exclusion_criteria": workspace_criteria(db, ws, "exclusion"),
         "has_key": bool(_user_api_key(user)),
     })
 
@@ -777,7 +778,7 @@ async def vote_screen1(ws_id: int, rid: int, decision: str = Form(...), reason: 
                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """The current reviewer's independent screen-1 vote. 'clear' retracts it."""
     ws = _load_ws(db, user, ws_id)
-    if decision not in ("include", "exclude", "clear"):
+    if decision not in ("include", "exclude", "maybe", "clear"):
         raise HTTPException(400, "Invalid decision")
     rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
     if rec:
@@ -805,7 +806,7 @@ async def adjudicate_screen1(ws_id: int, rid: int, decision: str = Form(...),
     ws = _load_ws(db, user, ws_id)
     if not (ws.owner_id == user.id or user.is_admin):
         raise HTTPException(403, "Adjudicator (owner/admin) required")
-    if decision not in ("include", "exclude", "clear"):
+    if decision not in ("include", "exclude", "maybe", "clear"):
         raise HTTPException(400, "Invalid decision")
     rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
     if rec:

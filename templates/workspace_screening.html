@@ -3,10 +3,29 @@
 {% block body %}
 {% include "_ws_tabs.html" %}
 
+{% if exclusion_criteria %}
+<div class="crit-rail" id="crit-rail">
+  <div class="crit-panel">
+    <div class="crit-panel-head">Exclusion criteria</div>
+    {% for c in exclusion_criteria %}
+    <div class="crit-item">
+      <div class="crit-item-label">{{ loop.index }}. {{ c.label }}</div>
+      {% if c.description %}<div class="crit-item-desc">{{ c.description }}</div>{% endif %}
+    </div>
+    {% endfor %}
+    <div class="crit-panel-foot muted">Screening 1 excludes a record when one of these clearly applies.</div>
+  </div>
+  <button class="crit-tab" id="crit-tab" type="button" aria-label="Toggle exclusion criteria">
+    <span class="crit-tab-text">Exclusion criteria</span>
+  </button>
+</div>
+{% endif %}
+
 <div class="card">
-  <div class="screen-progress" title="{{ counts.include }} included · {{ counts.exclude }} excluded · {{ counts.conflict }} conflict · {{ counts.pending }} pending">
+  <div class="screen-progress" title="{{ counts.include }} included · {{ counts.maybe }} maybe · {{ counts.exclude }} excluded · {{ counts.conflict }} conflict · {{ counts.pending }} pending">
     {% if counts.total > 0 %}
     {% if counts.include %}<div class="seg seg-inc" style="width: {{ (counts.include / counts.total * 100)|round(2) }}%"></div>{% endif %}
+    {% if counts.maybe %}<div class="seg" style="width: {{ (counts.maybe / counts.total * 100)|round(2) }}%; background: var(--accent);"></div>{% endif %}
     {% if counts.exclude %}<div class="seg seg-exc" style="width: {{ (counts.exclude / counts.total * 100)|round(2) }}%"></div>{% endif %}
     {% if counts.conflict %}<div class="seg" style="width: {{ (counts.conflict / counts.total * 100)|round(2) }}%; background: var(--warn);"></div>{% endif %}
     {% if counts.pending %}<div class="seg seg-pend" style="width: {{ (counts.pending / counts.total * 100)|round(2) }}%"></div>{% endif %}
@@ -14,6 +33,7 @@
   </div>
   <div class="screen-legend">
     <span><span class="dot dot-inc"></span> ✅ {{ counts.include }} included</span>
+    <span><span class="dot" style="background: var(--accent);"></span> 🤔 {{ counts.maybe }} maybe</span>
     <span><span class="dot dot-exc"></span> ❌ {{ counts.exclude }} excluded</span>
     <span><span class="dot" style="background: var(--warn);"></span> ⚠️ {{ counts.conflict }} conflict</span>
     <span><span class="dot dot-pend"></span> ❓ {{ counts.pending }} to do</span>
@@ -59,13 +79,13 @@
 <div class="cards-label">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
-    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','conflict'] else 'muted' }}">all</a>
-    {% for d in ['pending','include','exclude','conflict'] %}
-    · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }}{% if d == 'conflict' and counts.conflict %} ({{ counts.conflict }}){% endif %}</a>
+    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict'] else 'muted' }}">all</a>
+    {% for d in ['pending','include','maybe','exclude','conflict'] %}
+    · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }}{% if d in ['maybe','conflict'] and counts[d] %} ({{ counts[d] }}){% endif %}</a>
     {% endfor %}
   </span>
 </div>
-<p class="muted small" style="margin-top:0;">✅ include · ❌ exclude · ⚠️ conflict · ❓ pending — cast your own vote on the right. Screening is blind: you see the other reviewers' votes only after you've voted. Conflicts are resolved by the owner.</p>
+<p class="muted small" style="margin-top:0;">✅ include · 🤔 maybe · ❌ exclude · ⚠️ conflict · ❓ pending — cast your own vote on the right. <strong>maybe</strong> parks a record: it doesn't go to full text until someone moves it to include/exclude. Screening is blind: you see the other reviewers' votes only after you've voted. Conflicts are resolved by the owner.</p>
 
 <form method="get" class="filter-bar">
   <input type="hidden" name="decision" value="{{ f.decision }}">
@@ -104,7 +124,7 @@
       </td>
       <td class="nowrap">
         <span title="{{ r.screen1_decision }}" style="font-size:16px;">
-          {% if r.screen1_decision == 'include' %}✅{% elif r.screen1_decision == 'exclude' %}❌{% elif r.screen1_decision == 'conflict' %}⚠️{% else %}❓{% endif %}
+          {% if r.screen1_decision == 'include' %}✅{% elif r.screen1_decision == 'exclude' %}❌{% elif r.screen1_decision == 'maybe' %}🤔{% elif r.screen1_decision == 'conflict' %}⚠️{% else %}❓{% endif %}
         </span>
         {% if r.screen1_by == 'adjudicator' %}<span class="badge badge-model">adjudicated</span>
         {% elif r.screen1_by == 'human' %}<span class="badge badge-ok">reviewers</span>
@@ -118,7 +138,7 @@
         {% set myvote = myrows[0].decision if myrows else none %}
         {% set reveal = (r.id in my_voted) or (is_owner and r.screen1_decision == 'conflict') %}
         <div style="display:flex; gap:4px; justify-content:flex-end; flex-wrap:wrap;">
-          {% for d, em in [('include','✅'),('exclude','❌')] %}
+          {% for d, em in [('include','✅'),('maybe','🤔'),('exclude','❌')] %}
           <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/screen1/vote" style="display:inline;">
             <input type="hidden" name="decision" value="{{ d }}">
             <input type="hidden" name="back" value="{{ decision }}">
@@ -136,7 +156,7 @@
         {% if reveal %}
         <div class="muted small" style="margin-top:4px;">
           {% for v in votes.get(r.id, []) %}
-            {% set vem = '✅' if v.decision == 'include' else '❌' %}
+            {% set vem = {'include':'✅','exclude':'❌','maybe':'🤔'}.get(v.decision, '·') %}
             {% if v.reviewer_kind == 'model' %}<div>🤖 model {{ vem }}</div>
             {% elif v.reviewer_kind == 'adjudicator' %}<div>⚖️ {{ v.reviewer.name if v.reviewer else 'adjudicator' }} {{ vem }}</div>
             {% else %}<div>{{ v.reviewer.name if v.reviewer else 'reviewer' }} {{ vem }}</div>{% endif %}
@@ -202,5 +222,16 @@ function poller(formId, statusId, btnId, url, runningStates) {
   poll();
 }
 poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status');
+
+// Collapsible exclusion-criteria rail; remembers its state.
+const critTab = document.getElementById('crit-tab');
+if (critTab) {
+  const rail = document.getElementById('crit-rail');
+  if (localStorage.getItem('lssr-crit-collapsed') === '1') rail.classList.add('collapsed');
+  critTab.addEventListener('click', () => {
+    rail.classList.toggle('collapsed');
+    localStorage.setItem('lssr-crit-collapsed', rail.classList.contains('collapsed') ? '1' : '0');
+  });
+}
 </script>
 {% endblock %}
