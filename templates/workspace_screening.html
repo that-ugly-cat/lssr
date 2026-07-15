@@ -4,18 +4,20 @@
 {% include "_ws_tabs.html" %}
 
 <div class="card">
-  <div class="screen-progress" title="{{ counts.include }} included · {{ counts.exclude }} excluded · {{ counts.pending }} pending">
+  <div class="screen-progress" title="{{ counts.include }} included · {{ counts.exclude }} excluded · {{ counts.conflict }} conflict · {{ counts.pending }} pending">
     {% if counts.total > 0 %}
     {% if counts.include %}<div class="seg seg-inc" style="width: {{ (counts.include / counts.total * 100)|round(2) }}%"></div>{% endif %}
     {% if counts.exclude %}<div class="seg seg-exc" style="width: {{ (counts.exclude / counts.total * 100)|round(2) }}%"></div>{% endif %}
+    {% if counts.conflict %}<div class="seg" style="width: {{ (counts.conflict / counts.total * 100)|round(2) }}%; background: var(--warn);"></div>{% endif %}
     {% if counts.pending %}<div class="seg seg-pend" style="width: {{ (counts.pending / counts.total * 100)|round(2) }}%"></div>{% endif %}
     {% endif %}
   </div>
   <div class="screen-legend">
     <span><span class="dot dot-inc"></span> ✅ {{ counts.include }} included</span>
     <span><span class="dot dot-exc"></span> ❌ {{ counts.exclude }} excluded</span>
+    <span><span class="dot" style="background: var(--warn);"></span> ⚠️ {{ counts.conflict }} conflict</span>
     <span><span class="dot dot-pend"></span> ❓ {{ counts.pending }} to do</span>
-    <span class="muted">of {{ counts.total }}</span>
+    <span class="muted">of {{ counts.total }} · {{ reviewers_required }} reviewer{{ 's' if reviewers_required != 1 else '' }} required</span>
   </div>
 </div>
 
@@ -43,7 +45,7 @@
       <span class="muted small">est. {{ est_rerun }}</span>
     </span>
     {% endif %}
-    <span class="muted small">{{ model }} · errs toward inclusion. Manual decisions ({{ manual_n }}) are protected — skipped even on re-run.</span>
+    <span class="muted small">{{ model }} pre-screens. Records a human has voted on ({{ manual_n }}) are the reviewers' call — never re-screened.</span>
   </form>
   <div id="scr-status" class="flash" style="display:none;"></div>
 </div>
@@ -57,13 +59,13 @@
 <div class="cards-label">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
-    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude'] else 'muted' }}">all</a>
-    {% for d in ['pending','include','exclude'] %}
-    · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }}</a>
+    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','conflict'] else 'muted' }}">all</a>
+    {% for d in ['pending','include','exclude','conflict'] %}
+    · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }}{% if d == 'conflict' and counts.conflict %} ({{ counts.conflict }}){% endif %}</a>
     {% endfor %}
   </span>
 </div>
-<p class="muted small" style="margin-top:0;">✅ include · ❌ exclude · ❓ pending — set your own with the buttons on the right (a manual decision is locked from the model).</p>
+<p class="muted small" style="margin-top:0;">✅ include · ❌ exclude · ⚠️ conflict · ❓ pending — cast your own vote on the right. Screening is blind: you see the other reviewers' votes only after you've voted. Conflicts are resolved by the owner.</p>
 
 <form method="get" class="filter-bar">
   <input type="hidden" name="decision" value="{{ f.decision }}">
@@ -86,7 +88,7 @@
 </form>
 
 <table class="table">
-  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Screen 1</th><th>Set manually</th></tr></thead>
+  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Decision</th><th class="ta-right">Your vote &amp; reviewers</th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr>
@@ -102,21 +104,58 @@
       </td>
       <td class="nowrap">
         <span title="{{ r.screen1_decision }}" style="font-size:16px;">
-          {% if r.screen1_decision == 'include' %}✅{% elif r.screen1_decision == 'exclude' %}❌{% else %}❓{% endif %}
+          {% if r.screen1_decision == 'include' %}✅{% elif r.screen1_decision == 'exclude' %}❌{% elif r.screen1_decision == 'conflict' %}⚠️{% else %}❓{% endif %}
         </span>
-        {% if r.screen1_by == 'user' %}<span class="badge badge-model">manual</span>
+        {% if r.screen1_by == 'adjudicator' %}<span class="badge badge-model">adjudicated</span>
+        {% elif r.screen1_by == 'human' %}<span class="badge badge-ok">reviewers</span>
+        {% elif r.screen1_by == 'conflict' %}<span class="badge badge-warn">conflict</span>
         {% elif r.screen1_by == 'model' %}<span class="badge badge-muted">model</span>{% endif %}
+        {% set humanrows = votes.get(r.id, []) | selectattr('reviewer_kind','equalto','user') | list %}
+        {% if humanrows %}<div class="muted small">{{ humanrows|length }}/{{ reviewers_required }} reviewed</div>{% endif %}
       </td>
-      <td class="ta-right nowrap">
-        {% set emoji = {'include': '✅', 'exclude': '❌', 'pending': '❓'} %}
-        {% for d in ['include','exclude','pending'] %}
-        {% if r.screen1_decision != d %}
-        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/screen1" style="display:inline;">
-          <input type="hidden" name="decision" value="{{ d }}">
-          <button class="btn btn-small" type="submit" title="Set {{ d }} manually">{{ emoji[d] }} {{ d }}</button>
-        </form>
+      <td class="ta-right small" style="min-width:190px;">
+        {% set myrows = votes.get(r.id, []) | selectattr('reviewer_kind','equalto','user') | selectattr('reviewer_id','equalto', user.id) | list %}
+        {% set myvote = myrows[0].decision if myrows else none %}
+        {% set reveal = (r.id in my_voted) or (is_owner and r.screen1_decision == 'conflict') %}
+        <div style="display:flex; gap:4px; justify-content:flex-end; flex-wrap:wrap;">
+          {% for d, em in [('include','✅'),('exclude','❌')] %}
+          <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/screen1/vote" style="display:inline;">
+            <input type="hidden" name="decision" value="{{ d }}">
+            <input type="hidden" name="back" value="{{ decision }}">
+            <button class="btn btn-small {{ 'btn-primary' if myvote == d else '' }}" type="submit" title="Vote {{ d }}">{{ em }} {{ d }}</button>
+          </form>
+          {% endfor %}
+          {% if myvote %}
+          <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/screen1/vote" style="display:inline;">
+            <input type="hidden" name="decision" value="clear">
+            <input type="hidden" name="back" value="{{ decision }}">
+            <button class="btn btn-small" type="submit" title="Retract your vote">✕</button>
+          </form>
+          {% endif %}
+        </div>
+        {% if reveal %}
+        <div class="muted small" style="margin-top:4px;">
+          {% for v in votes.get(r.id, []) %}
+            {% set vem = '✅' if v.decision == 'include' else '❌' %}
+            {% if v.reviewer_kind == 'model' %}<div>🤖 model {{ vem }}</div>
+            {% elif v.reviewer_kind == 'adjudicator' %}<div>⚖️ {{ v.reviewer.name if v.reviewer else 'adjudicator' }} {{ vem }}</div>
+            {% else %}<div>{{ v.reviewer.name if v.reviewer else 'reviewer' }} {{ vem }}</div>{% endif %}
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="muted small" style="margin-top:4px; font-style:italic;">vote to reveal others</div>
         {% endif %}
-        {% endfor %}
+        {% if is_owner and r.screen1_decision == 'conflict' %}
+        <div style="margin-top:6px; display:flex; gap:4px; justify-content:flex-end; align-items:center;">
+          <span class="muted small">resolve:</span>
+          {% for d, em in [('include','✅'),('exclude','❌')] %}
+          <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/screen1/adjudicate" style="display:inline;">
+            <input type="hidden" name="decision" value="{{ d }}">
+            <button class="btn btn-small btn-danger" type="submit" title="Adjudicate {{ d }}">{{ em }} {{ d }}</button>
+          </form>
+          {% endfor %}
+        </div>
+        {% endif %}
       </td>
     </tr>
     {% else %}

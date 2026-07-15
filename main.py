@@ -498,15 +498,19 @@ async def dedup_keep(ws_id: int, ids: str = Form(...),
 # ── Settings: criteria & model (steps 5, 8, 9) ──────────────────────────────
 
 @app.get("/w/{ws_id}/settings", response_class=HTMLResponse)
-async def settings_page(ws_id: int, request: Request, user: User = Depends(get_current_user),
+async def settings_page(ws_id: int, request: Request, member_error: int = 0,
+                        user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
+    members = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == ws.id).all()
     return render(request, "workspace_settings.html", {
         "user": user, "ws": ws, "tab": "settings",
         "exclusion": workspace_criteria(db, ws, "exclusion"),
         "inclusion": workspace_criteria(db, ws, "inclusion"),
         "assessment": workspace_criteria(db, ws, "assessment"),
         "models": list(PRICING.keys()),
+        "members": members, "owner": ws.owner, "member_error": bool(member_error),
+        "is_owner": ws.owner_id == user.id or user.is_admin,
     })
 
 
@@ -516,6 +520,50 @@ async def set_model(ws_id: int, screening_model: str = Form(...),
     ws = _load_ws(db, user, ws_id)
     if screening_model in PRICING:
         ws.screening_model = screening_model
+        db.commit()
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+
+
+@app.post("/w/{ws_id}/settings/screening")
+async def set_screening_config(ws_id: int, reviewers_required: int = Form(...),
+                               user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    if not (ws.owner_id == user.id or user.is_admin):
+        raise HTTPException(403, "Owner required")
+    ws.screen1_reviewers_required = max(1, min(10, reviewers_required))
+    db.commit()
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+
+
+@app.post("/w/{ws_id}/members/add")
+async def add_member(ws_id: int, email: str = Form(...),
+                     user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    if not (ws.owner_id == user.id or user.is_admin):
+        raise HTTPException(403, "Owner required")
+    target = db.query(User).filter(User.email == email.strip().lower(),
+                                   User.is_active == True).first()  # noqa: E712
+    if not target:
+        return RedirectResponse(f"/w/{ws_id}/settings?member_error=1", status_code=302)
+    if target.id != ws.owner_id:
+        exists = db.query(WorkspaceMember).filter(
+            WorkspaceMember.workspace_id == ws.id, WorkspaceMember.user_id == target.id).first()
+        if not exists:
+            db.add(WorkspaceMember(workspace_id=ws.id, user_id=target.id))
+            db.commit()
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+
+
+@app.post("/w/{ws_id}/members/{uid}/remove")
+async def remove_member(ws_id: int, uid: int,
+                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    if not (ws.owner_id == user.id or user.is_admin):
+        raise HTTPException(403, "Owner required")
+    m = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == ws.id,
+                                         WorkspaceMember.user_id == uid).first()
+    if m:
+        db.delete(m)
         db.commit()
     return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
 
@@ -559,20 +607,33 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         return db.query(Record).filter(Record.workspace_id == ws.id,
                                        Record.is_removed == False,  # noqa: E712
                                        Record.screen1_decision == d).count()
-    counts = {d: _count(d) for d in ("pending", "include", "exclude")}
-    counts["total"] = counts["pending"] + counts["include"] + counts["exclude"]
+    counts = {d: _count(d) for d in ("pending", "include", "exclude", "conflict")}
+    counts["total"] = counts["pending"] + counts["include"] + counts["exclude"] + counts["conflict"]
     # records the model may (re-)screen: everything not decided by a human
     model_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                       Record.is_removed == False,   # noqa: E712
                                       Record.screen1_by == "model").count()
     manual_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                        Record.is_removed == False,  # noqa: E712
-                                       Record.screen1_by == "user").count()
+                                       Record.screen1_by.in_(["human", "adjudicator", "conflict"])).count()
     tq = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False)  # noqa: E712
-    if decision in ("pending", "include", "exclude"):
+    if decision in ("pending", "include", "exclude", "conflict"):
         tq = tq.filter(Record.screen1_decision == decision)
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
     records = tq.limit(500).all()
+
+    # per-record screen-1 votes, for the reviewer table (blind) + adjudication.
+    from models import ScreenDecision
+    rec_ids = [r.id for r in records]
+    all_votes = (db.query(ScreenDecision)
+                   .filter(ScreenDecision.stage == "screen1",
+                           ScreenDecision.record_id.in_(rec_ids)).all() if rec_ids else [])
+    votes = {}
+    for v in all_votes:
+        votes.setdefault(v.record_id, []).append(v)
+    # records the current reviewer has already voted on → their votes are revealed
+    my_voted = {v.record_id for v in all_votes
+                if v.reviewer_kind == "user" and v.reviewer_id == user.id}
 
     # cost estimate for the screening buttons
     import screening
@@ -599,6 +660,9 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         "model_n": model_n, "manual_n": manual_n, "model": model,
         "est_pending": est_pending, "est_rerun": est_rerun,
         "records": records, "decision": decision,
+        "votes": votes, "my_voted": my_voted,
+        "reviewers_required": ws.screen1_reviewers_required or 1,
+        "is_owner": ws.owner_id == user.id or user.is_admin,
         "dbs_present": _dbs_present(db, ws.id),
         "filters": {"decision": decision, "q": q, "source": source, "rtype": rtype,
                     "yf": yf, "yt": yt, "sort": sort, "order": order},
@@ -630,21 +694,58 @@ async def screening_status(ws_id: int, user: User = Depends(get_current_user),
     return JSONResponse(get_job(ws_id) or {"status": "idle"})
 
 
-@app.post("/w/{ws_id}/records/{rid}/screen1")
-async def override_screen1(ws_id: int, rid: int, decision: str = Form(...),
-                           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+@app.post("/w/{ws_id}/records/{rid}/screen1/vote")
+async def vote_screen1(ws_id: int, rid: int, decision: str = Form(...), reason: str = Form(""),
+                       back: str = Form("pending"),
+                       user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The current reviewer's independent screen-1 vote. 'clear' retracts it."""
     ws = _load_ws(db, user, ws_id)
-    if decision not in ("include", "exclude", "pending"):
+    if decision not in ("include", "exclude", "clear"):
         raise HTTPException(400, "Invalid decision")
     rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
     if rec:
-        from datetime import datetime
-        rec.screen1_decision = decision
-        rec.screen1_by = "user"
-        rec.screen1_reason = "manual override"
-        rec.screen1_at = datetime.utcnow()
+        from models import ScreenDecision, recompute_record_screen1, upsert_screen_decision
+        if decision == "clear":
+            row = (db.query(ScreenDecision)
+                     .filter(ScreenDecision.record_id == rec.id, ScreenDecision.stage == "screen1",
+                             ScreenDecision.reviewer_kind == "user",
+                             ScreenDecision.reviewer_id == user.id).first())
+            if row:
+                db.delete(row)
+                db.flush()
+        else:
+            upsert_screen_decision(db, rec, "screen1", "user", user.id, decision,
+                                   reason.strip() or "manual vote")
+        recompute_record_screen1(db, ws, rec)
         db.commit()
-    return RedirectResponse(f"/w/{ws_id}/screening?decision={decision}", status_code=302)
+    return RedirectResponse(f"/w/{ws_id}/screening?decision={back}", status_code=302)
+
+
+@app.post("/w/{ws_id}/records/{rid}/screen1/adjudicate")
+async def adjudicate_screen1(ws_id: int, rid: int, decision: str = Form(...),
+                             user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Owner/admin resolves a conflicted record. 'clear' removes the ruling."""
+    ws = _load_ws(db, user, ws_id)
+    if not (ws.owner_id == user.id or user.is_admin):
+        raise HTTPException(403, "Adjudicator (owner/admin) required")
+    if decision not in ("include", "exclude", "clear"):
+        raise HTTPException(400, "Invalid decision")
+    rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
+    if rec:
+        from models import ScreenDecision, recompute_record_screen1, upsert_screen_decision
+        if decision == "clear":
+            for row in (db.query(ScreenDecision)
+                          .filter(ScreenDecision.record_id == rec.id,
+                                  ScreenDecision.stage == "screen1",
+                                  ScreenDecision.reviewer_kind == "adjudicator").all()):
+                db.delete(row)
+            db.flush()
+        else:
+            upsert_screen_decision(db, rec, "screen1", "adjudicator", user.id, decision,
+                                   "adjudication")
+        recompute_record_screen1(db, ws, rec)
+        db.commit()
+    return RedirectResponse(f"/w/{ws_id}/screening?decision=conflict", status_code=302)
 
 
 # ── Full text: fetch (Unpaywall) + convert (paper2md), two passes (steps 6-7) ─

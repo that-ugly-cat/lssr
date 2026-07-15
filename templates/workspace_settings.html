@@ -16,6 +16,60 @@
   <p class="muted small">Haiku is cheapest and fine for title/abstract screening; Sonnet/Opus for harder judgment.</p>
 </div>
 
+<div class="cards-label">Screening 1 — reviewers</div>
+<div class="card">
+  <form method="post" action="/w/{{ ws.id }}/settings/screening" class="inline-form">
+    <label>Independent human votes required to settle a record
+      <input type="number" name="reviewers_required" min="1" max="10"
+             value="{{ ws.screen1_reviewers_required or 1 }}" style="max-width:80px;"
+             {{ '' if is_owner else 'disabled' }}>
+    </label>
+    {% if is_owner %}<button class="btn btn-small" type="submit">Save</button>{% endif %}
+  </form>
+  <p class="muted small">
+    1 = single screening (one human vote decides). 2 = blind double screening —
+    two members must agree; if they disagree the record is flagged <strong>conflict</strong>
+    for the owner to resolve. The model always pre-screens; with no human votes its
+    decision stands.
+  </p>
+</div>
+
+<div class="cards-label">Members (reviewers)</div>
+<div class="card">
+  <table class="table">
+    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead>
+    <tbody>
+      <tr>
+        <td>{{ owner.name }}</td><td class="small">{{ owner.email }}</td>
+        <td><span class="badge badge-model">owner</span></td><td></td>
+      </tr>
+      {% for m in members %}
+      <tr>
+        <td>{{ m.user.name }}</td><td class="small">{{ m.user.email }}</td>
+        <td><span class="badge badge-muted">reviewer</span></td>
+        <td class="ta-right">
+          {% if is_owner %}
+          <form method="post" action="/w/{{ ws.id }}/members/{{ m.user_id }}/remove">
+            <button class="btn btn-danger btn-small" type="submit">Remove</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">No other members yet — just the owner.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if member_error %}<div class="flash flash-error" style="display:block;">No active user with that email. They must have an account first.</div>{% endif %}
+  {% if is_owner %}
+  <form method="post" action="/w/{{ ws.id }}/members/add" class="inline-form" style="margin-top:10px;">
+    <input type="email" name="email" placeholder="member@example.org" required style="max-width:260px;">
+    <button class="btn btn-small" type="submit">Add member</button>
+  </form>
+  <p class="muted small">Add an existing LSSR user by email; they'll be able to screen and see this workspace.</p>
+  {% endif %}
+</div>
+
 {% set sets = [
   ('exclusion', 'Exclusion criteria (screening 1 — title + abstract)', exclusion),
   ('inclusion', 'Inclusion criteria (screening 2 — full text)', inclusion),

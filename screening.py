@@ -50,13 +50,16 @@ You are screening records for a scoping review at the TITLE + ABSTRACT stage.
 Research question:
 {rq}
 
-Exclude a record if it CLEARLY meets one or more of these exclusion criteria:
+Exclude a record if it meets one or more of these exclusion criteria:
 {criteria}
 
 Rules:
-- Screening 1 errs toward inclusion. If the abstract is missing or you are
-  genuinely unsure, INCLUDE it (it can still be excluded later at full text).
-- Exclude only when at least one exclusion criterion clearly applies.
+- This is a first-pass title/abstract screen. Apply the exclusion criteria
+  whenever one is met, and exclude records clearly off-topic for the research
+  question.
+- Full-text screening follows, so only when a record is genuinely borderline
+  (missing abstract, ambiguous scope) should you lean toward inclusion. Do not
+  include a record just because you are unsure it is relevant.
 
 Return ONLY a JSON object, no prose, no code fences:
   {{"decision": "include" | "exclude", "reason": "<one sentence; name the criterion if excluding>"}}"""
@@ -120,9 +123,9 @@ def screen_record(client, system_prompt: str, title: str, abstract: str,
 # ── Background job ─────────────────────────────────────────────────────────────
 
 def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = False):
-    from sqlalchemy import or_
-    from models import (Record, SessionLocal, UserCostLog, Workspace,
-                        calc_cost, workspace_criteria)
+    from models import (Record, ScreenDecision, SessionLocal, UserCostLog, Workspace,
+                        calc_cost, recompute_record_screen1, upsert_screen_decision,
+                        workspace_criteria)
     import anthropic
 
     db = SessionLocal()
@@ -130,14 +133,21 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
         ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
         model = ws.screening_model or "claude-haiku-4-5"
         system = build_system(ws.research_question, workspace_criteria(db, ws, "exclusion"))
-        # never touch records a human decided; re-run also re-screens model-decided ones
+        # records any human already voted on (or an adjudicator resolved) are the
+        # humans' call — the model never overrides them.
+        human_ids = {rid for (rid,) in
+                     db.query(ScreenDecision.record_id)
+                       .filter(ScreenDecision.workspace_id == workspace_id,
+                               ScreenDecision.stage == "screen1",
+                               ScreenDecision.reviewer_kind.in_(["user", "adjudicator"])).all()}
         q = (db.query(Record)
                .filter(Record.workspace_id == workspace_id,
-                       Record.is_removed == False,                  # noqa: E712
-                       or_(Record.screen1_by.is_(None), Record.screen1_by != "user")))
+                       Record.is_removed == False))               # noqa: E712
         if not rerun:
+            # default: only records with no decision yet (no model row, no human)
             q = q.filter(Record.screen1_decision == "pending")
-        pending = q.all()
+        # re-run also re-screens the model's own past calls, but never human ones
+        pending = [r for r in q.all() if r.id not in human_ids]
         total = len(pending)
         _set(workspace_id, {"status": "running", "message": f"Screening {total} records…",
                             "total": total, "done": 0, "included": 0, "excluded": 0,
@@ -165,10 +175,8 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
                 except Exception as exc:
                     decision, reason, i, o = "include", f"screening error: {exc}", 0, 0
                 rec = db.query(Record).filter(Record.id == rec_id).first()
-                rec.screen1_decision = decision
-                rec.screen1_reason = reason
-                rec.screen1_by = "model"
-                rec.screen1_at = datetime.utcnow()
+                upsert_screen_decision(db, rec, "screen1", "model", None, decision, reason)
+                recompute_record_screen1(db, ws, rec)
                 tin += i
                 tout += o
                 if decision == "exclude":

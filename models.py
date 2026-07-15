@@ -18,7 +18,8 @@ import secrets
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, create_engine,
+    Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text,
+    UniqueConstraint, create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
@@ -61,6 +62,10 @@ class Workspace(Base):
     description       = Column(Text, nullable=True)
     research_question = Column(Text, nullable=True)
     screening_model   = Column(String, default="claude-haiku-4-5")
+    # how many independent human votes settle a screen-1 record (1 = single
+    # screening; 2 = classic blind double screening). The LLM pre-screens either
+    # way; with 0 human votes its decision stands (sole-screener mode).
+    screen1_reviewers_required = Column(Integer, default=1)
     owner_id          = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at        = Column(DateTime, default=datetime.utcnow)
 
@@ -248,6 +253,89 @@ class Criterion(Base):
     workspace = relationship("Workspace", backref="criteria")
 
 
+# ── Screening decisions (per reviewer, steps 5 & 8) ────────────────────────────
+
+class ScreenDecision(Base):
+    """One vote per (record × reviewer × stage). Reviewers are the LLM
+    (reviewer_kind='model'), the workspace members ('user'), or the adjudicator
+    who resolves conflicts ('adjudicator'). Record.screen1_decision is the cached
+    resolution of these rows — see resolve_screen1()."""
+    __tablename__ = "screen_decisions"
+    id            = Column(Integer, primary_key=True)
+    workspace_id  = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    record_id     = Column(Integer, ForeignKey("records.id"), nullable=False)
+    stage         = Column(String, nullable=False, default="screen1")  # screen1 | screen2
+    reviewer_kind = Column(String, nullable=False)   # model | user | adjudicator
+    reviewer_id   = Column(Integer, ForeignKey("users.id"), nullable=True)  # null for model
+    decision      = Column(String, nullable=False)   # include | exclude
+    reason        = Column(Text, nullable=True)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+    updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("record_id", "stage", "reviewer_kind", "reviewer_id",
+                         name="uq_screen_decision_reviewer"),
+    )
+
+    record   = relationship("Record")
+    reviewer = relationship("User")
+
+
+def upsert_screen_decision(db, record, stage, reviewer_kind, reviewer_id,
+                           decision, reason=None):
+    """Insert or update a reviewer's vote for a record+stage. No commit."""
+    row = (db.query(ScreenDecision)
+             .filter(ScreenDecision.record_id == record.id,
+                     ScreenDecision.stage == stage,
+                     ScreenDecision.reviewer_kind == reviewer_kind,
+                     ScreenDecision.reviewer_id == reviewer_id).first())
+    if row is None:
+        row = ScreenDecision(workspace_id=record.workspace_id, record_id=record.id,
+                             stage=stage, reviewer_kind=reviewer_kind, reviewer_id=reviewer_id)
+        db.add(row)
+    row.decision = decision
+    row.reason = reason
+    row.updated_at = datetime.utcnow()
+    db.flush()  # session is autoflush=False; make the row visible to recompute
+    return row
+
+
+def resolve_screen1(rows, reviewers_required: int):
+    """Reduce a record's screen-1 votes to (decision, by, reason).
+    Priority: adjudicator > human consensus (≥ required) > model > pending.
+    Humans disagreeing → 'conflict'. Humans agreeing but too few yet → falls
+    back to the model's provisional decision (or pending)."""
+    adj = [r for r in rows if r.reviewer_kind == "adjudicator"]
+    if adj:
+        r = max(adj, key=lambda x: x.updated_at or datetime.min)
+        return r.decision, "adjudicator", r.reason
+    humans = [r for r in rows if r.reviewer_kind == "user"]
+    if humans:
+        decisions = {r.decision for r in humans}
+        if len(decisions) > 1:
+            return "conflict", "conflict", None
+        if len(humans) >= max(1, reviewers_required or 1):
+            reason = "; ".join(filter(None, (r.reason for r in humans))) or None
+            return next(iter(decisions)), "human", reason
+        # partial agreement — not enough independent reviewers yet; fall through
+    model = [r for r in rows if r.reviewer_kind == "model"]
+    if model:
+        return model[0].decision, "model", model[0].reason
+    return "pending", None, None
+
+
+def recompute_record_screen1(db, workspace, record):
+    """Recache Record.screen1_* from the ScreenDecision rows. No commit."""
+    rows = (db.query(ScreenDecision)
+              .filter(ScreenDecision.record_id == record.id,
+                      ScreenDecision.stage == "screen1").all())
+    dec, by, reason = resolve_screen1(rows, workspace.screen1_reviewers_required or 1)
+    record.screen1_decision = dec
+    record.screen1_by = by
+    record.screen1_reason = reason
+    record.screen1_at = datetime.utcnow()
+
+
 # ── Cost tracking (LLM steps) ──────────────────────────────────────────────────
 
 # Pricing per million tokens (input, output) — approximate, update when Anthropic
@@ -332,6 +420,7 @@ def init_db():
     with engine.connect() as conn:
         for stmt in [
             "ALTER TABLE workspaces ADD COLUMN screening_model VARCHAR DEFAULT 'claude-haiku-4-5'",
+            "ALTER TABLE workspaces ADD COLUMN screen1_reviewers_required INTEGER DEFAULT 1",
             "ALTER TABLE records ADD COLUMN full_text_status VARCHAR DEFAULT 'none'",
             "ALTER TABLE records ADD COLUMN full_text_url VARCHAR",
         ]:
@@ -340,6 +429,34 @@ def init_db():
                 conn.commit()
             except Exception:
                 pass
+    _backfill_screen_decisions()
+
+
+def _backfill_screen_decisions():
+    """One-time: seed ScreenDecision rows from the pre-existing single-decision
+    Record.screen1_* fields, so history survives the multi-reviewer migration.
+    Guarded by an empty table, so it runs only on the first startup after the
+    schema change."""
+    db = SessionLocal()
+    try:
+        if db.query(ScreenDecision).count() > 0:
+            return
+        recs = (db.query(Record)
+                  .filter(Record.screen1_by.in_(["model", "user"]),
+                          Record.screen1_decision.in_(["include", "exclude"])).all())
+        owners = {w.id: w.owner_id for w in db.query(Workspace).all()}
+        for rec in recs:
+            if rec.screen1_by == "model":
+                kind, rid = "model", None
+            else:
+                kind, rid = "user", owners.get(rec.workspace_id)
+            db.add(ScreenDecision(workspace_id=rec.workspace_id, record_id=rec.id,
+                                  stage="screen1", reviewer_kind=kind, reviewer_id=rid,
+                                  decision=rec.screen1_decision, reason=rec.screen1_reason))
+        if recs:
+            db.commit()
+    finally:
+        db.close()
 
 
 def get_db():
