@@ -9,6 +9,7 @@ cryptography
 anthropic
 requests
 pandas
+openpyxl
 bibtexparser
 rispy
 rapidfuzz

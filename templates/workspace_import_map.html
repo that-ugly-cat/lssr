@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Map columns — {{ ws.name }}{% endblock %}
+{% block body %}
+{% include "_ws_tabs.html" %}
+
+<div class="cards-label">Step 3 — Map spreadsheet columns</div>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">
+    {{ total }} row{{ 's' if total != 1 else '' }} found. Tell LSSR which column feeds
+    each field — <strong>Title</strong> is required, the rest are optional. Unmapped
+    fields are left empty. Rows go through the usual dedup on import.
+  </p>
+
+  <form method="post" action="/w/{{ ws.id }}/records/import/excel/apply">
+    <input type="hidden" name="token" value="{{ token }}">
+    <input type="hidden" name="database" value="{{ database }}">
+    <input type="hidden" name="other_name" value="{{ other_name }}">
+
+    <table class="table">
+      <thead><tr><th>LSSR field</th><th>Spreadsheet column</th></tr></thead>
+      <tbody>
+        {% for field, label in fields %}
+        <tr>
+          <td class="nowrap">{{ label }}{% if field == 'title' %} <span style="color:var(--danger);">*</span>{% endif %}</td>
+          <td>
+            <select name="map_{{ field }}" {{ 'required' if field == 'title' else '' }}>
+              <option value="">— none —</option>
+              {% for c in columns %}
+              <option value="{{ c }}" {{ 'selected' if guess.get(field) == c else '' }}>{{ c }}</option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+        {% endfor %}
+        <tr>
+          <td class="nowrap">Document type</td>
+          <td>
+            <select name="type_col">
+              <option value="">— fixed default →</option>
+              {% for c in columns %}<option value="{{ c }}">from column: {{ c }}</option>{% endfor %}
+            </select>
+            <select name="default_type">
+              {% for t, lbl in [('article','paper'),('book','book'),('book_chapter','book chapter'),('grey','grey lit')] %}
+              <option value="{{ t }}">{{ lbl }}</option>{% endfor %}
+            </select>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <button class="btn btn-primary" type="submit" style="margin-top:10px;">Import {{ total }} rows</button>
+    <a class="btn" href="/w/{{ ws.id }}/records">Cancel</a>
+  </form>
+</div>
+
+{% if sample %}
+<div class="cards-label">Preview (first {{ sample|length }} rows)</div>
+<div class="card" style="overflow-x:auto;">
+  <table class="table">
+    <thead><tr>{% for c in columns %}<th class="nowrap">{{ c }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {% for row in sample %}
+      <tr>{% for v in row %}<td class="small">{{ v[:120] }}{{ '…' if v|length > 120 else '' }}</td>{% endfor %}</tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

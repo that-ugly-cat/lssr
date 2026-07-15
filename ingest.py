@@ -293,6 +293,75 @@ def parse_ris(text: str) -> list[dict]:
     return refs
 
 
+# ── Excel (column-mapped) ───────────────────────────────────────────────────────
+
+# Target fields the user maps spreadsheet columns onto. title is the anchor.
+EXCEL_FIELDS = [
+    ("title", "Title"), ("authors", "Authors"), ("year", "Year"),
+    ("doi", "DOI"), ("abstract", "Abstract"), ("source", "Source / journal"),
+    ("url", "URL"), ("keywords", "Keywords"), ("language", "Language"),
+]
+
+_TYPE_ALIASES = {"article": "article", "paper": "article", "journal": "article",
+                 "book": "book", "book chapter": "book_chapter", "chapter": "book_chapter",
+                 "book_chapter": "book_chapter"}
+
+
+def _norm_type(raw: str) -> str:
+    v = (raw or "").strip().lower()
+    # longest alias first, so "book chapter" wins over "book"
+    for k in sorted(_TYPE_ALIASES, key=len, reverse=True):
+        if k in v:
+            return _TYPE_ALIASES[k]
+    return "grey" if v else "article"
+
+
+def read_excel(file_bytes: bytes) -> tuple[list[str], list[list], int]:
+    """Return (column headers, up to 5 sample rows, total row count) for the
+    mapping UI. Everything read as strings so numbers/DOIs survive intact."""
+    import io
+    import pandas as pd
+    df = pd.read_excel(io.BytesIO(file_bytes), dtype=str).fillna("")
+    cols = [str(c) for c in df.columns]
+    sample = [[str(v) for v in row] for row in df.head(5).values.tolist()]
+    return cols, sample, len(df)
+
+
+def excel_to_refs(file_bytes: bytes, mapping: dict, type_col: str | None,
+                  default_type: str) -> list[dict]:
+    """Turn spreadsheet rows into normalized ref dicts using a field→column map.
+    `mapping` keys are EXCEL_FIELDS names; values are column headers ('' = skip)."""
+    import io
+    import pandas as pd
+    df = pd.read_excel(io.BytesIO(file_bytes), dtype=str).fillna("")
+    cols = set(str(c) for c in df.columns)
+    df.columns = [str(c) for c in df.columns]
+    refs = []
+    for _, row in df.iterrows():
+        def g(field):
+            col = mapping.get(field)
+            return str(row[col]).strip() if col and col in cols else ""
+        title, doi = g("title"), g("doi")
+        if not title and not doi:
+            continue  # skip blank rows
+        ym = re.search(r"\d{4}", g("year"))
+        rtype = _norm_type(str(row[type_col])) if (type_col and type_col in cols) else default_type
+        refs.append({
+            "type": rtype,
+            "authors": g("authors"),
+            "year": int(ym.group()) if ym else None,
+            "title": title,
+            "abstract": g("abstract"),
+            "doi": doi,
+            "url": g("url"),
+            "source": g("source"),
+            "keywords": _split_terms(g("keywords")),
+            "mesh": [],
+            "language": g("language"),
+        })
+    return refs
+
+
 def parse_file(filename: str, text: str) -> list[dict]:
     name = filename.lower()
     if name.endswith((".ris", ".nbib")) or text.lstrip().startswith("TY  -"):

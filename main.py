@@ -376,8 +376,16 @@ async def records_page(ws_id: int, request: Request, show: str = "active",
     })
 
 
+def _db_label(database: str, other_name: str) -> str:
+    """Resolve the provenance label: a custom name when 'other' is picked."""
+    if database == "other" and other_name.strip():
+        return other_name.strip()[:60]
+    return database
+
+
 @app.post("/w/{ws_id}/records/import")
 async def import_file(ws_id: int, file: UploadFile = File(...), database: str = Form("scopus"),
+                      other_name: str = Form(""),
                       user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     raw = (await file.read()).decode("utf-8", errors="replace")
@@ -388,8 +396,77 @@ async def import_file(ws_id: int, file: UploadFile = File(...), database: str = 
         raise HTTPException(400, f"Could not parse file: {exc}")
     it = current_iteration(db, ws)
     fmt = "ris" if (file.filename or "").lower().endswith((".ris", ".nbib")) or raw.lstrip().startswith("TY  -") else "bibtex"
-    ingest_references(db, ws, it, refs, database=database, fmt=fmt,
+    ingest_references(db, ws, it, refs, database=_db_label(database, other_name), fmt=fmt,
                       source_name=file.filename, user_id=user.id)
+    return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
+
+
+# ── Excel import: upload → map columns → ingest ─────────────────────────────
+
+_IMPORT_TMP = Path("data/import_tmp")
+
+
+@app.post("/w/{ws_id}/records/import/excel")
+async def import_excel_preview(ws_id: int, request: Request, file: UploadFile = File(...),
+                               database: str = Form("scopus"), other_name: str = Form(""),
+                               user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    data = await file.read()
+    from ingest import EXCEL_FIELDS, read_excel
+    try:
+        cols, sample, total = read_excel(data)
+    except Exception as exc:
+        raise HTTPException(400, f"Could not read spreadsheet: {exc}")
+    # stash the file server-side between the two steps; clean up stale ones first
+    import time
+    import uuid
+    tmp_dir = _IMPORT_TMP / str(ws.id)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    for old in tmp_dir.glob("*.xlsx"):
+        if time.time() - old.stat().st_mtime > 3600:
+            old.unlink(missing_ok=True)
+    token = uuid.uuid4().hex
+    (tmp_dir / f"{token}.xlsx").write_bytes(data)
+    # best-effort auto-mapping: match our field names against the headers
+    lc = {c.lower(): c for c in cols}
+    guess = {}
+    for field, _ in EXCEL_FIELDS:
+        for cand in (field, field.rstrip("s"), {"source": "journal", "authors": "author"}.get(field, field)):
+            if cand in lc:
+                guess[field] = lc[cand]
+                break
+    return render(request, "workspace_import_map.html", {
+        "user": user, "ws": ws, "tab": "records", "token": token,
+        "columns": cols, "sample": sample, "total": total,
+        "fields": EXCEL_FIELDS, "guess": guess,
+        "database": database, "other_name": other_name,
+    })
+
+
+@app.post("/w/{ws_id}/records/import/excel/apply")
+async def import_excel_apply(ws_id: int, request: Request, token: str = Form(...),
+                             database: str = Form("scopus"), other_name: str = Form(""),
+                             type_col: str = Form(""), default_type: str = Form("article"),
+                             user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    if not token.isalnum():
+        raise HTTPException(400, "Bad token")
+    path = _IMPORT_TMP / str(ws.id) / f"{token}.xlsx"
+    if not path.exists():
+        raise HTTPException(400, "Upload expired — please re-upload the file")
+    from ingest import EXCEL_FIELDS, excel_to_refs, ingest_references
+    form = await request.form()
+    mapping = {field: (form.get(f"map_{field}") or "").strip() for field, _ in EXCEL_FIELDS}
+    if not mapping.get("title"):
+        raise HTTPException(400, "Map a column to Title first")
+    try:
+        refs = excel_to_refs(path.read_bytes(), mapping, type_col or None, default_type)
+    except Exception as exc:
+        raise HTTPException(400, f"Could not read spreadsheet: {exc}")
+    it = current_iteration(db, ws)
+    ingest_references(db, ws, it, refs, database=_db_label(database, other_name), fmt="excel",
+                      source_name=None, user_id=user.id)
+    path.unlink(missing_ok=True)
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 

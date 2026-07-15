@@ -10,9 +10,8 @@
 
 <div class="cards-label">Step 3 — Import references</div>
 <div class="card">
-  <form method="post" action="/w/{{ ws.id }}/records/import" enctype="multipart/form-data" class="inline-form">
-    <input type="file" name="file" accept=".bib,.bibtex,.ris,.nbib" required>
-    <select name="database">
+  {% macro db_select() %}
+    <select name="database" onchange="this.closest('form').querySelector('.other-name').style.display = this.value=='other' ? '' : 'none';">
       <option value="scopus">Scopus</option>
       <option value="wos">Web of Science</option>
       <option value="cinahl">CINAHL</option>
@@ -20,7 +19,17 @@
       <option value="pubmed">PubMed</option>
       <option value="other">Other</option>
     </select>
+    <input type="text" name="other_name" class="other-name" placeholder="name the source" style="display:none; max-width:160px;">
+  {% endmacro %}
+  <form method="post" action="/w/{{ ws.id }}/records/import" enctype="multipart/form-data" class="inline-form">
+    <input type="file" name="file" accept=".bib,.bibtex,.ris,.nbib" required>
+    {{ db_select() }}
     <button class="btn btn-primary btn-small" type="submit">Import BibTeX / RIS</button>
+  </form>
+  <form method="post" action="/w/{{ ws.id }}/records/import/excel" enctype="multipart/form-data" class="inline-form" style="margin-top:8px;">
+    <input type="file" name="file" accept=".xlsx,.xls" required>
+    {{ db_select() }}
+    <button class="btn btn-small" type="submit">Import Excel → map columns</button>
   </form>
   {% if imports %}
   <table class="table" style="margin-top:12px;">
@@ -79,19 +88,20 @@
 </form>
 
 <table class="table">
-  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Source</th><th>DBs</th><th></th></tr></thead>
+  {% set type_lbl = {'article': 'paper', 'book': 'book', 'book_chapter': 'book chapter', 'grey': 'grey lit'} %}
+  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Type</th><th>Source</th><th>DBs</th><th></th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr>
       <td class="nowrap">{{ r.year or '—' }}</td>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
-        {% if r.type and r.type != 'article' %}<span class="badge badge-muted">{{ r.type.replace('_',' ') }}</span>{% endif %}
         <div class="muted small">{{ r.authors or '' }}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% endif %}</div>
         {% if r.abstract %}
         <details class="abstract-toggle"><summary class="muted small">abstract</summary><div class="small" style="margin-top:4px; max-width:75ch;">{{ r.abstract }}</div></details>
         {% else %}<div class="muted small" style="font-style:italic;">no abstract</div>{% endif %}
       </td>
+      <td class="small nowrap">{{ type_lbl.get(r.type, r.type or 'paper') }}</td>
       <td class="small">{{ r.source or '' }}</td>
       <td class="small">
         {% for db in r.source_dbs_json|fromjson %}<span class="badge badge-muted">{{ db }}</span> {% endfor %}
@@ -109,7 +119,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="5" class="muted">No records match. Adjust the filter, or run a PubMed search / import a file.</td></tr>
+    <tr><td colspan="6" class="muted">No records match. Adjust the filter, or run a PubMed search / import a file.</td></tr>
     {% endfor %}
   </tbody>
 </table>
