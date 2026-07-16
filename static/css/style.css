@@ -563,7 +563,10 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
 
 /* ── public review: layout + charts ── */
 .pub-layout { display: grid; grid-template-columns: 170px 1fr; gap: 34px; align-items: start; }
-.pub-index-inner { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 2px; }
+/* sticky must sit on the grid item itself (content-height via align-items:start),
+   so it can stay pinned while the tall grid container scrolls past it */
+.pub-index { position: sticky; top: 20px; align-self: start; }
+.pub-index-inner { display: flex; flex-direction: column; gap: 2px; }
 .pub-index a {
   padding: 6px 10px; border-radius: 6px; font-size: 13px; color: var(--muted-2);
   border-left: 2px solid transparent; text-decoration: none;
@@ -594,7 +597,8 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
 
 @media (max-width: 720px) {
   .pub-layout { grid-template-columns: 1fr; }
-  .pub-index-inner { position: static; flex-direction: row; flex-wrap: wrap; margin-bottom: 12px; }
+  .pub-index { position: static; }
+  .pub-index-inner { flex-direction: row; flex-wrap: wrap; margin-bottom: 12px; }
   .pub-grid { grid-template-columns: 1fr; }
   .pub-bar-row { grid-template-columns: 96px 1fr 28px; }
 }
