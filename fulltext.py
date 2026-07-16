@@ -250,8 +250,10 @@ def _download_pdf(url: str) -> bytes | None:
 # ── paper2md (step 7) ──────────────────────────────────────────────────────────
 
 def pdf_to_markdown(pdf_bytes: bytes, paper2md_url: str) -> str:
-    """POST the PDF to paper2md. PAPER2MD_API_KEY is optional but lifts the
-    upload cap (10MB anonymous → 50MB keyed), so papers need it."""
+    """POST the PDF to paper2md and keep the WHOLE text — references and back
+    matter included — for the reader. Back matter is stripped later, only for the
+    LLM (see strip_back_matter). PAPER2MD_API_KEY is optional but lifts the upload
+    cap (10MB anonymous → 50MB keyed), so papers need it."""
     headers = {}
     key = os.environ.get("PAPER2MD_API_KEY", "").strip()
     if key:
@@ -259,7 +261,7 @@ def pdf_to_markdown(pdf_bytes: bytes, paper2md_url: str) -> str:
     resp = requests.post(
         f"{paper2md_url.rstrip('/')}/convert",
         files={"file": ("paper.pdf", pdf_bytes, "application/pdf")},
-        data={"remove_references": "true", "format": "json"},
+        data={"remove_references": "false", "remove_end_matter": "false", "format": "json"},
         headers=headers,
         timeout=360,
     )
@@ -659,3 +661,23 @@ def start_convert(workspace_id: int, paper2md_url: str):
 
 def paper2md_url() -> str:
     return os.environ.get("PAPER2MD_URL", "http://localhost:8008")
+
+
+_BACK_MATTER = re.compile(
+    r"(?im)^\s*#{1,6}\s*(references|bibliography|works cited|literature cited|"
+    r"acknowledge?ments?|funding|conflicts? of interest|competing interests|"
+    r"declaration of competing interest|declarations?|author contributions?|"
+    r"supplementary( material)?|data availability)\b")
+
+
+def strip_back_matter(md: str) -> str:
+    """Drop everything from the first references/back-matter heading onward, so
+    the LLM reads the article, not its bibliography. Kept out of what the reader
+    sees. Guarded against a false positive that would gut the text (a match in the
+    first 40% is ignored)."""
+    if not md:
+        return md
+    m = _BACK_MATTER.search(md)
+    if m and m.start() >= len(md) * 0.4:
+        return md[:m.start()].rstrip()
+    return md

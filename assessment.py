@@ -172,8 +172,10 @@ def _create_with_retry(client, *, tries: int = 3, **kw):
 
 
 def assess_record(client, system_prompt: str, full_text: str, model: str):
-    """Returns (decision, reason, raw_fields, tokens_in, tokens_out)."""
-    text = (full_text or "")[:MAX_TEXT_CHARS]
+    """Returns (decision, reason, raw_fields, tokens_in, tokens_out). The reader
+    keeps the whole full text; the model gets it without references/back matter."""
+    from fulltext import strip_back_matter
+    text = strip_back_matter(full_text or "")[:MAX_TEXT_CHARS]
     resp = _create_with_retry(
         client,
         model=model,
