@@ -111,6 +111,24 @@ DB_RULES = {
     ),
 }
 
+# How to express a publication-year window in each translation-only database.
+# Harvest databases are absent on purpose: their year window is applied by the
+# harvest job in the source's own syntax, not baked into the translated string.
+def _date_syntax(db: str, yf: int, yt: int) -> str | None:
+    return {
+        "scopus": f"PUBYEAR > {yf - 1} AND PUBYEAR < {yt + 1}",
+        "wos": f"AND PY=({yf}-{yt})",
+        "cinahl": f"AND (PY {yf}-{yt}), or the EBSCO Publication Date limiter {yf}-{yt}",
+        "jstor": f"restrict to {yf}-{yt} with JSTOR's date-range limiter (no reliable inline year field)",
+        "embase-ovid": f'AND ({yf}:{yt}).yr., or: limit results to yr="{yf}-{yt}"',
+        "embase-ebsco": f"AND (PY {yf}-{yt}), or the EBSCO Publication Date limiter",
+        "psycinfo-ovid": f'AND ({yf}:{yt}).yr., or: limit results to yr="{yf}-{yt}"',
+        "psycinfo-ebsco": f"AND (PY {yf}-{yt}), or the EBSCO Publication Date limiter",
+        "philpapers": f"{yf}-{yt} (PhilPapers has no query-string date field — apply it in the interface)",
+        "heinonline": f"{yf}-{yt} (HeinOnline date-range facet: yearlo={yf}, yearhi={yt})",
+    }.get(db)
+
+
 _SYSTEM = (
     "You are an expert research librarian who translates bibliographic database "
     "queries between syntaxes for systematic reviews. You preserve the search "
@@ -118,13 +136,29 @@ _SYSTEM = (
     "field tags, operators, and wildcards to the target database. Controlled-"
     "vocabulary terms (MeSH, Emtree, thesaurus descriptors) become the target's "
     "equivalent controlled vocabulary, or free-text/keyword equivalents where the "
-    "target has none. Return ONLY the translated query string, with no "
-    "explanation, no code fences, no surrounding prose."
+    "target has none. Return ONLY the translated query string as plain text — no "
+    "explanation, NO code fences, NO triple backticks (```), no surrounding prose."
 )
 
 
+def _strip_fences(s: str) -> str:
+    """Defensively remove a ```-fenced wrapper the model sometimes adds despite
+    the instruction not to."""
+    s = s.strip()
+    if s.startswith("```"):
+        lines = s.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        s = "\n".join(lines).strip()
+    return s.strip("`").strip()
+
+
 def translate_query(api_key: str, source_query: str, target_db: str,
-                    source_db: str = "pubmed", model: str = DEFAULT_MODEL) -> str:
+                    source_db: str = "pubmed", year_from: int | None = None,
+                    year_to: int | None = None, apply_years: bool = False,
+                    model: str = DEFAULT_MODEL) -> str:
     if target_db not in DB_RULES:
         raise ValueError(f"Unsupported target database: {target_db}")
     if source_db == target_db:
@@ -132,11 +166,23 @@ def translate_query(api_key: str, source_query: str, target_db: str,
     import anthropic
     client = anthropic.Anthropic(api_key=api_key)
     source_rules = DB_RULES.get(source_db, "(unknown source syntax — infer from the query)")
+    year_note = ""
+    if apply_years and year_from and year_to:
+        hint = _date_syntax(target_db, year_from, year_to)
+        if hint:
+            year_note = (
+                f"\nAlso restrict the query to publication years {year_from}–{year_to}. "
+                f"In {target_db}, express this as: {hint}. Integrate it into the query "
+                f"with AND when the syntax is inline; if the database only offers a UI "
+                f"date limiter, append it as a short parenthetical note rather than "
+                f"inventing inline syntax.\n"
+            )
     prompt = (
         f"Source database: {source_db}\n"
         f"Source syntax rules:\n{source_rules}\n\n"
         f"Target database: {target_db}\n"
-        f"Target syntax rules:\n{DB_RULES[target_db]}\n\n"
+        f"Target syntax rules:\n{DB_RULES[target_db]}\n"
+        f"{year_note}\n"
         f"Query to translate (written in {source_db} syntax):\n{source_query}\n\n"
         f"Translated {target_db} query:"
     )
@@ -146,4 +192,5 @@ def translate_query(api_key: str, source_query: str, target_db: str,
         system=_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
     )
-    return "".join(b.text for b in msg.content if getattr(b, "type", None) == "text").strip()
+    text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+    return _strip_fences(text)

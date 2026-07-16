@@ -97,6 +97,10 @@
     <textarea name="query" rows="2" placeholder="Translated {{ label }} query (editable)">{{ tq.query_string if tq else '' }}</textarea>
     <button class="btn btn-small" type="submit" style="margin-top:6px;">Save</button>
   </form>
+  <p class="muted small" style="margin-top:4px;">
+    {% if harvest %}Years {{ year_from }}–{{ year_to }} are applied automatically when you Run this source.
+    {% else %}Years {{ year_from }}–{{ year_to }} are folded into the translated query above — review and adjust for this database's date syntax.{% endif %}
+  </p>
   {% if harvest %}
   <form method="post" action="/w/{{ ws.id }}/harvest/{{ db }}/run" style="margin-top:10px;" id="run-form-{{ db }}">
     <button class="btn btn-small" type="submit" id="run-btn-{{ db }}" {{ 'disabled' if not (tq and tq.query_string) else '' }}>Run {{ label }} search</button>

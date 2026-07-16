@@ -623,8 +623,11 @@ async def translate_route(ws_id: int, database: str, user: User = Depends(get_cu
     if not api_key:
         raise HTTPException(400, "Set your Anthropic API key in your profile first")
     from translate import translate_query
+    yf, yt = workspace_years(ws)
     try:
-        translated = translate_query(api_key, source.query_string, database, source_db=source_db)
+        translated = translate_query(api_key, source.query_string, database,
+                                     source_db=source_db, year_from=yf, year_to=yt,
+                                     apply_years=(database not in HARVEST_DBS))
     except Exception as exc:
         raise HTTPException(502, f"Translation failed: {exc}")
     upsert_query(db, ws, database, translated)
