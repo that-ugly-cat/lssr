@@ -554,3 +554,9 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
   animation: toast-in 0.15s ease;
 }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* auto-growing extraction textareas in the review modal */
+.rev-autogrow {
+  width: 100%; min-height: 34px; max-height: 340px; overflow-y: auto;
+  resize: vertical; line-height: 1.45; font-family: inherit;
+}

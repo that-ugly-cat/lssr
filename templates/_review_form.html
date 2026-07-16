@@ -56,9 +56,7 @@
     <div class="rev-field" data-key="{{ f.key }}"
          {% if f.show_if_key %}data-show-if-key="{{ f.show_if_key }}" data-show-if-values='{{ f.show_if_values() | tojson }}'{% endif %}>
       <label>{{ f.label }}{% if f.help %} <span class="muted small">— {{ f.help }}</span>{% endif %}
-        {% if f.field_type == 'textarea' %}
-        <textarea name="f_{{ f.key }}" rows="2">{{ values.get(f.key, '') }}</textarea>
-        {% elif f.field_type == 'number' %}
+        {% if f.field_type == 'number' %}
         <input type="number" step="any" name="f_{{ f.key }}" value="{{ values.get(f.key, '') }}">
         {% elif f.field_type == 'select' %}
         <select name="f_{{ f.key }}">
@@ -70,7 +68,9 @@
           {% for o in f.options() %}<option value="{{ o }}" {{ 'selected' if o in (values.get(f.key) or []) else '' }}>{{ o }}</option>{% endfor %}
         </select>
         {% else %}
-        <input type="text" name="f_{{ f.key }}" value="{{ values.get(f.key, '') }}">
+        {# text and textarea both render as an auto-growing textarea: extracted
+           findings (with their verbatim quote) can run long. #}
+        <textarea class="rev-autogrow" name="f_{{ f.key }}" rows="{{ 1 if f.field_type == 'text' else 3 }}">{{ values.get(f.key, '') }}</textarea>
         {% endif %}
       </label>
     </div>

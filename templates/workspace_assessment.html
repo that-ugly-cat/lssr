@@ -141,6 +141,11 @@ async function openReview(rid) {
   const root = document.getElementById('review-cond-root');
   if (root) {
     applyConditionals(root);
+    const grow = (el) => { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
+    root.querySelectorAll('textarea.rev-autogrow').forEach(el => {
+      grow(el);
+      el.addEventListener('input', () => grow(el));
+    });
     root.querySelectorAll('[name^="f_"]').forEach(el =>
       el.addEventListener('change', () => applyConditionals(root)));
     root.querySelectorAll('.rev-radio input').forEach(el =>
