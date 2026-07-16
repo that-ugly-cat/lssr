@@ -19,14 +19,14 @@
   </div>
 
   <form class="review-form" method="post" action="/w/{{ ws.id }}/assessment/{{ rec.id }}/review">
-    {% if inclusion %}
     <div class="rev-crit">
-      <div class="rev-crit-head">Inclusion criteria (screening 2)</div>
+      <div class="rev-crit-head">Include on full text if it meets the inclusion criteria:</div>
       {% for c in inclusion %}
       <div class="rev-crit-item"><strong>{{ c.label }}</strong>{% if c.description %} — <span class="muted">{{ c.description }}</span>{% endif %}</div>
+      {% else %}
+      <div class="rev-crit-item muted">No inclusion criteria defined — add them in <a href="/w/{{ ws.id }}/settings">Settings</a>.</div>
       {% endfor %}
     </div>
-    {% endif %}
 
     <div class="rev-section-label">Screening 2 — include on full text?
       {% if model_vote and not my_vote %}<span class="badge badge-muted">🤖 AI draft: {{ model_vote.decision }}</span>{% endif %}

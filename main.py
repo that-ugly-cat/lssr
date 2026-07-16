@@ -1266,14 +1266,30 @@ async def upload_fulltext(ws_id: int, rid: int, file: UploadFile = File(...),
 # ── Assessment: combined screening 2 + assessment (steps 8-9) ───────────────
 
 @app.get("/w/{ws_id}/assessment", response_class=HTMLResponse)
-async def assessment_page(ws_id: int, request: Request, user: User = Depends(get_current_user),
-                          db: Session = Depends(get_db)):
+async def assessment_page(ws_id: int, request: Request, decision: str = "all",
+                          q: str = "", source: str = "", rtype: str = "",
+                          yf: str = "", yt: str = "", sort: str = "year", order: str = "desc",
+                          user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     from models import ScreenDecision, ensure_extraction_fields, workspace_extraction_fields
     ensure_extraction_fields(db, ws)
-    records = (db.query(Record)
-                 .filter(Record.workspace_id == ws.id, Record.is_removed == False,  # noqa: E712
-                         Record.screen1_decision == "include").order_by(Record.id.desc()).all())
+
+    base = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False,  # noqa: E712
+                                   Record.screen1_decision == "include")
+    all_recs = base.all()  # the whole screen-1 included pool, for counts & the draft job
+
+    def _c2(d):
+        return sum(1 for r in all_recs if r.screen2_decision == d)
+    counts = {d: _c2(d) for d in ("pending", "include", "exclude", "maybe", "conflict")}
+    counts["total"] = len(all_recs)
+
+    # the visible table: apply the screen-2 decision filter + shared filters
+    tq = base
+    if decision in ("pending", "include", "exclude", "maybe", "conflict"):
+        tq = tq.filter(Record.screen2_decision == decision)
+    tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
+    records = tq.limit(500).all()
+
     rec_ids = [r.id for r in records]
     votes = {}
     my_reviewed = set()
@@ -1283,29 +1299,37 @@ async def assessment_page(ws_id: int, request: Request, user: User = Depends(get
         votes.setdefault(v.record_id, []).append(v)
         if v.reviewer_kind == "user" and v.reviewer_id == user.id:
             my_reviewed.add(v.record_id)
+
     n_fields = len(workspace_extraction_fields(db, ws))
-    n_converted = sum(1 for r in records if r.full_text_status == "converted")
+    n_converted = sum(1 for r in all_recs if r.full_text_status == "converted")
     # records the model may draft: converted, still pending, untouched by a human
-    human_ids = {v.record_id for vs in votes.values() for v in vs
-                 if v.reviewer_kind in ("user", "adjudicator")}
-    ready_recs = [r for r in records if r.full_text_status == "converted"
-                  and r.screen2_decision == "pending" and r.id not in human_ids]
+    s2_human = {rid for (rid,) in db.query(ScreenDecision.record_id)
+                .filter(ScreenDecision.workspace_id == ws.id, ScreenDecision.stage == "screen2",
+                        ScreenDecision.reviewer_kind.in_(["user", "adjudicator"])).all()}
+    ready_recs = [r for r in all_recs if r.full_text_status == "converted"
+                  and r.screen2_decision == "pending" and r.id not in s2_human]
     ready = len(ready_recs)
-    drafted = sum(1 for r in records if r.screen2_by == "model")
-    # cost estimate for the draft run (full text dominates the input)
+    redraft_recs = [r for r in all_recs if r.full_text_status == "converted" and r.id not in s2_human]
+    drafted = sum(1 for r in all_recs if r.screen2_by == "model")
+
     import assessment
     model = ws.screening_model or "claude-haiku-4-5"
     system = assessment.build_system(ws.research_question,
                                      workspace_criteria(db, ws, "inclusion"),
                                      workspace_extraction_fields(db, ws))
-    est = assessment.estimate_cost(model, system, ready,
-                                   sum(len(r.full_text_md or "") for r in ready_recs))
-    est = "$0.00" if est <= 0 else ("<$0.01" if est < 0.01 else f"${est:.2f}")
+
+    def _fmt(recs):
+        e = assessment.estimate_cost(model, system, len(recs),
+                                     sum(len(r.full_text_md or "") for r in recs))
+        return "$0.00" if e <= 0 else ("<$0.01" if e < 0.01 else f"${e:.2f}")
     return render(request, "workspace_assessment.html", {
         "user": user, "ws": ws, "tab": "assessment", "steps_done": workspace_steps_done(ws),
         "records": records, "votes": votes, "my_reviewed": my_reviewed,
+        "counts": counts, "decision": decision, "dbs_present": _dbs_present(db, ws.id),
+        "filters": {"decision": decision, "q": q, "source": source, "rtype": rtype,
+                    "yf": yf, "yt": yt, "sort": sort, "order": order},
         "n_converted": n_converted, "n_fields": n_fields,
-        "ready": ready, "drafted": drafted, "est": est,
+        "ready": ready, "drafted": drafted, "est": _fmt(ready_recs), "est_redraft": _fmt(redraft_recs),
         "model": model,
         "has_key": bool(_user_api_key(user)),
         "n_inclusion": len(workspace_criteria(db, ws, "inclusion")),

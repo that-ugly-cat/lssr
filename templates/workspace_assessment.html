@@ -41,10 +41,13 @@
       <span class="muted small">est. {{ est }}</span>
     </span>
     {% if drafted > 0 %}
-    <button class="btn" type="submit" name="rerun" value="1"
-      {{ 'disabled' if (n_inclusion == 0 or not has_key) else '' }}>
-      Re-draft {{ ready + drafted }} (model + pending)
-    </button>
+    <span style="display:inline-flex; flex-direction:column; align-items:flex-start;">
+      <button class="btn" type="submit" name="rerun" value="1"
+        {{ 'disabled' if (n_inclusion == 0 or not has_key) else '' }}>
+        Re-draft {{ ready + drafted }} (model + pending)
+      </button>
+      <span class="muted small">est. {{ est_redraft }}</span>
+    </span>
     {% endif %}
     <span class="muted small">{{ model }} · excluded records cost no extraction tokens.</span>
   </form>
@@ -53,6 +56,35 @@
   </div>
   <div id="as-status" class="flash" style="display:none;"></div>
 </div>
+
+{% set f = filters %}
+<div class="cards-label">
+  Records
+  <span style="font-weight:400; text-transform:none; letter-spacing:0;">
+    · <a href="/w/{{ ws.id }}/assessment?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict'] else 'muted' }}">all ({{ counts.total }})</a>
+    {% for d in ['pending','include','maybe','exclude','conflict'] %}
+    · <a href="/w/{{ ws.id }}/assessment?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }} ({{ counts[d] }})</a>
+    {% endfor %}
+  </span>
+</div>
+
+<form method="get" class="filter-bar">
+  <input type="hidden" name="decision" value="{{ f.decision }}">
+  <input type="text" name="q" value="{{ f.q }}" placeholder="Search title / author / abstract" style="max-width:260px;">
+  <select name="source">
+    <option value="">any DB</option>
+    {% for d in dbs_present %}<option value="{{ d }}" {{ 'selected' if f.source == d else '' }}>{{ d }}</option>{% endfor %}
+  </select>
+  <select name="rtype">
+    <option value="">any type</option>
+    {% for t, lbl in [('article','article'),('book','book'),('book_chapter','book chapter'),('grey','grey lit')] %}
+    <option value="{{ t }}" {{ 'selected' if f.rtype == t else '' }}>{{ lbl }}</option>{% endfor %}
+  </select>
+  <input type="number" name="yf" value="{{ f.yf }}" placeholder="year ≥" style="max-width:100px;">
+  <input type="number" name="yt" value="{{ f.yt }}" placeholder="year ≤" style="max-width:100px;">
+  <button class="btn btn-small" type="submit">Filter</button>
+  <a class="btn btn-small" href="/w/{{ ws.id }}/assessment?decision={{ f.decision }}">Clear</a>
+</form>
 
 <table class="table">
   <thead><tr><th>Title</th><th>Full text</th><th>Screen 2</th><th class="ta-right">Review</th></tr></thead>
@@ -98,7 +130,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="4" class="muted">No records included at screening 1 yet.</td></tr>
+    <tr><td colspan="4" class="muted">No records match this filter.</td></tr>
     {% endfor %}
   </tbody>
 </table>
