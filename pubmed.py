@@ -148,3 +148,9 @@ def start_pubmed(workspace_id: int, query: str, year_from: int, year_to: int,
         target=_run, args=(workspace_id, query, year_from, year_to, user_id),
         daemon=True,
     ).start()
+
+
+# Uniform harvest interface (matches europepmc/openalex/eric) so the generic
+# harvest run/status routes can dispatch to PubMed the same way.
+def start(workspace_id: int, query: str, year_from: int, year_to: int, user_id: int | None):
+    start_pubmed(workspace_id, query, year_from, year_to, user_id)

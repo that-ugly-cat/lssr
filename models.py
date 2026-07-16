@@ -75,6 +75,13 @@ class Workspace(Base):
     # way; with 0 human votes its decision stands (sole-screener mode).
     screen1_reviewers_required = Column(Integer, default=1)
     steps_done_json   = Column(Text, nullable=True)   # JSON list of completed pipeline steps
+    # Search strategy: the primary database the canonical query is authored in
+    # (translated from), the shared publication-year window applied to *every*
+    # harvest source, and the active translation targets (JSON list of db keys).
+    primary_db        = Column(String, default="pubmed")
+    year_from         = Column(Integer, nullable=True)
+    year_to           = Column(Integer, nullable=True)
+    target_dbs_json   = Column(Text, nullable=True)
     owner_id          = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at        = Column(DateTime, default=datetime.utcnow)
 
@@ -118,7 +125,41 @@ def new_share_token() -> str:
 
 # ── Search strategy (steps 1-2) ────────────────────────────────────────────────
 
-DATABASES = ["pubmed", "scopus", "wos", "cinahl", "jstor"]
+# Every database LSSR can target for query translation. A workspace picks one as
+# its *primary* (the query is authored/pasted there and translated from it) and
+# any subset as active translation targets. HARVEST_DBS are the ones we can pull
+# records from directly via a free, open API (no institutional credentials); the
+# rest are translation-only (copy the query out, export, import manually).
+DATABASES = [
+    "pubmed", "europepmc", "openalex", "eric",
+    "scopus", "wos", "cinahl", "jstor",
+    "embase-ovid", "embase-ebsco", "psycinfo-ovid", "psycinfo-ebsco",
+    "philpapers", "heinonline",
+]
+
+DB_LABELS = {
+    "pubmed": "PubMed",
+    "europepmc": "Europe PMC",
+    "openalex": "OpenAlex",
+    "eric": "ERIC",
+    "scopus": "Scopus",
+    "wos": "Web of Science",
+    "cinahl": "CINAHL",
+    "jstor": "JSTOR",
+    "embase-ovid": "Embase (Ovid)",
+    "embase-ebsco": "Embase (EBSCO)",
+    "psycinfo-ovid": "APA PsycInfo (Ovid)",
+    "psycinfo-ebsco": "APA PsycInfo (EBSCO)",
+    "philpapers": "PhilPapers",
+    "heinonline": "HeinOnline",
+}
+
+# Databases we can harvest directly (open API, no institutional auth).
+HARVEST_DBS = {"pubmed", "europepmc", "openalex", "eric"}
+
+
+def db_label(database: str) -> str:
+    return DB_LABELS.get(database, database)
 
 
 class SearchQuery(Base):
@@ -577,6 +618,10 @@ def init_db():
             "ALTER TABLE users ADD COLUMN wiley_token_encrypted VARCHAR",
             "ALTER TABLE records ADD COLUMN full_text_status VARCHAR DEFAULT 'none'",
             "ALTER TABLE records ADD COLUMN full_text_url VARCHAR",
+            "ALTER TABLE workspaces ADD COLUMN primary_db VARCHAR DEFAULT 'pubmed'",
+            "ALTER TABLE workspaces ADD COLUMN year_from INTEGER",
+            "ALTER TABLE workspaces ADD COLUMN year_to INTEGER",
+            "ALTER TABLE workspaces ADD COLUMN target_dbs_json VARCHAR",
         ]:
             try:
                 conn.execute(text(stmt))
@@ -586,6 +631,23 @@ def init_db():
     _backfill_screen_decisions()
     _retire_assessment_criteria()
     _upgrade_methodology_fields()
+    _backfill_workspace_years()
+
+
+def _backfill_workspace_years():
+    """One-time: the year window used to live on the PubMed SearchQuery row; it's
+    now workspace-level (applied to every harvest source). Copy it across for any
+    workspace that has PubMed years but no workspace-level years yet. Idempotent."""
+    db = SessionLocal()
+    try:
+        for ws in db.query(Workspace).filter(Workspace.year_from.is_(None)).all():
+            pq = get_query(db, ws, "pubmed")
+            if pq and (pq.year_from or pq.year_to):
+                ws.year_from = pq.year_from
+                ws.year_to = pq.year_to
+        db.commit()
+    finally:
+        db.close()
 
 
 def _upgrade_methodology_fields():
@@ -741,6 +803,28 @@ def set_step_done(db, workspace: "Workspace", step: str, done: bool):
     db.commit()
 
 
+def workspace_target_dbs(workspace: "Workspace") -> list:
+    """Active translation-target databases (never includes the primary)."""
+    try:
+        v = json.loads(workspace.target_dbs_json) if workspace.target_dbs_json else []
+        v = v if isinstance(v, list) else []
+    except (ValueError, TypeError):
+        v = []
+    prim = workspace.primary_db or "pubmed"
+    return [d for d in DATABASES if d in v and d != prim]
+
+
+def set_workspace_targets(db, workspace: "Workspace", targets: list):
+    clean = [d for d in DATABASES if d in set(targets)]
+    workspace.target_dbs_json = json.dumps(clean)
+    db.commit()
+
+
+def workspace_years(workspace: "Workspace") -> tuple:
+    """(year_from, year_to) with sensible open-ended fallbacks."""
+    return (workspace.year_from or 1950, workspace.year_to or 2100)
+
+
 def workspace_criteria(db, workspace: "Workspace", kind: str) -> list["Criterion"]:
     return (db.query(Criterion)
               .filter(Criterion.workspace_id == workspace.id, Criterion.kind == kind)
@@ -758,7 +842,7 @@ def upsert_query(db, workspace: "Workspace", database: str, query_string: str,
     q = get_query(db, workspace, database)
     if q is None:
         q = SearchQuery(workspace_id=workspace.id, database=database,
-                        is_primary=(database == "pubmed"))
+                        is_primary=(database == (workspace.primary_db or "pubmed")))
         db.add(q)
     q.query_string = query_string
     if year_from is not None:

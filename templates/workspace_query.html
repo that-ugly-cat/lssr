@@ -3,32 +3,45 @@
 {% block body %}
 {% include "_ws_tabs.html" %}
 
-<div class="cards-label">PubMed query</div>
+{# ── Start from ─────────────────────────────────────────────────────────── #}
+<div class="cards-label">Start from</div>
 <div class="card">
-  <form method="post" action="/w/{{ ws.id }}/query/pubmed">
-    <label>PubMed query
-      <textarea name="query" rows="3" placeholder='e.g. (infodemic[tiab] OR misinformation[tiab]) AND ethics[tiab]' required>{{ pubmed.query_string if pubmed else '' }}</textarea>
+  <form method="post" action="/w/{{ ws.id }}/query/primary">
+    <label>Starting database
+      <select name="primary_db">
+        {% for key, label in db_options %}
+        <option value="{{ key }}" {{ 'selected' if key == primary_db else '' }}>{{ label }}{{ ' · direct harvest' if key in harvest_dbs else '' }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Query (in the starting database's syntax)
+      <textarea name="query" rows="3" placeholder='e.g. (infodemic[tiab] OR misinformation[tiab]) AND ethics[tiab]'>{{ primary.query_string if primary else '' }}</textarea>
     </label>
     <div class="inline-form">
       <label style="flex:1;">Year from
-        <input type="number" name="year_from" min="1900" max="2100" value="{{ pubmed.year_from if pubmed and pubmed.year_from else 2010 }}" required>
+        <input type="number" name="year_from" min="1900" max="2100" value="{{ year_from }}" required>
       </label>
       <label style="flex:1;">Year to
-        <input type="number" name="year_to" min="1900" max="2100" value="{{ pubmed.year_to if pubmed and pubmed.year_to else 2026 }}" required>
+        <input type="number" name="year_to" min="1900" max="2100" value="{{ year_to }}" required>
       </label>
     </div>
-    <button class="btn btn-primary" type="submit">Save query</button>
+    <p class="muted small">The year window applies to every direct-harvest source below.</p>
+    <button class="btn btn-primary" type="submit">Save</button>
   </form>
 
-  {% if pubmed and pubmed.query_string %}
-  <form method="post" action="/w/{{ ws.id }}/pubmed/run" style="margin-top:12px;" id="run-form">
-    <button class="btn" type="submit" id="run-btn">Run PubMed search</button>
-    <span class="muted small">Downloads at ~0.4 s/record (NCBI policy); runs in the background.</span>
+  {% if primary_db in harvest_dbs and primary and primary.query_string %}
+  <form method="post" action="/w/{{ ws.id }}/harvest/{{ primary_db }}/run" style="margin-top:12px;" id="run-form-{{ primary_db }}">
+    <button class="btn" type="submit" id="run-btn-{{ primary_db }}">Run {{ primary_label }} search</button>
+    <span class="muted small">Runs in the background.</span>
   </form>
-  <div id="run-status" class="flash" style="display:none;"></div>
+  <div class="progress-wrap" id="run-prog-{{ primary_db }}" style="display:none;">
+    <div class="progress"><div class="progress-fill" id="run-fill-{{ primary_db }}"></div></div>
+  </div>
+  <div id="run-status-{{ primary_db }}" class="flash" style="display:none;"></div>
   {% endif %}
 </div>
 
+{# ── Refinement ─────────────────────────────────────────────────────────── #}
 {% if freqs.mesh or freqs.keywords %}
 <div class="cards-label">Refinement (term frequencies in the current pool)</div>
 <div class="card">
@@ -37,7 +50,7 @@
       <h2>Top MeSH terms</h2>
       {% for term, n in freqs.mesh %}
         <div class="expr-prev-line">{{ term }} <span class="badge badge-muted">{{ n }}</span></div>
-      {% else %}<p class="muted small">No MeSH terms yet — run a PubMed search first.</p>{% endfor %}
+      {% else %}<p class="muted small">No MeSH terms yet — run a search first.</p>{% endfor %}
     </div>
     <div>
       <h2>Top author keywords</h2>
@@ -50,24 +63,53 @@
 </div>
 {% endif %}
 
+{# ── Include other databases (translation targets) ──────────────────────── #}
+<div class="cards-label">Include other databases</div>
+<div class="card">
+  <form method="post" action="/w/{{ ws.id }}/query/targets">
+    <p class="muted small">Pick the databases to translate your query into. Ones marked <span class="badge badge-muted">harvest</span> can be pulled directly; the rest you export from the database and import under Records.</p>
+    <div style="display:flex; flex-wrap:wrap; gap:8px 20px; margin-top:6px;">
+      {% for key, label, checked, harvest in target_choices %}
+      <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal;">
+        <input type="checkbox" name="targets" value="{{ key }}" {{ 'checked' if checked else '' }}> {{ label }}{% if harvest %} <span class="badge badge-muted">harvest</span>{% endif %}
+      </label>
+      {% endfor %}
+    </div>
+    <button class="btn btn-small" type="submit" style="margin-top:12px;">Update selection</button>
+  </form>
+</div>
+
+{# ── Translation windows for the selected targets ───────────────────────── #}
+{% if translations %}
 <div class="cards-label">Query translation</div>
 {% if not has_key %}
 <div class="flash flash-error" style="display:block;">Set your Anthropic API key in <a href="/profile">your profile</a> to enable AI translation.</div>
 {% endif %}
-{% for db, tq in translations %}
+{% for db, label, tq, harvest in translations %}
 <div class="card">
   <div class="page-head">
-    <h2 style="text-transform:uppercase;">{{ db }}</h2>
+    <h2>{{ label }}</h2>
     <form method="post" action="/w/{{ ws.id }}/query/{{ db }}/translate">
-      <button class="btn btn-small" type="submit" {{ 'disabled' if not (has_key and pubmed and pubmed.query_string) else '' }}>Translate with AI</button>
+      <button class="btn btn-small" type="submit" {{ 'disabled' if not (has_key and primary and primary.query_string) else '' }}>Translate with AI</button>
     </form>
   </div>
   <form method="post" action="/w/{{ ws.id }}/query/{{ db }}/save">
-    <textarea name="query" rows="2" placeholder="Translated {{ db }} query (editable)">{{ tq.query_string if tq else '' }}</textarea>
+    <textarea name="query" rows="2" placeholder="Translated {{ label }} query (editable)">{{ tq.query_string if tq else '' }}</textarea>
     <button class="btn btn-small" type="submit" style="margin-top:6px;">Save</button>
   </form>
+  {% if harvest %}
+  <form method="post" action="/w/{{ ws.id }}/harvest/{{ db }}/run" style="margin-top:10px;" id="run-form-{{ db }}">
+    <button class="btn btn-small" type="submit" id="run-btn-{{ db }}" {{ 'disabled' if not (tq and tq.query_string) else '' }}>Run {{ label }} search</button>
+    <span class="muted small">Direct harvest — uses the year window above.</span>
+  </form>
+  <div class="progress-wrap" id="run-prog-{{ db }}" style="display:none;">
+    <div class="progress"><div class="progress-fill" id="run-fill-{{ db }}"></div></div>
+  </div>
+  <div id="run-status-{{ db }}" class="flash" style="display:none;"></div>
+  {% endif %}
 </div>
 {% endfor %}
+{% endif %}
 
 {% include "_step_done.html" %}
 {% endblock %}
@@ -75,6 +117,11 @@
 {% block scripts %}
 <script src="/static/js/poller.js?v=2"></script>
 <script>
-poller('run-form', 'run-status', 'run-btn', '/w/{{ ws.id }}/pubmed/status');
+{% if primary_db in harvest_dbs and primary and primary.query_string %}
+poller('run-form-{{ primary_db }}', 'run-status-{{ primary_db }}', 'run-btn-{{ primary_db }}', '/w/{{ ws.id }}/harvest/{{ primary_db }}/status', 'run-prog-{{ primary_db }}', 'run-fill-{{ primary_db }}');
+{% endif %}
+{% for db, label, tq, harvest in translations %}{% if harvest %}
+poller('run-form-{{ db }}', 'run-status-{{ db }}', 'run-btn-{{ db }}', '/w/{{ ws.id }}/harvest/{{ db }}/status', 'run-prog-{{ db }}', 'run-fill-{{ db }}');
+{% endif %}{% endfor %}
 </script>
 {% endblock %}

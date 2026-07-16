@@ -11,11 +11,7 @@
 <div class="card">
   {% macro db_select() %}
     <select name="database" onchange="this.closest('form').querySelector('.other-name').style.display = this.value=='other' ? '' : 'none';">
-      <option value="scopus">Scopus</option>
-      <option value="wos">Web of Science</option>
-      <option value="cinahl">CINAHL</option>
-      <option value="jstor">JSTOR</option>
-      <option value="pubmed">PubMed</option>
+      {% for key, label in db_options %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
       <option value="other">Other</option>
     </select>
     <input type="text" name="other_name" class="other-name" placeholder="name the source" style="display:none; max-width:160px;">

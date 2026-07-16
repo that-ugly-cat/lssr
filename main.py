@@ -21,10 +21,11 @@ from auth import (
     verify_password,
 )
 from models import (
-    DATABASES, PIPELINE_STEPS, PRICING, Criterion, Import, PublicShare, Record, User,
-    Workspace, WorkspaceMember, can_access, current_iteration, get_db, get_query, init_db,
-    new_share_token, set_step_done, upsert_query, user_workspaces, workspace_criteria,
-    workspace_steps_done,
+    DATABASES, DB_LABELS, HARVEST_DBS, PIPELINE_STEPS, PRICING, Criterion, Import,
+    PublicShare, Record, User, Workspace, WorkspaceMember, can_access, current_iteration,
+    db_label, get_db, get_query, init_db, new_share_token, set_step_done,
+    set_workspace_targets, upsert_query, user_workspaces, workspace_criteria,
+    workspace_steps_done, workspace_target_dbs, workspace_years,
 )
 
 BASE = Path(__file__).parent
@@ -504,60 +505,107 @@ async def admin_reset_password(uid: int, password: str = Form(...),
 
 # ── Query strategy (steps 1-2) ──────────────────────────────────────────────
 
+def _harvest_module(database: str):
+    """Resolve a harvestable database key to its source module (uniform
+    start/get_job interface). None for translation-only databases."""
+    import eric
+    import europepmc
+    import openalex
+    import pubmed
+    return {"pubmed": pubmed, "europepmc": europepmc,
+            "openalex": openalex, "eric": eric}.get(database)
+
+
+def _harvest_state(ws_id: int, database: str) -> dict:
+    mod = _harvest_module(database)
+    return (mod.get_job(ws_id) if mod else None) or {"status": "idle"}
+
+
 @app.get("/w/{ws_id}/query", response_class=HTMLResponse)
 async def query_page(ws_id: int, request: Request, user: User = Depends(get_current_user),
                      db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     from ingest import term_frequencies
-    pubmed = get_query(db, ws, "pubmed")
-    translations = [(d, get_query(db, ws, d)) for d in DATABASES if d != "pubmed"]
+    primary_db = ws.primary_db or "pubmed"
+    primary = get_query(db, ws, primary_db)
+    targets = workspace_target_dbs(ws)                       # active targets, minus primary
+    yf, yt = workspace_years(ws)
+    # start-from options and the target multiselect (everything except the primary)
+    db_options = [(d, db_label(d)) for d in DATABASES]
+    target_choices = [(d, db_label(d), d in targets, d in HARVEST_DBS)
+                      for d in DATABASES if d != primary_db]
+    # translation windows for the selected targets, each with its saved query
+    translations = [(d, db_label(d), get_query(db, ws, d), d in HARVEST_DBS) for d in targets]
+    # harvest job state for every active harvestable source (primary + targets)
+    harvest_states = {d: _harvest_state(ws.id, d)
+                      for d in ([primary_db] + targets) if d in HARVEST_DBS}
     freqs = term_frequencies(db, ws.id, top_n=30)
     return render(request, "workspace_query.html", {
-        "user": user, "ws": ws, "tab": "query", "steps_done": workspace_steps_done(ws), "pubmed": pubmed,
-        "translations": translations, "freqs": freqs,
+        "user": user, "ws": ws, "tab": "query", "steps_done": workspace_steps_done(ws),
+        "primary_db": primary_db, "primary_label": db_label(primary_db), "primary": primary,
+        "year_from": yf, "year_to": yt,
+        "db_options": db_options, "target_choices": target_choices,
+        "translations": translations, "harvest_states": harvest_states,
+        "harvest_dbs": HARVEST_DBS, "freqs": freqs,
         "has_key": bool(_user_api_key(user)),
     })
 
 
-@app.post("/w/{ws_id}/query/pubmed")
-async def save_pubmed_query(ws_id: int, query: str = Form(...),
-                            year_from: int = Form(...), year_to: int = Form(...),
-                            user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+@app.post("/w/{ws_id}/query/primary")
+async def save_primary_query(ws_id: int, primary_db: str = Form(...), query: str = Form(""),
+                             year_from: int = Form(...), year_to: int = Form(...),
+                             user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
+    if primary_db not in DATABASES:
+        raise HTTPException(400, "Invalid database")
     if year_from > year_to:
         year_from, year_to = year_to, year_from
-    upsert_query(db, ws, "pubmed", query.strip(), year_from, year_to)
+    ws.primary_db = primary_db
+    ws.year_from, ws.year_to = year_from, year_to
+    db.commit()
+    upsert_query(db, ws, primary_db, query.strip())
     return RedirectResponse(f"/w/{ws_id}/query", status_code=302)
 
 
-@app.post("/w/{ws_id}/pubmed/run")
-async def run_pubmed(ws_id: int, user: User = Depends(get_current_user),
-                     db: Session = Depends(get_db)):
+@app.post("/w/{ws_id}/query/targets")
+async def save_targets(ws_id: int, targets: list[str] = Form(default=[]),
+                       user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
-    q = get_query(db, ws, "pubmed")
-    if not q or not q.query_string:
-        raise HTTPException(400, "Save a PubMed query first")
-    from pubmed import get_job, start_pubmed
-    job = get_job(ws.id)
-    if job and job.get("status") in ("searching", "downloading"):
-        raise HTTPException(409, "A PubMed run is already in progress")
-    start_pubmed(ws.id, q.query_string, q.year_from or 1950, q.year_to or 2100, user.id)
+    set_workspace_targets(db, ws, targets)
     return RedirectResponse(f"/w/{ws_id}/query", status_code=302)
 
 
-@app.get("/w/{ws_id}/pubmed/status")
-async def pubmed_status(ws_id: int, user: User = Depends(get_current_user),
-                        db: Session = Depends(get_db)):
+@app.post("/w/{ws_id}/harvest/{database}/run")
+async def run_harvest(ws_id: int, database: str, user: User = Depends(get_current_user),
+                      db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    if database not in HARVEST_DBS:
+        raise HTTPException(400, "This database can't be harvested directly")
+    q = get_query(db, ws, database)
+    if not q or not q.query_string:
+        raise HTTPException(400, f"Save a {db_label(database)} query first")
+    # one harvest at a time per workspace (shared SQLite writer)
+    for hdb in HARVEST_DBS:
+        j = _harvest_state(ws.id, hdb)
+        if j.get("status") in ("searching", "downloading"):
+            raise HTTPException(409, "A harvest run is already in progress")
+    yf, yt = workspace_years(ws)
+    _harvest_module(database).start(ws.id, q.query_string, yf, yt, user.id)
+    return RedirectResponse(f"/w/{ws_id}/query", status_code=302)
+
+
+@app.get("/w/{ws_id}/harvest/{database}/status")
+async def harvest_status(ws_id: int, database: str, user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
     _load_ws(db, user, ws_id)
-    from pubmed import get_job
-    return JSONResponse(get_job(ws_id) or {"status": "idle"})
+    return JSONResponse(_harvest_state(ws_id, database))
 
 
 @app.post("/w/{ws_id}/query/{database}/save")
 async def save_translation(ws_id: int, database: str, query: str = Form(...),
                            user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
-    if database not in DATABASES or database == "pubmed":
+    if database not in DATABASES or database == (ws.primary_db or "pubmed"):
         raise HTTPException(400, "Invalid database")
     upsert_query(db, ws, database, query.strip())
     return RedirectResponse(f"/w/{ws_id}/query", status_code=302)
@@ -567,15 +615,16 @@ async def save_translation(ws_id: int, database: str, query: str = Form(...),
 async def translate_route(ws_id: int, database: str, user: User = Depends(get_current_user),
                           db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
-    pubmed = get_query(db, ws, "pubmed")
-    if not pubmed or not pubmed.query_string:
-        raise HTTPException(400, "Save a PubMed query first")
+    source_db = ws.primary_db or "pubmed"
+    source = get_query(db, ws, source_db)
+    if not source or not source.query_string:
+        raise HTTPException(400, f"Save a {db_label(source_db)} query first")
     api_key = _user_api_key(user)
     if not api_key:
         raise HTTPException(400, "Set your Anthropic API key in your profile first")
     from translate import translate_query
     try:
-        translated = translate_query(api_key, pubmed.query_string, database)
+        translated = translate_query(api_key, source.query_string, database, source_db=source_db)
     except Exception as exc:
         raise HTTPException(502, f"Translation failed: {exc}")
     upsert_query(db, ws, database, translated)
@@ -604,6 +653,7 @@ async def records_page(ws_id: int, request: Request,
         "user": user, "ws": ws, "tab": "records", "steps_done": workspace_steps_done(ws),
         "records": records, "active_n": active_n,
         "imports": imports, "dbs_present": dbs_present,
+        "db_options": [(d, db_label(d)) for d in DATABASES],
         "filters": {"q": q, "source": source, "rtype": rtype,
                     "yf": yf, "yt": yt, "sort": sort, "order": order},
     })
