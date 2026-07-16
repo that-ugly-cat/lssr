@@ -49,7 +49,7 @@ Identico agli altri tool della famiglia — nessuna deviazione.
 | Stile | `static/css/style.css` — palette scura borant, copiata da AutoCode |
 | Deploy | Docker + Caddy, `/opt/apps/lssr/`, clone git |
 | **Porta** | **8013** (prossima libera in sequenza FastAPI) |
-| **Sottodominio** | **`lssr.borant.eu`** |
+| **Sottodominio** | **`lssr.yourdomain.example`** |
 
 Riuso diretto di codice/servizi esistenti:
 
@@ -253,7 +253,7 @@ pubblica può mostrare "ultimo aggiornamento: …" e l'evoluzione dei conteggi.
 - **Fase 5 — Automazione DB** (opzionale, non fatta): API Scopus/WoS per il passo 3.
 
 **Stato: pipeline completa (passi 1–10) funzionante e smoke-testata. Restano
-deploy sul VPS (`lssr.borant.eu:8013`) e la pagina wiki.**
+deploy sul VPS (`lssr.yourdomain.example:8013`) e la pagina wiki.**
 
 ---
 

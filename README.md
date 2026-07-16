@@ -16,7 +16,7 @@ without redoing the human work already done.
 
 It extends the review process both upstream (query building and translation) and
 downstream (synthesis and publication), and reuses the rest of the
-[borant](https://borant.eu) toolchain instead of reimplementing it.
+borant toolchain instead of reimplementing it.
 
 ## The pipeline
 

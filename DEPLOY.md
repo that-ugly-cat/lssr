@@ -12,7 +12,7 @@ synthesis). It calls the Claude API (per-user key) and the
 | `JWT_SECRET` | **yes, in production** | `change-me-in-production` | signs JWTs — set a long random value |
 | `FERNET_KEY` | **yes, in production** | `change-me-in-production` | encrypts per-user Anthropic API keys at rest |
 | `DATABASE_URL` | no | `sqlite:////app/data/lssr.db` | SQLite path |
-| `PAPER2MD_URL` | **in practice yes** | `http://localhost:8008` | paper2md service used at step 7. The default only works when paper2md runs on the same host; point it at the deployed instance (e.g. `https://paper2md.borant.eu`) or every conversion fails with "connection refused" |
+| `PAPER2MD_URL` | **in practice yes** | `http://localhost:8008` | paper2md service used at step 7. The default only works when paper2md runs on the same host; point it at the deployed instance (e.g. `https://paper2md.yourdomain.example`) or every conversion fails with "connection refused" |
 | `PAPER2MD_API_KEY` | no, but recommended | _(none)_ | an issued paper2md key, sent as `X-API-Key`. Without it uploads are capped at 10MB; with it, 50MB — papers routinely exceed the anonymous cap |
 | `UNPAYWALL_EMAIL` | no | workspace owner's email | contact email sent to the Unpaywall API |
 | `ELSEVIER_API_KEY` | no | _(none)_ | ScienceDirect TDM. Free from [dev.elsevier.com](https://dev.elsevier.com). On its own it only works from the institution's IP range — on a server it is refused (403) unless the token below is set too |
@@ -63,7 +63,7 @@ uvicorn main:app --host 0.0.0.0 --port 8013
 Example **Caddy** (add a DNS A record first, Cloudflare "DNS only"):
 
 ```
-lssr.borant.eu {
+lssr.yourdomain.example {
     reverse_proxy 127.0.0.1:8013
 }
 ```
@@ -71,7 +71,7 @@ lssr.borant.eu {
 Reload after editing: `sudo systemctl reload caddy`.
 
 `PAPER2MD_URL` must point at a paper2md the app can actually reach. The simplest
-and most reliable choice is its public URL (`https://paper2md.borant.eu`). A
+and most reliable choice is its public URL (`https://paper2md.yourdomain.example`). A
 `http://localhost:8008` only works if paper2md listens on the same host *and*
 network namespace — from inside a container localhost is the container itself, so
 conversions fail with `Connection refused`. Add `PAPER2MD_API_KEY` (issued from
@@ -79,8 +79,8 @@ paper2md's admin page) to lift the upload cap to 50MB.
 
 ## 5. Verify
 
-- `https://lssr.borant.eu/login` — auth
-- `https://lssr.borant.eu/` — reviews list
+- `https://lssr.yourdomain.example/login` — auth
+- `https://lssr.yourdomain.example/` — reviews list
 - each user sets their Anthropic API key under **Profile** before any LLM step
 
 ## 6. Updating
