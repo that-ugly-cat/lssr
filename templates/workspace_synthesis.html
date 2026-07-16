@@ -46,33 +46,8 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/poller.js?v=1"></script>
 <script>
-const syForm = document.getElementById('sy-form');
-if (syForm) {
-  const box = document.getElementById('sy-status'), btn = document.getElementById('sy-btn');
-  let sawRunning = false;
-  async function poll() {
-    const j = await (await fetch('/w/{{ ws.id }}/synthesis/status')).json();
-    if (j.status === 'idle') return;
-    if (j.status === 'running') {
-      sawRunning = true;
-      btn.disabled = true; box.style.display = 'block'; box.className = 'flash';
-      box.textContent = (j.message || 'running') + (j.total ? ` (${j.done}/${j.total})` : '');
-      setTimeout(poll, 2000);
-    } else if (j.status === 'done') {
-      if (sawRunning) {
-        box.style.display = 'block'; box.className = 'flash flash-ok';
-        box.textContent = j.message || 'Done.';
-        setTimeout(() => location.reload(), 1200);
-      }
-    } else if (j.status === 'error') {
-      box.style.display = 'block'; box.className = 'flash flash-error';
-      box.textContent = 'Error: ' + (j.message || 'unknown');
-      btn.disabled = false;
-    }
-  }
-  syForm.addEventListener('submit', () => { sawRunning = true; setTimeout(poll, 800); });
-  poll();
-}
+poller('sy-form', 'sy-status', 'sy-btn', '/w/{{ ws.id }}/synthesis/status');
 </script>
 {% endblock %}

@@ -203,15 +203,29 @@ def _run_convert(workspace_id: int, paper2md_url: str):
         _set(workspace_id, "convert", {"status": "running", "message": f"Converting {total} PDFs…",
                                        "total": total, "done": 0, "converted": 0, "failed": 0})
         converted = failed = 0
+        first_error = None
         for i, rec in enumerate(targets):
             try:
                 convert_stored_pdf(db, rec, paper2md_url)
                 converted += 1
-            except Exception:
+            except Exception as exc:
                 failed += 1          # PDF kept, status reverted to "fetched"
+                if first_error is None:
+                    first_error = str(exc)
             _update(workspace_id, "convert", done=i + 1, converted=converted, failed=failed)
-        _set(workspace_id, "convert", {"status": "done",
-                                       "message": f"Done. {converted} converted, {failed} failed.",
+        if converted == 0 and failed > 0:
+            # Nothing came back — usually paper2md is unreachable. Say so instead
+            # of reporting a quiet "done" the user can't act on.
+            _set(workspace_id, "convert", {
+                "status": "error",
+                "message": f"No PDFs converted ({failed} failed). paper2md at {paper2md_url} — {first_error}",
+                "error": first_error, "total": total, "done": total,
+                "converted": 0, "failed": failed})
+            return
+        msg = f"Done. {converted} converted, {failed} failed."
+        if first_error:
+            msg += f" First failure: {first_error}"
+        _set(workspace_id, "convert", {"status": "done", "message": msg,
                                        "total": total, "done": total,
                                        "converted": converted, "failed": failed})
     except Exception as exc:

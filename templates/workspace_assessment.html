@@ -110,6 +110,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/poller.js?v=1"></script>
 <script>
 function applyConditionals(root) {
   const fieldVal = (key) => {
@@ -151,42 +152,6 @@ document.getElementById('review-modal').addEventListener('click', (e) => {
   if (e.target.id === 'review-modal') closeReview();
 });
 
-// AI draft job: progress bar + status, reload once when a watched run finishes.
-(function () {
-  const form = document.getElementById('as-form');
-  if (!form) return;
-  const box = document.getElementById('as-status'), btn = document.getElementById('as-btn');
-  const prog = document.getElementById('as-prog'), fill = document.getElementById('as-fill');
-  let sawRunning = false;
-  const setBar = (j) => {
-    prog.style.display = 'flex';
-    fill.style.width = (j.total ? Math.round((j.done / j.total) * 100) : 0) + '%';
-  };
-  async function poll() {
-    const j = await (await fetch('/w/{{ ws.id }}/assessment/status')).json();
-    if (j.status === 'idle') return;
-    if (j.status === 'running') {
-      sawRunning = true;
-      if (btn) btn.disabled = true;
-      box.style.display = 'block'; box.className = 'flash';
-      box.textContent = (j.message || 'running') + (j.total ? ` (${j.done}/${j.total})` : '');
-      setBar(j);
-      setTimeout(poll, 2000);
-    } else if (j.status === 'done') {
-      if (sawRunning) {
-        box.style.display = 'block'; box.className = 'flash flash-ok';
-        box.textContent = j.message || 'Done.';
-        setBar({done: 1, total: 1});
-        setTimeout(() => location.reload(), 1800);
-      }
-    } else if (j.status === 'error') {
-      box.style.display = 'block'; box.className = 'flash flash-error';
-      box.textContent = 'Error: ' + (j.message || 'unknown');
-      if (btn) btn.disabled = false;
-    }
-  }
-  form.addEventListener('submit', () => { sawRunning = true; setTimeout(poll, 800); });
-  poll();
-})();
+poller('as-form', 'as-status', 'as-btn', '/w/{{ ws.id }}/assessment/status', 'as-prog', 'as-fill');
 </script>
 {% endblock %}

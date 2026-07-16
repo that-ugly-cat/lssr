@@ -189,40 +189,8 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/poller.js?v=1"></script>
 <script>
-function poller(formId, statusId, btnId, url, runningStates) {
-  const form = document.getElementById(formId);
-  if (!form) return;
-  const box = document.getElementById(statusId), btn = document.getElementById(btnId);
-  let sawRunning = false;   // only reload after we've watched a run finish
-  async function poll() {
-    const j = await (await fetch(url)).json();
-    if (j.status === 'idle') return;
-    if (j.status === 'running') {
-      sawRunning = true;
-      if (btn) btn.disabled = true;
-      box.style.display = 'block';
-      box.className = 'flash';
-      const prog = j.total ? ` (${j.done}/${j.total})` : '';
-      box.textContent = (j.message || 'running') + prog;
-      setTimeout(poll, 2000);
-    } else if (j.status === 'done') {
-      if (sawRunning) {   // a run just finished — refresh once to show results
-        box.style.display = 'block';
-        box.className = 'flash flash-ok';
-        box.textContent = j.message || 'Done.';
-        setTimeout(() => location.reload(), 1500);
-      }
-    } else if (j.status === 'error') {
-      box.style.display = 'block';
-      box.className = 'flash flash-error';
-      box.textContent = 'Error: ' + (j.message || 'unknown');
-      if (btn) btn.disabled = false;
-    }
-  }
-  form.addEventListener('submit', () => { sawRunning = true; setTimeout(poll, 800); });
-  poll();
-}
 poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status');
 
 // Collapsible exclusion-criteria rail; remembers its state.
