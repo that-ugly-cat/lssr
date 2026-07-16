@@ -7,7 +7,7 @@
   <div class="stat-card"><div class="stat-num">{{ active_n }}</div><div class="stat-label">Records</div></div>
 </div>
 
-<div class="cards-label">Step 3 — Import references</div>
+<div class="cards-label">Import references</div>
 <div class="card">
   {% macro db_select() %}
     <select name="database" onchange="this.closest('form').querySelector('.other-name').style.display = this.value=='other' ? '' : 'none';">

@@ -3,7 +3,7 @@
 {% block body %}
 {% include "_ws_tabs.html" %}
 
-<div class="cards-label">Step 1 — PubMed query</div>
+<div class="cards-label">PubMed query</div>
 <div class="card">
   <form method="post" action="/w/{{ ws.id }}/query/pubmed">
     <label>PubMed query
@@ -30,7 +30,7 @@
 </div>
 
 {% if freqs.mesh or freqs.keywords %}
-<div class="cards-label">Step 1 — Refinement (term frequencies in the current pool)</div>
+<div class="cards-label">Refinement (term frequencies in the current pool)</div>
 <div class="card">
   <div class="expr-grid">
     <div>
@@ -50,7 +50,7 @@
 </div>
 {% endif %}
 
-<div class="cards-label">Step 2 — Query translation</div>
+<div class="cards-label">Query translation</div>
 {% if not has_key %}
 <div class="flash flash-error" style="display:block;">Set your Anthropic API key in <a href="/profile">your profile</a> to enable AI translation.</div>
 {% endif %}

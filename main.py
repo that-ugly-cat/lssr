@@ -669,7 +669,8 @@ async def import_excel_preview(ws_id: int, request: Request, file: UploadFile = 
                 guess[field] = lc[cand]
                 break
     return render(request, "workspace_import_map.html", {
-        "user": user, "ws": ws, "tab": "records", "token": token,
+        "user": user, "ws": ws, "tab": "records", "steps_done": workspace_steps_done(ws),
+        "token": token,
         "columns": cols, "sample": sample, "total": total,
         "fields": EXCEL_FIELDS, "guess": guess,
         "database": database, "other_name": other_name,
@@ -815,7 +816,8 @@ async def dedup_page(ws_id: int, request: Request, merged: int = -1,
         clusters.append({"records": c, "survivor_id": best.id,
                          "ids": ",".join(str(r.id) for r in c)})
     return render(request, "workspace_dedup.html", {
-        "user": user, "ws": ws, "tab": "records", "clusters": clusters, "merged": merged,
+        "user": user, "ws": ws, "tab": "records", "steps_done": workspace_steps_done(ws),
+        "clusters": clusters, "merged": merged,
     })
 
 
@@ -858,7 +860,7 @@ async def settings_page(ws_id: int, request: Request, member_error: int = 0,
     members = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == ws.id).all()
     fields = workspace_extraction_fields(db, ws)
     return render(request, "workspace_settings.html", {
-        "user": user, "ws": ws, "tab": "settings",
+        "user": user, "ws": ws, "tab": "settings", "steps_done": workspace_steps_done(ws),
         "exclusion": workspace_criteria(db, ws, "exclusion"),
         "inclusion": workspace_criteria(db, ws, "inclusion"),
         "fields": fields, "field_keys": [f.key for f in fields],
