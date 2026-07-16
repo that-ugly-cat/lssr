@@ -1,15 +1,20 @@
 """
 Synthesis (step 10): the public deliverable.
 
-Builds the PRISMA flow counts from the DB and, for each free-text extraction
-field (text/textarea), asks the LLM to aggregate what was extracted from each
-included study into one narrative paragraph with inline citations. Structured
-fields (select/multiselect/number) are not narrated — they are distributions,
-not prose. Values come from each record's authoritative extraction (the curated
-final row, else the latest reviewer's, else the model draft).
+Builds the PRISMA flow counts, then a sequence of blocks:
+  • Block 0 — "Study characteristics": a procedural distribution summary of the
+    structured "fixed variable" fields (select/multiselect/number: country, study
+    year, study type, methodology axes…). No LLM, so no miscounted figures.
+  • One block per assessment criterion (text/textarea field): the LLM aggregates
+    the per-study findings into a narrative paragraph. Citations are NOT authored
+    by the LLM — it only inserts a study token ([S1], [S2]…) which we substitute
+    procedurally with a citation built from the record (Surname et al., Year,
+    DOI/link), so a citation can never be hallucinated.
 
-Stored as Synthesis + SynthesisBlock rows, shown on the public /r/{token} page
-when published. Background job, JOBS keyed by workspace_id.
+Values come from each record's authoritative extraction (curated final row, else
+the latest reviewer's, else the model draft). Stored as Synthesis + SynthesisBlock
+rows, shown on the public /r/{token} page when published. Background job, JOBS
+keyed by workspace_id.
 """
 import json
 import re
@@ -60,38 +65,101 @@ def compute_prisma(db, workspace_id: int) -> dict:
     }
 
 
-# ── Citation helper ────────────────────────────────────────────────────────────
+# ── Citations (procedural — never authored by the LLM) ──────────────────────────
 
-def ref_tag(rec) -> str:
+def citation(rec) -> str:
+    """Full inline citation built from the record's own fields:
+    'Surname et al., Year, https://doi.org/…'. The LLM never writes this — it only
+    emits a study token that we substitute here, so citations can't be hallucinated."""
     authors = (rec.authors or "").strip()
     year = rec.year or "n.d."
-    if not authors:
-        return f"({year})"
-    first = authors.split(",")[0].split(";")[0].strip()
-    surname = first.split()[0] if first else "Anon"
-    multi = ("," in authors) or (";" in authors) or (" and " in authors)
-    return f"{surname} et al. {year}" if multi else f"{surname} {year}"
+    if authors:
+        first = authors.split(",")[0].split(";")[0].strip()
+        surname = first.split()[0] if first else "Anon"
+        multi = ("," in authors) or (";" in authors) or (" and " in authors)
+        who = f"{surname} et al." if multi else surname
+    else:
+        who = "Anon"
+    link = f"https://doi.org/{rec.doi}" if rec.doi else (rec.url or "")
+    parts = [who, str(year)] + ([link] if link else [])
+    return ", ".join(parts)
 
 
-# ── LLM narrative per criterion ────────────────────────────────────────────────
+_TOKEN_RE = re.compile(r"\[(S\d+)\]")
+
+
+def _substitute_citations(text: str, token_cite: dict) -> str:
+    """Replace each [S#] study token the LLM placed with the procedural citation;
+    drop any token that isn't in the map (a hallucinated reference)."""
+    out = _TOKEN_RE.sub(lambda m: f"({token_cite[m.group(1)]})"
+                        if m.group(1) in token_cite else "", text)
+    return re.sub(r" {2,}", " ", out).strip()
+
+
+# ── General block: structured "fixed variables" (procedural, no LLM) ────────────
+
+def general_narrative(structured_fields, extracted, included) -> str:
+    """A deterministic distribution summary of the structured extraction fields
+    across the included studies. No LLM, so no risk of a miscounted figure."""
+    import statistics
+    from collections import Counter
+    from models import field_visible
+
+    if not included:
+        return "_No studies were included in the synthesis._"
+    lines = [f"**{len(included)} studies** were included in the synthesis."]
+    for fld in structured_fields:
+        counts: Counter = Counter()
+        nums: list = []
+        for rec in included:
+            vals = extracted.get(rec.id, {})
+            if not field_visible(fld, vals):
+                continue
+            v = vals.get(fld.key)
+            if v in (None, "") or (isinstance(v, list) and not v):
+                continue
+            if fld.field_type == "number":
+                try:
+                    nums.append(float(v))
+                except (TypeError, ValueError):
+                    pass
+            elif isinstance(v, list):
+                for x in v:
+                    if x not in (None, ""):
+                        counts[str(x)] += 1
+            else:
+                counts[str(v)] += 1
+        if fld.field_type == "number" and nums:
+            lo, hi = int(min(nums)), int(max(nums))
+            med = statistics.median(nums)
+            med = int(med) if med == int(med) else round(med, 1)
+            span = f"{lo}" if lo == hi else f"{lo}–{hi}"
+            lines.append(f"- **{fld.label}:** {span} (median {med}, n={len(nums)})")
+        elif counts:
+            parts = ", ".join(f"{k} ({n})" for k, n in counts.most_common())
+            lines.append(f"- **{fld.label}:** {parts}")
+    return "\n".join(lines)
+
+
+# ── LLM narrative per assessment criterion (text/textarea fields) ───────────────
 
 _SYSTEM = """\
 You are writing the results section of a scoping review. For the theme below,
 synthesize the provided per-study findings into one coherent narrative paragraph
-(or a few, if warranted). Cite every source inline using its ref tag exactly as
-given, e.g. (Rossi et al. 2021). Do not invent findings or citations; use only
-the material provided. Be concise and neutral.
+(or a few, if warranted). Cite each study you draw on by inserting ITS TOKEN
+exactly as given, in square brackets, e.g. [S1]; put the token right after the
+statement it supports. Do NOT write author names, years, DOIs, or links yourself —
+only the token. Do not invent findings or tokens; use only the material provided.
+Be concise and neutral.
 
 Return only the narrative prose, no headings, no preamble."""
 
 
 def _narrative(client, model, rq, criterion, items):
-    body = "\n\n".join(f"[{it['tag']}] {it['finding']}" +
-                       (f"\n   citation: {it['citation']}" if it.get("citation") else "")
-                       for it in items)
+    body = "\n\n".join(f"[{it['token']}] {it['finding']}" for it in items)
     user = (f"Research question: {rq or '(not specified)'}\n\n"
             f"Theme (assessment criterion): {criterion}\n\n"
-            f"Findings to synthesize:\n{body}")
+            f"Findings to synthesize (each prefixed by its study token):\n{body}")
     resp = client.messages.create(
         model=model, max_tokens=1500,
         system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
@@ -112,8 +180,9 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
         ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
         model = ws.screening_model or "claude-haiku-4-5"
         ensure_extraction_fields(db, ws)
-        narrative_fields = [f for f in workspace_extraction_fields(db, ws)
-                            if f.field_type in ("text", "textarea")]
+        fields = workspace_extraction_fields(db, ws)
+        structured_fields = [f for f in fields if f.field_type in ("select", "multiselect", "number")]
+        narrative_fields = [f for f in fields if f.field_type in ("text", "textarea")]
         _set(workspace_id, {"status": "running", "message": "Building synthesis…",
                             "total": len(narrative_fields), "done": 0})
 
@@ -137,10 +206,19 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
                               Record.is_removed == False,               # noqa: E712
                               Record.screen2_decision == "include").all())
         extracted = {rec.id: authoritative_values(db, rec) for rec in included}
+        # stable per-study token → procedural citation (LLM only ever sees the token)
+        tokens = {rec.id: f"S{i + 1}" for i, rec in enumerate(included)}
+        token_cite = {tokens[rec.id]: citation(rec) for rec in included}
+
+        # Block 0: the general "fixed variables" summary — procedural, no LLM.
+        db.add(SynthesisBlock(synthesis_id=syn.id, heading="Study characteristics",
+                              narrative=general_narrative(structured_fields, extracted, included),
+                              position=0))
+        db.commit()
 
         client = anthropic.Anthropic(api_key=api_key)
         tin = tout = 0
-        for pos, fld in enumerate(narrative_fields):
+        for i, fld in enumerate(narrative_fields):
             items = []
             for rec in included:
                 val = extracted.get(rec.id, {}).get(fld.key)
@@ -148,18 +226,19 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
                     val = ", ".join(str(v) for v in val)
                 val = (val or "").strip() if isinstance(val, str) else ""
                 if val and val.lower() != "not addressed":
-                    items.append({"tag": ref_tag(rec), "finding": val})
+                    items.append({"token": tokens[rec.id], "finding": val})
             if items:
-                narrative, i, o = _narrative(client, model, ws.research_question, fld.label, items)
-                tin += i
-                tout += o
+                raw, ti, to = _narrative(client, model, ws.research_question, fld.label, items)
+                narrative = _substitute_citations(raw, token_cite)
+                tin += ti
+                tout += to
             else:
                 narrative = "_No included studies addressed this field._"
             db.add(SynthesisBlock(synthesis_id=syn.id, heading=fld.label,
-                                  narrative=narrative, position=pos))
+                                  narrative=narrative, position=i + 1))
             db.commit()
             _set(workspace_id, {"status": "running", "message": f"Synthesizing {fld.label}…",
-                                "total": len(narrative_fields), "done": pos + 1})
+                                "total": len(narrative_fields), "done": i + 1})
 
         if tin or tout:
             db.add(UserCostLog(user_id=user_id, workspace_id=workspace_id, step="synthesis",
