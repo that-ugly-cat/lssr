@@ -143,6 +143,7 @@ def _run(workspace_id: int, query: str, year_from: int, year_to: int, user_id: i
 
 def start_pubmed(workspace_id: int, query: str, year_from: int, year_to: int,
                  user_id: int | None):
+    _set(workspace_id, {"status": "searching", "message": "Starting…", "total": 0, "downloaded": 0})
     threading.Thread(
         target=_run, args=(workspace_id, query, year_from, year_to, user_id),
         daemon=True,

@@ -601,6 +601,7 @@ def _run_fetch(workspace_id: int, email: str, keys: dict | None = None):
 
 
 def start_fetch(workspace_id: int, email: str, keys: dict | None = None):
+    _set(workspace_id, "fetch", {"status": "running", "message": "Starting…", "total": 0, "done": 0})
     threading.Thread(target=_run_fetch, args=(workspace_id, email, keys or {}),
                      daemon=True).start()
 
@@ -652,6 +653,7 @@ def _run_convert(workspace_id: int, paper2md_url: str):
 
 
 def start_convert(workspace_id: int, paper2md_url: str):
+    _set(workspace_id, "convert", {"status": "running", "message": "Starting…", "total": 0, "done": 0})
     threading.Thread(target=_run_convert, args=(workspace_id, paper2md_url), daemon=True).start()
 
 

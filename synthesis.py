@@ -175,4 +175,5 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
 
 
 def start_synthesis(workspace_id: int, api_key: str, user_id: int | None):
+    _set(workspace_id, {"status": "running", "message": "Starting…", "total": 0, "done": 0})
     threading.Thread(target=_run, args=(workspace_id, api_key, user_id), daemon=True).start()
