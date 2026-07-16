@@ -24,11 +24,17 @@ DB_RULES = {
     ),
     "europepmc": (
         "Europe PMC (Lucene-based). Field prefixes as FIELD:term — TITLE:, "
-        "ABSTRACT:, AUTH:, KW: (keywords), MESH: (MeSH heading), TITLE_ABS: "
-        "(title or abstract). Boolean AND/OR/NOT (uppercase), grouping with "
-        "parentheses. Phrases in double quotes, wildcard *. Retains MeSH "
-        "(MESH:\"...\"), so MeSH concepts map almost 1:1 from PubMed. Do NOT put a "
-        "year clause in the query — the tool applies the year window separately."
+        "ABSTRACT:, AUTH:, TITLE_ABS: (title or abstract), KW: (keywords, which "
+        "INCLUDE the MeSH headings). Boolean AND/OR/NOT (uppercase), grouping with "
+        "parentheses. Phrases in double quotes, wildcard *. "
+        "MeSH: map a PubMed MeSH heading to KW:\"<exact heading>\" — Europe PMC's "
+        "keyword field reliably recovers the MeSH-indexed set for multi-word "
+        "headings (including ones containing \"and\", e.g. KW:\"Tissue and Organ "
+        "Procurement\"). Do NOT use the MESH: field — it silently under-matches and "
+        "collapses on multi-word headings. If a heading is a single very common "
+        "word (e.g. Neoplasms), KW: over-matches, so use the TITLE_ABS free-text "
+        "form instead. Do NOT put a year clause in the query — the tool applies the "
+        "year window separately."
     ),
     "openalex": (
         "OpenAlex search string (Elasticsearch query_string over title/abstract). "
