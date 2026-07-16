@@ -786,9 +786,9 @@ async def settings_page(ws_id: int, request: Request, member_error: int = 0,
 # ── Extraction fields (step 9 schema) ───────────────────────────────────────
 
 @app.post("/w/{ws_id}/fields/add")
-async def add_field(ws_id: int, label: str = Form(...), field_type: str = Form("text"),
-                    options: str = Form(""), show_if_key: str = Form(""),
-                    show_if_values: str = Form(""),
+async def add_field(ws_id: int, label: str = Form(...), description: str = Form(""),
+                    field_type: str = Form("text"), options: str = Form(""),
+                    show_if_key: str = Form(""), show_if_values: str = Form(""),
                     user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     from models import ExtractionField, slug_field_key, workspace_extraction_fields
@@ -801,7 +801,8 @@ async def add_field(ws_id: int, label: str = Form(...), field_type: str = Form("
     sivals = [v.strip() for v in show_if_values.split(",") if v.strip()]
     pos = max((f.position for f in existing), default=-1) + 1
     db.add(ExtractionField(
-        workspace_id=ws.id, key=key, label=label.strip(), field_type=field_type,
+        workspace_id=ws.id, key=key, label=label.strip(), help=description.strip() or None,
+        field_type=field_type,
         options_json=json.dumps(opts) if opts else None,
         show_if_key=show_if_key.strip() or None,
         show_if_values_json=json.dumps(sivals) if sivals else None,
@@ -1175,15 +1176,25 @@ async def assessment_page(ws_id: int, request: Request, user: User = Depends(get
     # records the model may draft: converted, still pending, untouched by a human
     human_ids = {v.record_id for vs in votes.values() for v in vs
                  if v.reviewer_kind in ("user", "adjudicator")}
-    ready = sum(1 for r in records if r.full_text_status == "converted"
-                and r.screen2_decision == "pending" and r.id not in human_ids)
+    ready_recs = [r for r in records if r.full_text_status == "converted"
+                  and r.screen2_decision == "pending" and r.id not in human_ids]
+    ready = len(ready_recs)
     drafted = sum(1 for r in records if r.screen2_by == "model")
+    # cost estimate for the draft run (full text dominates the input)
+    import assessment
+    model = ws.screening_model or "claude-haiku-4-5"
+    system = assessment.build_system(ws.research_question,
+                                     workspace_criteria(db, ws, "inclusion"),
+                                     workspace_extraction_fields(db, ws))
+    est = assessment.estimate_cost(model, system, ready,
+                                   sum(len(r.full_text_md or "") for r in ready_recs))
+    est = "$0.00" if est <= 0 else ("<$0.01" if est < 0.01 else f"${est:.2f}")
     return render(request, "workspace_assessment.html", {
         "user": user, "ws": ws, "tab": "assessment", "steps_done": workspace_steps_done(ws),
         "records": records, "votes": votes, "my_reviewed": my_reviewed,
         "n_converted": n_converted, "n_fields": n_fields,
-        "ready": ready, "drafted": drafted,
-        "model": ws.screening_model or "claude-haiku-4-5",
+        "ready": ready, "drafted": drafted, "est": est,
+        "model": model,
         "has_key": bool(_user_api_key(user)),
         "n_inclusion": len(workspace_criteria(db, ws, "inclusion")),
         "reviewers_required": ws.screen1_reviewers_required or 1,

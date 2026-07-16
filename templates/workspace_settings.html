@@ -105,7 +105,8 @@
     The form filled per included full text, by the LLM and reviewers. Builtin
     fields (country, study year, study type, methodology) are seeded and editable.
     A field can be shown only when another field has a given value (e.g.
-    methodology appears when study type is Empirical).
+    methodology appears when study type is Empirical). The <strong>description</strong>
+    is guidance shown to both the reviewers and the LLM.
   </p>
   <table class="table">
     <thead><tr><th>Field</th><th>Type</th><th>Options / condition</th><th class="ta-right">Order</th><th></th></tr></thead>
@@ -116,6 +117,7 @@
           <strong>{{ f.label }}</strong>
           {% if f.builtin %}<span class="badge badge-muted">builtin</span>{% endif %}
           <div class="muted small">{{ f.key }}</div>
+          {% if f.help %}<div class="muted small" style="font-style:italic;">{{ f.help }}</div>{% endif %}
         </td>
         <td class="small nowrap">{{ f.field_type }}</td>
         <td class="small">
@@ -145,6 +147,7 @@
         </select>
       </label>
     </div>
+    <label>Description / guidance <textarea name="description" rows="2" placeholder="shown to reviewers and the LLM"></textarea></label>
     <label id="field-opts" style="display:none;">Options (one per line)
       <textarea name="options" rows="3" placeholder="Option A&#10;Option B"></textarea>
     </label>

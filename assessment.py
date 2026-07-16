@@ -62,6 +62,9 @@ below from the full text. Rules:
   must be a JSON array of those strings.
 - Omit any field you cannot ground in the text — never guess.
 - Fill a conditional field only when its stated condition holds.
+- For free-text fields (text/textarea), where possible support your answer with a
+  short EXACT quote from the article, copied verbatim inside «guillemets», after
+  your answer.
 {fields}
 
 Return ONLY a JSON object, no prose, no code fences:
@@ -91,6 +94,22 @@ def build_system(rq, inclusion_criteria, fields) -> str:
     return _SYSTEM.format(rq=(rq or "(not specified)").strip(),
                           inclusion=inc or "(no inclusion criteria defined)",
                           fields=_fields_spec(fields))
+
+
+# ── Cost estimate (rough, ~4 chars/token; ignores prompt caching, upper bound) ──
+
+CHARS_PER_TOKEN = 4
+EST_OUTPUT_TOKENS = 500  # the JSON decision + a value per field
+
+
+def estimate_cost(model: str, system_prompt: str, n: int, content_chars: int) -> float:
+    from models import calc_cost
+    if n <= 0:
+        return 0.0
+    sys_tokens = max(1, len(system_prompt) // CHARS_PER_TOKEN)
+    tokens_in = n * sys_tokens + content_chars // CHARS_PER_TOKEN
+    tokens_out = n * EST_OUTPUT_TOKENS
+    return calc_cost(model, tokens_in, tokens_out)
 
 
 def _parse(content: str) -> dict | None:

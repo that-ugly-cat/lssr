@@ -33,10 +33,13 @@
   <div class="flash flash-error" style="display:block;">No converted full texts yet — retrieve them in <a href="/w/{{ ws.id }}/fulltext">Full text</a>.</div>
   {% endif %}
   <form method="post" action="/w/{{ ws.id }}/assessment/run" id="as-form" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-    <button class="btn btn-primary" type="submit" name="rerun" value="" id="as-btn"
-      {{ 'disabled' if (n_inclusion == 0 or not has_key or ready == 0) else '' }}>
-      Draft {{ ready }} full texts
-    </button>
+    <span style="display:inline-flex; flex-direction:column; align-items:flex-start;">
+      <button class="btn btn-primary" type="submit" name="rerun" value="" id="as-btn"
+        {{ 'disabled' if (n_inclusion == 0 or not has_key or ready == 0) else '' }}>
+        Draft {{ ready }} full texts
+      </button>
+      <span class="muted small">est. {{ est }}</span>
+    </span>
     {% if drafted > 0 %}
     <button class="btn" type="submit" name="rerun" value="1"
       {{ 'disabled' if (n_inclusion == 0 or not has_key) else '' }}>
