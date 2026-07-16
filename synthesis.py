@@ -156,8 +156,8 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
                 tout += o
             else:
                 narrative = "_No included studies addressed this field._"
-            db.add(SynthesisBlock(synthesis_id=syn.id, criterion_id=None,
-                                  heading=fld.label, narrative=narrative, position=pos))
+            db.add(SynthesisBlock(synthesis_id=syn.id, heading=fld.label,
+                                  narrative=narrative, position=pos))
             db.commit()
             _set(workspace_id, {"status": "running", "message": f"Synthesizing {fld.label}…",
                                 "total": len(narrative_fields), "done": pos + 1})

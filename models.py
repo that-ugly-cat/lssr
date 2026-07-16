@@ -7,7 +7,7 @@ Foundation scope (Fase 0): the multiuser / multiworkspace / public-sharing core.
   User, Workspace, WorkspaceMember, PublicShare
 
 The pipeline entities (SearchQuery, Iteration, Record, RawReference, Import,
-Assessment, Synthesis, …) are specified in SPEC.md and added in later phases.
+ExtractionField, Extraction, Synthesis, …) are specified in SPEC.md.
 
 Migration strategy (borant house pattern): init_db() runs ALTER TABLE for each
 new column on every startup; SQLite raises on duplicates, caught and ignored
@@ -241,13 +241,13 @@ class Record(Base):
 # ── Criteria (steps 5, 8, 9) ───────────────────────────────────────────────────
 
 class Criterion(Base):
-    """Unified table for the three criterion sets defined in a workspace:
-      exclusion → screening 1 (title+abstract), inclusion → screening 2 (full
-      text), assessment → step 9. `description` becomes the LLM guidance."""
+    """The two criterion sets a workspace screens against: exclusion → screening 1
+    (title+abstract), inclusion → screening 2 (full text). `description` becomes
+    the LLM guidance. Step 9 uses ExtractionField, not criteria."""
     __tablename__ = "criteria"
     id           = Column(Integer, primary_key=True)
     workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
-    kind         = Column(String, nullable=False)   # exclusion | inclusion | assessment
+    kind         = Column(String, nullable=False)   # exclusion | inclusion
     label        = Column(String, nullable=False)
     description  = Column(Text, nullable=True)
     position     = Column(Integer, default=0)
@@ -525,24 +525,7 @@ class UserCostLog(Base):
     recorded_at   = Column(DateTime, default=datetime.utcnow)
 
 
-# ── Assessment (step 9) & synthesis (step 10) ──────────────────────────────────
-
-class Assessment(Base):
-    """One finding per (record, assessment criterion), produced by the combined
-    screening-2 + assessment call. Re-generated per iteration."""
-    __tablename__ = "assessments"
-    id           = Column(Integer, primary_key=True)
-    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
-    record_id    = Column(Integer, ForeignKey("records.id"), nullable=False)
-    criterion_id = Column(Integer, ForeignKey("criteria.id"), nullable=False)
-    finding      = Column(Text, nullable=True)
-    citation     = Column(Text, nullable=True)   # quote / locator from the full text
-    model        = Column(String, nullable=True)
-    created_at   = Column(DateTime, default=datetime.utcnow)
-
-    record    = relationship("Record")
-    criterion = relationship("Criterion")
-
+# ── Synthesis (step 10) ────────────────────────────────────────────────────────
 
 class Synthesis(Base):
     """The public deliverable (step 10): one per workspace, regenerated on demand.
@@ -559,10 +542,10 @@ class Synthesis(Base):
 
 
 class SynthesisBlock(Base):
+    """One narrative block per free-text extraction field; `heading` is its label."""
     __tablename__ = "synthesis_blocks"
     id           = Column(Integer, primary_key=True)
     synthesis_id = Column(Integer, ForeignKey("syntheses.id"), nullable=False)
-    criterion_id = Column(Integer, ForeignKey("criteria.id"), nullable=True)
     heading      = Column(String, nullable=True)
     narrative    = Column(Text, nullable=True)
     position     = Column(Integer, default=0)
@@ -591,6 +574,33 @@ def init_db():
             except Exception:
                 pass
     _backfill_screen_decisions()
+    _retire_assessment_criteria()
+
+
+def _retire_assessment_criteria():
+    """One-time: the free-text assessment criteria and their per-record findings
+    were replaced by the extraction fields (ExtractionField/Extraction). Fold any
+    criteria that never made it across into fields, then drop the retired rows and
+    the `assessments` table. Idempotent — a no-op once there's nothing left."""
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        legacy = db.query(Criterion).filter(Criterion.kind == "assessment").count()
+        if legacy:
+            for ws in db.query(Workspace).all():
+                ensure_extraction_fields(db, ws)   # seeds builtin + migrates this ws
+            db.query(Criterion).filter(Criterion.kind == "assessment").delete()
+            db.commit()
+    finally:
+        db.close()
+    with engine.connect() as conn:
+        for stmt in ["UPDATE synthesis_blocks SET criterion_id = NULL",
+                     "DROP TABLE IF EXISTS assessments"]:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass
 
 
 def _backfill_screen_decisions():

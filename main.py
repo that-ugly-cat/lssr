@@ -832,7 +832,7 @@ async def add_criterion(ws_id: int, kind: str = Form(...), label: str = Form(...
                         description: str = Form(""), user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
-    if kind not in ("exclusion", "inclusion", "assessment") or not label.strip():
+    if kind not in ("exclusion", "inclusion") or not label.strip():
         raise HTTPException(400, "Invalid criterion")
     pos = db.query(Criterion).filter(Criterion.workspace_id == ws.id,
                                      Criterion.kind == kind).count()
