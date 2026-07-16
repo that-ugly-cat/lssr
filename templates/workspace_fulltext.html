@@ -2,6 +2,7 @@
 {% block title %}Full text — {{ ws.name }}{% endblock %}
 {% block body %}
 {% include "_ws_tabs.html" %}
+{% set f = filters %}
 
 <div class="cards-label">Full-text retrieval (screening-1 included)</div>
 <div class="card">
@@ -48,6 +49,36 @@
   </div>
 </div>
 
+<div class="cards-label">
+  Records
+  <span style="font-weight:400; text-transform:none; letter-spacing:0;">
+    {% for key, lbl, n in status_nav %}
+    {{ '·' if not loop.first else '' }} <a href="/w/{{ ws.id }}/fulltext?status={{ key }}" class="{{ '' if status==key else 'muted' }}">{{ lbl }} ({{ n }})</a>
+    {% endfor %}
+  </span>
+</div>
+<p class="muted small" style="margin-top:0;">Filter the included pool by full-text status: <strong>converted</strong> (ready for assessment) · <strong>PDF only</strong> (needs converting) · <strong>OA link</strong> / <strong>not found</strong> / <strong>—</strong> (no full text yet). The Fetch/Convert buttons above always act on the whole pool.</p>
+
+<form method="get" class="filter-bar">
+  <input type="hidden" name="status" value="{{ f.status }}">
+  <input type="hidden" name="sort" value="{{ f.sort }}">
+  <input type="hidden" name="order" value="{{ f.order }}">
+  <input type="text" name="q" value="{{ f.q }}" placeholder="Search title / author / abstract" style="max-width:260px;">
+  <select name="source">
+    <option value="">any DB</option>
+    {% for d in dbs_present %}<option value="{{ d }}" {{ 'selected' if f.source == d else '' }}>{{ d }}</option>{% endfor %}
+  </select>
+  <select name="rtype">
+    <option value="">any type</option>
+    {% for t, lbl in [('article','article'),('book','book'),('book_chapter','book chapter'),('grey','grey lit')] %}
+    <option value="{{ t }}" {{ 'selected' if f.rtype == t else '' }}>{{ lbl }}</option>{% endfor %}
+  </select>
+  <input type="number" name="yf" value="{{ f.yf }}" placeholder="year ≥" style="max-width:100px;">
+  <input type="number" name="yt" value="{{ f.yt }}" placeholder="year ≤" style="max-width:100px;">
+  <button class="btn btn-small" type="submit">Filter</button>
+  <a class="btn btn-small" href="/w/{{ ws.id }}/fulltext?status={{ f.status }}">Clear</a>
+</form>
+
 <table class="table">
   <thead><tr><th>Title</th><th>Full text</th></tr></thead>
   <tbody>
@@ -73,7 +104,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="2" class="muted">No records included at screening 1 yet.</td></tr>
+    <tr><td colspan="2" class="muted">{% if status != 'all' or f.q or f.source or f.rtype or f.yf or f.yt %}No records match this filter.{% else %}No records included at screening 1 yet.{% endif %}</td></tr>
     {% endfor %}
   </tbody>
 </table>

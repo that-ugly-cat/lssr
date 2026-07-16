@@ -1251,20 +1251,40 @@ async def adjudicate_screen1(ws_id: int, rid: int, decision: str = Form(...),
 
 # ── Full text: fetch (Unpaywall) + convert (paper2md), two passes (steps 6-7) ─
 
+_FT_STATUS_LABELS = [("converted", "converted"), ("fetched", "PDF only"),
+                     ("url", "OA link"), ("failed", "not found"), ("none", "—")]
+
+
 @app.get("/w/{ws_id}/fulltext", response_class=HTMLResponse)
-async def fulltext_page(ws_id: int, request: Request, user: User = Depends(get_current_user),
-                        db: Session = Depends(get_db)):
+async def fulltext_page(ws_id: int, request: Request, status: str = "all",
+                        q: str = "", source: str = "", rtype: str = "",
+                        yf: str = "", yt: str = "", sort: str = "year", order: str = "desc",
+                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
-    records = (db.query(Record)
-                 .filter(Record.workspace_id == ws.id, Record.is_removed == False,  # noqa: E712
-                         Record.screen1_decision == "include").order_by(Record.id.desc()).all())
-    ft = {"included": len(records),
-          "to_fetch": sum(1 for r in records if r.full_text_status in ("none", "failed", "url")),
-          "fetched": sum(1 for r in records if r.full_text_status == "fetched"),
-          "converted": sum(1 for r in records if r.full_text_status == "converted")}
+    base = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False,  # noqa: E712
+                                   Record.screen1_decision == "include")
+    all_included = base.all()  # the whole included pool, for counts + the action buttons
+    ft = {"included": len(all_included),
+          "to_fetch": sum(1 for r in all_included if r.full_text_status in ("none", "failed", "url")),
+          "fetched": sum(1 for r in all_included if r.full_text_status == "fetched"),
+          "converted": sum(1 for r in all_included if r.full_text_status == "converted")}
+    # full-text status nav (counts over the whole pool, like screening's decision nav)
+    status_nav = [("all", "all", len(all_included))] + [
+        (k, lbl, sum(1 for r in all_included if r.full_text_status == k))
+        for k, lbl in _FT_STATUS_LABELS]
+
+    tq = base
+    if status in ("converted", "fetched", "url", "failed", "none"):
+        tq = tq.filter(Record.full_text_status == status)
+    tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
+    records = tq.limit(500).all()
+
     return render(request, "workspace_fulltext.html", {
         "user": user, "ws": ws, "tab": "fulltext", "steps_done": workspace_steps_done(ws),
-        "records": records, "ft": ft,
+        "records": records, "ft": ft, "status": status, "status_nav": status_nav,
+        "dbs_present": _dbs_present(db, ws.id),
+        "filters": {"status": status, "q": q, "source": source, "rtype": rtype,
+                    "yf": yf, "yt": yt, "sort": sort, "order": order},
     })
 
 
