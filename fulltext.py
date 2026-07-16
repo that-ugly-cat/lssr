@@ -21,7 +21,7 @@ import os
 import re
 import threading
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 import requests
 
@@ -63,7 +63,7 @@ def _update(workspace_id: int, kind: str, **kw):
 
 def _get(url: str, **kw):
     kw.setdefault("timeout", TIMEOUT)
-    kw.setdefault("headers", UA)
+    kw["headers"] = {**UA, **(kw.get("headers") or {})}
     return requests.get(url, **kw)
 
 
@@ -306,6 +306,102 @@ def store_uploaded_pdf(db, workspace_id: int, rec, pdf_bytes: bytes):
 
 # ── Pass 1: fetch (Unpaywall) ───────────────────────────────────────────────────
 
+# ── Publisher TDM APIs (last layer) ────────────────────────────────────────────
+#
+# What the OA channels can't reach is, mostly, the publisher's own copy behind a
+# bot wall. The sanctioned way in is each publisher's text-and-data-mining API,
+# which is built for exactly this: systematic full-text retrieval for research,
+# under the subscription an institution already pays for. Each provider is tried
+# only when its key is configured and only for DOIs with that publisher's prefix,
+# so we never spend a call we know will fail.
+
+ELSEVIER_PREFIXES = {"10.1016", "10.1006", "10.1053", "10.1054", "10.1078", "10.5555"}
+WILEY_PREFIXES    = {"10.1002", "10.1111", "10.1046", "10.1034", "10.1049"}
+SPRINGER_PREFIXES = {"10.1007", "10.1186", "10.1038", "10.1140", "10.1057", "10.1245"}
+
+
+def _elsevier(doi: str) -> str | None:
+    """ScienceDirect Article Retrieval. The API key alone reaches open-access
+    articles; entitled subscription content also needs X-ELS-Insttoken (issued to
+    the institution) or a call from its IP range."""
+    key = os.environ.get("ELSEVIER_API_KEY", "").strip()
+    if not key:
+        return None
+    headers = {"X-ELS-APIKey": key}
+    inst = os.environ.get("ELSEVIER_INSTTOKEN", "").strip()
+    if inst:
+        headers["X-ELS-Insttoken"] = inst
+    url = f"https://api.elsevier.com/content/article/doi/{doi}"
+    try:
+        r = _get(url, headers={**headers, "Accept": "text/plain"}, timeout=45)
+        if r.status_code == 200 and "text/plain" in r.headers.get("Content-Type", ""):
+            text = r.text.strip()
+            if len(text) > 500:
+                return text
+        # some articles only come back structured — take the text out of the JSON
+        r = _get(url, headers={**headers, "Accept": "application/json"}, timeout=45)
+        if r.status_code == 200:
+            body = (r.json().get("full-text-retrieval-response") or {})
+            text = (body.get("originalText") or "")
+            if isinstance(text, str) and len(text.strip()) > 500:
+                return text.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _springer(doi: str) -> str | None:
+    """Springer Nature's open-access API returns JATS — the same shape Europe PMC
+    gives us, so it reuses the same converter. Subscription content needs a
+    separate TDM agreement and is not covered here."""
+    key = os.environ.get("SPRINGER_API_KEY", "").strip()
+    if not key:
+        return None
+    try:
+        r = _get("https://api.springernature.com/openaccess/jats",
+                 params={"q": f"doi:{doi}", "api_key": key}, timeout=45)
+        if r.status_code == 200 and b"<" in r.content[:200]:
+            md = jats_to_markdown(r.content)
+            return md if len(md) > 500 else None
+    except Exception:
+        pass
+    return None
+
+
+def _wiley(doi: str) -> bytes | None:
+    """Wiley TDM serves a PDF. The client token is issued from a Wiley Online
+    Library account with the institution's entitlement."""
+    token = os.environ.get("WILEY_TDM_TOKEN", "").strip()
+    if not token:
+        return None
+    try:
+        r = _get(f"https://api.wiley.com/onlinelibrary/tdm/v1/articles/{quote(doi, safe='')}",
+                 headers={"Wiley-TDM-Client-Token": token}, timeout=60, allow_redirects=True)
+        if r.status_code == 200 and r.content[:4] == b"%PDF" and len(r.content) > 10_000:
+            return r.content
+    except Exception:
+        pass
+    return None
+
+
+def publisher_fulltext(doi: str) -> tuple[str | None, bytes | None]:
+    """(markdown, pdf_bytes) from whichever publisher owns this DOI prefix."""
+    prefix = doi.split("/")[0]
+    if prefix in ELSEVIER_PREFIXES:
+        md = _elsevier(doi)
+        if md:
+            return md, None
+    if prefix in SPRINGER_PREFIXES:
+        md = _springer(doi)
+        if md:
+            return md, None
+    if prefix in WILEY_PREFIXES:
+        pdf = _wiley(doi)
+        if pdf:
+            return None, pdf
+    return None, None
+
+
 def _fetch_jats(url: str) -> str | None:
     try:
         r = _get(url, timeout=30)
@@ -360,6 +456,20 @@ def _fetch_record(db, workspace_id: int, rec, email: str) -> str:
             rec.full_text_status = "fetched"
             db.commit()
             return "fetched"
+
+    # Last layer: the publisher's own TDM API, for what OA channels can't reach.
+    md, pdf = publisher_fulltext(doi)
+    if md:
+        rec.full_text_md = md
+        rec.full_text_status = "converted"
+        db.commit()
+        return "converted"
+    if pdf:
+        path = _store_pdf(workspace_id, rec.id, pdf)
+        rec.full_text_path = str(path)
+        rec.full_text_status = "fetched"
+        db.commit()
+        return "fetched"
 
     if fallback:
         rec.full_text_url = fallback      # keep the OA URL for manual retrieval

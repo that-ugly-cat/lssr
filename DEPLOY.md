@@ -15,6 +15,15 @@ synthesis). It calls the Claude API (per-user key) and the
 | `PAPER2MD_URL` | **in practice yes** | `http://localhost:8008` | paper2md service used at step 7. The default only works when paper2md runs on the same host; point it at the deployed instance (e.g. `https://paper2md.borant.eu`) or every conversion fails with "connection refused" |
 | `PAPER2MD_API_KEY` | no, but recommended | _(none)_ | an issued paper2md key, sent as `X-API-Key`. Without it uploads are capped at 10MB; with it, 50MB — papers routinely exceed the anonymous cap |
 | `UNPAYWALL_EMAIL` | no | workspace owner's email | contact email sent to the Unpaywall API |
+| `ELSEVIER_API_KEY` | no | _(none)_ | ScienceDirect TDM. Free from [dev.elsevier.com](https://dev.elsevier.com). Reaches Elsevier's open-access articles on its own |
+| `ELSEVIER_INSTTOKEN` | no | _(none)_ | institutional token, needed on top of the key for *subscription* content when not calling from the institution's IP range |
+| `SPRINGER_API_KEY` | no | _(none)_ | Springer Nature open-access API. Free from [dev.springernature.com](https://dev.springernature.com) |
+| `WILEY_TDM_TOKEN` | no | _(none)_ | Wiley TDM client token, issued from a Wiley Online Library account with the institution's entitlement |
+
+The publisher keys are the last layer of step 6: they run only after the
+open-access ladder (Europe PMC → Unpaywall/OpenAlex → landing pages) has failed,
+and only for DOIs carrying that publisher's prefix. Leave one unset and its
+publisher is simply skipped.
 
 Generate the keys:
 
