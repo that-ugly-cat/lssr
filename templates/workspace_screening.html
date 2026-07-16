@@ -67,6 +67,9 @@
     {% endif %}
     <span class="muted small">{{ model }} pre-screens. Records a human has voted on ({{ manual_n }}) are the reviewers' call — never re-screened.</span>
   </form>
+  <div class="progress-wrap" id="scr-prog" style="display:none;">
+    <div class="progress"><div class="progress-fill" id="scr-fill"></div></div>
+  </div>
   <div id="scr-status" class="flash" style="display:none;"></div>
 </div>
 
@@ -79,9 +82,9 @@
 <div class="cards-label">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
-    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict'] else 'muted' }}">all</a>
+    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict'] else 'muted' }}">all ({{ counts.total }})</a>
     {% for d in ['pending','include','maybe','exclude','conflict'] %}
-    · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }}{% if d in ['maybe','conflict'] and counts[d] %} ({{ counts[d] }}){% endif %}</a>
+    · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }} ({{ counts[d] }})</a>
     {% endfor %}
   </span>
 </div>
@@ -116,7 +119,7 @@
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
         {% if r.type and r.type != 'article' %}<span class="badge badge-muted">{{ r.type.replace('_',' ') }}</span>{% endif %}
-        <div class="muted small">{{ r.authors or '' }}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% endif %}</div>
+        <div class="muted small">{{ r.authors or '' }}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% elif r.url %} · <a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.url|truncate(50) }}</a>{% endif %}</div>
         {% if r.abstract %}
         <details class="abstract-toggle"><summary class="muted small">abstract</summary><div class="small" style="margin-top:4px; max-width:75ch;">{{ r.abstract }}</div></details>
         {% else %}<div class="muted small" style="font-style:italic;">no abstract</div>{% endif %}
@@ -189,9 +192,9 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/poller.js?v=1"></script>
+<script src="/static/js/poller.js?v=2"></script>
 <script>
-poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status');
+poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status', 'scr-prog', 'scr-fill');
 
 // Collapsible exclusion-criteria rail; remembers its state.
 const critTab = document.getElementById('crit-tab');

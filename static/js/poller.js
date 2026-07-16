@@ -17,6 +17,7 @@ function poller(formId, statusId, btnId, url, progId, fillId) {
   const prog = progId ? document.getElementById(progId) : null;
   const fill = fillId ? document.getElementById(fillId) : null;
   let sawRunning = false;
+  let anchorT = 0, anchorDone = 0;   // for the time estimate
 
   const progress = (j) => (j.done !== undefined ? j.done : j.downloaded);
 
@@ -24,6 +25,19 @@ function poller(formId, statusId, btnId, url, progId, fillId) {
     if (!prog || !fill) return;
     prog.style.display = 'flex';
     fill.style.width = (total ? Math.round((done / total) * 100) : 0) + '%';
+  }
+
+  // Rolling ETA from the rate we actually observe, so it needs no server clock
+  // and self-corrects. Anchored the first time we see progress.
+  function eta(done, total) {
+    if (!total || !done || done >= total) return '';
+    const now = Date.now();
+    if (!anchorT) { anchorT = now; anchorDone = done; return ''; }
+    const dd = done - anchorDone, dt = (now - anchorT) / 1000;
+    if (dd <= 0 || dt < 1) return '';
+    const secs = Math.round((total - done) * (dt / dd));
+    const m = Math.floor(secs / 60), s = secs % 60;
+    return ' · ~' + (m ? `${m}m ${s}s` : `${s}s`) + ' left';
   }
 
   async function poll() {
@@ -54,7 +68,7 @@ function poller(formId, statusId, btnId, url, progId, fillId) {
       box.style.display = 'block';
       box.className = 'flash';
       const done = progress(j);
-      box.textContent = (j.message || j.status) + (j.total ? ` (${done}/${j.total})` : '');
+      box.textContent = (j.message || j.status) + (j.total ? ` (${done}/${j.total})${eta(done, j.total)}` : '');
       setBar(done, j.total);
       setTimeout(poll, 2000);
     }
