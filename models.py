@@ -359,6 +359,32 @@ def ensure_extraction_fields(db, workspace):
     db.commit()
 
 
+def field_visible(field, values: dict) -> bool:
+    """Is this field asked, given the current values? (show_if evaluation)"""
+    if not field.show_if_key:
+        return True
+    parent = values.get(field.show_if_key)
+    allowed = field.show_if_values()
+    if isinstance(parent, list):
+        return any(p in allowed for p in parent)
+    return parent in allowed
+
+
+def authoritative_values(db, record) -> dict:
+    """The extraction that counts for a record: the owner-curated `final` row if
+    there is one, else the most recently saved reviewer's, else the model draft."""
+    rows = db.query(Extraction).filter(Extraction.record_id == record.id).all()
+    for kind in ("final",):
+        hit = [r for r in rows if r.reviewer_kind == kind]
+        if hit:
+            return hit[0].values()
+    users = [r for r in rows if r.reviewer_kind == "user"]
+    if users:
+        return max(users, key=lambda r: r.updated_at or datetime.min).values()
+    model = [r for r in rows if r.reviewer_kind == "model"]
+    return model[0].values() if model else {}
+
+
 def upsert_extraction(db, workspace, record, reviewer_kind, reviewer_id, values: dict):
     row = (db.query(Extraction)
              .filter(Extraction.record_id == record.id,

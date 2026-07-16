@@ -1106,17 +1106,28 @@ async def assessment_page(ws_id: int, request: Request, user: User = Depends(get
             my_reviewed.add(v.record_id)
     n_fields = len(workspace_extraction_fields(db, ws))
     n_converted = sum(1 for r in records if r.full_text_status == "converted")
+    # records the model may draft: converted, still pending, untouched by a human
+    human_ids = {v.record_id for vs in votes.values() for v in vs
+                 if v.reviewer_kind in ("user", "adjudicator")}
+    ready = sum(1 for r in records if r.full_text_status == "converted"
+                and r.screen2_decision == "pending" and r.id not in human_ids)
+    drafted = sum(1 for r in records if r.screen2_by == "model")
     return render(request, "workspace_assessment.html", {
         "user": user, "ws": ws, "tab": "assessment", "steps_done": workspace_steps_done(ws),
         "records": records, "votes": votes, "my_reviewed": my_reviewed,
         "n_converted": n_converted, "n_fields": n_fields,
+        "ready": ready, "drafted": drafted,
+        "model": ws.screening_model or "claude-haiku-4-5",
+        "has_key": bool(_user_api_key(user)),
+        "n_inclusion": len(workspace_criteria(db, ws, "inclusion")),
         "reviewers_required": ws.screen1_reviewers_required or 1,
         "is_owner": ws.owner_id == user.id or user.is_admin,
     })
 
 
 @app.post("/w/{ws_id}/assessment/run")
-async def run_assessment(ws_id: int, user: User = Depends(get_current_user),
+async def run_assessment(ws_id: int, rerun: str = Form(""),
+                         user: User = Depends(get_current_user),
                          db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     api_key = _user_api_key(user)
@@ -1126,7 +1137,7 @@ async def run_assessment(ws_id: int, user: User = Depends(get_current_user),
     job = assessment.get_job(ws.id)
     if job and job.get("status") == "running":
         raise HTTPException(409, "Assessment already in progress")
-    assessment.start_assessment(ws.id, api_key, user.id)
+    assessment.start_assessment(ws.id, api_key, user.id, rerun=bool(rerun))
     return RedirectResponse(f"/w/{ws_id}/assessment", status_code=302)
 
 
@@ -1136,17 +1147,6 @@ async def assessment_status(ws_id: int, user: User = Depends(get_current_user),
     _load_ws(db, user, ws_id)
     import assessment
     return JSONResponse(assessment.get_job(ws_id) or {"status": "idle"})
-
-
-def _field_visible(field, values: dict) -> bool:
-    """Evaluate a field's show_if against the current values dict."""
-    if not field.show_if_key:
-        return True
-    parent = values.get(field.show_if_key)
-    allowed = field.show_if_values()
-    if isinstance(parent, list):
-        return any(p in allowed for p in parent)
-    return parent in allowed
 
 
 # ── Assessment review modal: screen 2 + extraction in one save ──────────────
@@ -1170,7 +1170,9 @@ async def review_fragment(ws_id: int, rid: int, request: Request,
         return row.values() if row else None
 
     mine = _vals("user", user.id)
-    values = mine if mine is not None else (_vals("model", None) or {})  # AI draft pre-fill
+    draft = _vals("model", None)
+    values = mine if mine is not None else (draft or {})  # AI draft pre-fill
+    from_draft = mine is None and draft is not None
     my_vote = (db.query(ScreenDecision)
                  .filter(ScreenDecision.record_id == rec.id, ScreenDecision.stage == "screen2",
                          ScreenDecision.reviewer_kind == "user",
@@ -1182,6 +1184,8 @@ async def review_fragment(ws_id: int, rid: int, request: Request,
         "user": user, "ws": ws, "rec": rec, "fields": fields,
         "inclusion": workspace_criteria(db, ws, "inclusion"),
         "values": values, "my_vote": my_vote, "other_votes": other_votes,
+        "from_draft": from_draft, "model_vote": next(
+            (v for v in other_votes if v.reviewer_kind == "model"), None),
         "is_owner": ws.owner_id == user.id or user.is_admin,
         "has_final": _vals("final", None) is not None,
     })
@@ -1194,8 +1198,8 @@ async def save_review(ws_id: int, rid: int, request: Request,
     rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
     if not rec:
         raise HTTPException(404, "Record not found")
-    from models import (ensure_extraction_fields, recompute_record_screen2, upsert_extraction,
-                        upsert_screen_decision, workspace_extraction_fields)
+    from models import (ensure_extraction_fields, field_visible, recompute_record_screen2,
+                        upsert_extraction, upsert_screen_decision, workspace_extraction_fields)
     ensure_extraction_fields(db, ws)
     fields = workspace_extraction_fields(db, ws)
     form = await request.form()
@@ -1209,7 +1213,7 @@ async def save_review(ws_id: int, rid: int, request: Request,
             v = (form.get(f"f_{f.key}") or "").strip()
             if v:
                 raw[f.key] = v
-    values = {f.key: raw[f.key] for f in fields if f.key in raw and _field_visible(f, raw)}
+    values = {f.key: raw[f.key] for f in fields if f.key in raw and field_visible(f, raw)}
     upsert_extraction(db, ws, rec, "user", user.id, values)
     if form.get("set_final") and (ws.owner_id == user.id or user.is_admin):
         upsert_extraction(db, ws, rec, "final", None, values)

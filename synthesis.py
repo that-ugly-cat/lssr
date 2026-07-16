@@ -1,12 +1,15 @@
 """
 Synthesis (step 10): the public deliverable.
 
-Builds the PRISMA flow counts from the DB and, for each assessment criterion,
-asks the LLM to aggregate the per-record findings into one narrative paragraph
-with inline citations. Stored as a Synthesis + SynthesisBlock rows, shown on the
-public /r/{token} page when published.
+Builds the PRISMA flow counts from the DB and, for each free-text extraction
+field (text/textarea), asks the LLM to aggregate what was extracted from each
+included study into one narrative paragraph with inline citations. Structured
+fields (select/multiselect/number) are not narrated — they are distributions,
+not prose. Values come from each record's authoritative extraction (the curated
+final row, else the latest reviewer's, else the model draft).
 
-Background job, JOBS keyed by workspace_id.
+Stored as Synthesis + SynthesisBlock rows, shown on the public /r/{token} page
+when published. Background job, JOBS keyed by workspace_id.
 """
 import json
 import re
@@ -100,17 +103,20 @@ def _narrative(client, model, rq, criterion, items):
 
 
 def _run(workspace_id: int, api_key: str, user_id: int | None):
-    from models import (Assessment, Record, SessionLocal, Synthesis, SynthesisBlock,
-                        UserCostLog, Workspace, calc_cost, workspace_criteria)
+    from models import (Record, SessionLocal, Synthesis, SynthesisBlock, UserCostLog,
+                        Workspace, authoritative_values, calc_cost, ensure_extraction_fields,
+                        workspace_extraction_fields)
     import anthropic
 
     db = SessionLocal()
     try:
         ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
         model = ws.screening_model or "claude-haiku-4-5"
-        assess_crit = workspace_criteria(db, ws, "assessment")
+        ensure_extraction_fields(db, ws)
+        narrative_fields = [f for f in workspace_extraction_fields(db, ws)
+                            if f.field_type in ("text", "textarea")]
         _set(workspace_id, {"status": "running", "message": "Building synthesis…",
-                            "total": len(assess_crit), "done": 0})
+                            "total": len(narrative_fields), "done": 0})
 
         prisma = compute_prisma(db, workspace_id)
 
@@ -127,31 +133,34 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
         db.commit()
         db.refresh(syn)
 
-        client = anthropic.Anthropic(api_key=api_key)
-        tin = tout = 0
-        for pos, crit in enumerate(assess_crit):
-            rows = (db.query(Assessment)
-                      .join(Record, Assessment.record_id == Record.id)
-                      .filter(Assessment.workspace_id == workspace_id,
-                              Assessment.criterion_id == crit.id,
+        included = (db.query(Record)
+                      .filter(Record.workspace_id == workspace_id,
                               Record.is_removed == False,               # noqa: E712
                               Record.screen2_decision == "include").all())
+        extracted = {rec.id: authoritative_values(db, rec) for rec in included}
+
+        client = anthropic.Anthropic(api_key=api_key)
+        tin = tout = 0
+        for pos, fld in enumerate(narrative_fields):
             items = []
-            for a in rows:
-                if a.finding and a.finding.strip().lower() != "not addressed":
-                    items.append({"tag": ref_tag(a.record), "finding": a.finding,
-                                 "citation": a.citation})
+            for rec in included:
+                val = extracted.get(rec.id, {}).get(fld.key)
+                if isinstance(val, list):
+                    val = ", ".join(str(v) for v in val)
+                val = (val or "").strip() if isinstance(val, str) else ""
+                if val and val.lower() != "not addressed":
+                    items.append({"tag": ref_tag(rec), "finding": val})
             if items:
-                narrative, i, o = _narrative(client, model, ws.research_question, crit.label, items)
+                narrative, i, o = _narrative(client, model, ws.research_question, fld.label, items)
                 tin += i
                 tout += o
             else:
-                narrative = "_No included studies addressed this criterion._"
-            db.add(SynthesisBlock(synthesis_id=syn.id, criterion_id=crit.id,
-                                  heading=crit.label, narrative=narrative, position=pos))
+                narrative = "_No included studies addressed this field._"
+            db.add(SynthesisBlock(synthesis_id=syn.id, criterion_id=None,
+                                  heading=fld.label, narrative=narrative, position=pos))
             db.commit()
-            _set(workspace_id, {"status": "running", "message": f"Synthesizing {crit.label}…",
-                                "total": len(assess_crit), "done": pos + 1})
+            _set(workspace_id, {"status": "running", "message": f"Synthesizing {fld.label}…",
+                                "total": len(narrative_fields), "done": pos + 1})
 
         if tin or tout:
             db.add(UserCostLog(user_id=user_id, workspace_id=workspace_id, step="synthesis",
@@ -159,7 +168,7 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
                                cost_usd=calc_cost(model, tin, tout)))
             db.commit()
         _set(workspace_id, {"status": "done", "message": "Synthesis ready.",
-                            "total": len(assess_crit), "done": len(assess_crit)})
+                            "total": len(narrative_fields), "done": len(narrative_fields)})
     except Exception as exc:
         _set(workspace_id, {"status": "error", "message": str(exc), "error": str(exc)})
     finally:

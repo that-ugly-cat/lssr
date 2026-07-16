@@ -17,6 +17,40 @@
   </p>
 </div>
 
+<div class="cards-label">AI draft</div>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">
+    One conditional call per full text: the model proposes the screening-2
+    decision and fills the extraction fields. It's a <strong>draft</strong> —
+    it never touches a record a reviewer has voted on, and you confirm or edit it
+    in the review modal.
+  </p>
+  {% if n_inclusion == 0 %}
+  <div class="flash flash-error" style="display:block;">Define inclusion criteria in <a href="/w/{{ ws.id }}/settings">Settings</a> first.</div>
+  {% elif not has_key %}
+  <div class="flash flash-error" style="display:block;">Set your Anthropic API key in <a href="/profile">your profile</a> first.</div>
+  {% elif n_converted == 0 %}
+  <div class="flash flash-error" style="display:block;">No converted full texts yet — retrieve them in <a href="/w/{{ ws.id }}/fulltext">Full text</a>.</div>
+  {% endif %}
+  <form method="post" action="/w/{{ ws.id }}/assessment/run" id="as-form" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+    <button class="btn btn-primary" type="submit" name="rerun" value="" id="as-btn"
+      {{ 'disabled' if (n_inclusion == 0 or not has_key or ready == 0) else '' }}>
+      Draft {{ ready }} full texts
+    </button>
+    {% if drafted > 0 %}
+    <button class="btn" type="submit" name="rerun" value="1"
+      {{ 'disabled' if (n_inclusion == 0 or not has_key) else '' }}>
+      Re-draft {{ ready + drafted }} (model + pending)
+    </button>
+    {% endif %}
+    <span class="muted small">{{ model }} · excluded records cost no extraction tokens.</span>
+  </form>
+  <div class="progress-wrap" id="as-prog" style="display:none;">
+    <div class="progress"><div class="progress-fill" id="as-fill"></div></div>
+  </div>
+  <div id="as-status" class="flash" style="display:none;"></div>
+</div>
+
 <table class="table">
   <thead><tr><th>Title</th><th>Full text</th><th>Screen 2</th><th class="ta-right">Review</th></tr></thead>
   <tbody>
@@ -116,5 +150,43 @@ function closeReview() { document.getElementById('review-modal').classList.remov
 document.getElementById('review-modal').addEventListener('click', (e) => {
   if (e.target.id === 'review-modal') closeReview();
 });
+
+// AI draft job: progress bar + status, reload once when a watched run finishes.
+(function () {
+  const form = document.getElementById('as-form');
+  if (!form) return;
+  const box = document.getElementById('as-status'), btn = document.getElementById('as-btn');
+  const prog = document.getElementById('as-prog'), fill = document.getElementById('as-fill');
+  let sawRunning = false;
+  const setBar = (j) => {
+    prog.style.display = 'flex';
+    fill.style.width = (j.total ? Math.round((j.done / j.total) * 100) : 0) + '%';
+  };
+  async function poll() {
+    const j = await (await fetch('/w/{{ ws.id }}/assessment/status')).json();
+    if (j.status === 'idle') return;
+    if (j.status === 'running') {
+      sawRunning = true;
+      if (btn) btn.disabled = true;
+      box.style.display = 'block'; box.className = 'flash';
+      box.textContent = (j.message || 'running') + (j.total ? ` (${j.done}/${j.total})` : '');
+      setBar(j);
+      setTimeout(poll, 2000);
+    } else if (j.status === 'done') {
+      if (sawRunning) {
+        box.style.display = 'block'; box.className = 'flash flash-ok';
+        box.textContent = j.message || 'Done.';
+        setBar({done: 1, total: 1});
+        setTimeout(() => location.reload(), 1800);
+      }
+    } else if (j.status === 'error') {
+      box.style.display = 'block'; box.className = 'flash flash-error';
+      box.textContent = 'Error: ' + (j.message || 'unknown');
+      if (btn) btn.disabled = false;
+    }
+  }
+  form.addEventListener('submit', () => { sawRunning = true; setTimeout(poll, 800); });
+  poll();
+})();
 </script>
 {% endblock %}

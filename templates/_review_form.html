@@ -1,4 +1,6 @@
-{% set mydec = my_vote.decision if my_vote else '' %}
+{# AI-assisted: when this reviewer hasn't voted yet, the model's draft decision
+   is pre-selected and its field values pre-filled — confirm or edit. #}
+{% set mydec = my_vote.decision if my_vote else (model_vote.decision if model_vote else '') %}
 <div class="review-head">
   <div>
     <strong>{{ rec.title or '(untitled)' }}</strong>
@@ -23,7 +25,12 @@
     </div>
     {% endif %}
 
-    <div class="rev-section-label">Screening 2 — include on full text?</div>
+    <div class="rev-section-label">Screening 2 — include on full text?
+      {% if model_vote and not my_vote %}<span class="badge badge-muted">🤖 AI draft: {{ model_vote.decision }}</span>{% endif %}
+    </div>
+    {% if model_vote and model_vote.reason and not my_vote %}
+    <div class="muted small" style="margin-bottom:6px; font-style:italic;">{{ model_vote.reason }}</div>
+    {% endif %}
     <div class="rev-decision">
       {% for d, em in [('include','✅ include'),('maybe','🤔 maybe'),('exclude','❌ exclude')] %}
       <label class="rev-radio {{ 'on' if mydec == d else '' }}">
@@ -39,7 +46,9 @@
     </div>
     {% endif %}
 
-    <div class="rev-section-label">Data extraction</div>
+    <div class="rev-section-label">Data extraction
+      {% if from_draft %}<span class="badge badge-muted">🤖 pre-filled from AI draft — check it</span>{% endif %}
+    </div>
     {% for f in fields %}
     <div class="rev-field" data-key="{{ f.key }}"
          {% if f.show_if_key %}data-show-if-key="{{ f.show_if_key }}" data-show-if-values='{{ f.show_if_values() | tojson }}'{% endif %}>
