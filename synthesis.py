@@ -250,28 +250,16 @@ def general_narrative(structured_fields, extracted, included) -> str:
 
 
 # ── LLM narrative per assessment criterion (text/textarea fields) ───────────────
-
-_SYSTEM = """\
-You are writing the results section of a scoping review. For the theme below,
-synthesize the provided per-study findings into one coherent narrative paragraph
-(or a few, if warranted). Cite each study you draw on by inserting ITS TOKEN
-exactly as given, in square brackets, e.g. [S1]; put the token right after the
-statement it supports. Do NOT write author names, years, DOIs, or links yourself —
-only the token. Do not invent findings or tokens; use only the material provided.
-Be concise and neutral.
-
-Return only the narrative prose, no headings, no preamble."""
+# Prompt text lives in prompts.py (SYNTHESIS_SYSTEM, synthesis_user); citation
+# substitution below stays here — it is post-processing, not a prompt.
+from prompts import SYNTHESIS_SYSTEM, synthesis_user  # noqa: E402
 
 
 def _narrative(client, model, rq, criterion, items):
-    body = "\n\n".join(f"[{it['token']}] {it['finding']}" for it in items)
-    user = (f"Research question: {rq or '(not specified)'}\n\n"
-            f"Theme (assessment criterion): {criterion}\n\n"
-            f"Findings to synthesize (each prefixed by its study token):\n{body}")
     resp = client.messages.create(
         model=model, max_tokens=1500,
-        system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": user}],
+        system=[{"type": "text", "text": SYNTHESIS_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": synthesis_user(rq, criterion, items)}],
     )
     text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
     return text, resp.usage.input_tokens, resp.usage.output_tokens

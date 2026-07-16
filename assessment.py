@@ -44,56 +44,9 @@ def _update(workspace_id: int, **kw):
 
 
 # ── Prompt ─────────────────────────────────────────────────────────────────────
-
-_SYSTEM = """\
-You are conducting the FULL-TEXT stage of a scoping review.
-
-Research question:
-{rq}
-
-STEP 1 — Inclusion decision. Include the study only if it meets ALL of these
-inclusion criteria; exclude it if any is clearly not met. Use "maybe" only when
-the full text genuinely does not settle it.
-{inclusion}
-
-STEP 2 — Data extraction (only when the decision is "include"). Fill the fields
-below from the full text. Rules:
-- Use the exact allowed values for select/multiselect fields; multiselect values
-  must be a JSON array of those strings.
-- Omit any field you cannot ground in the text — never guess.
-- Fill a conditional field only when its stated condition holds.
-- For free-text fields (text/textarea), where possible support your answer with a
-  short EXACT quote from the article, copied verbatim inside «guillemets», after
-  your answer.
-{fields}
-
-Return ONLY a JSON object, no prose, no code fences:
-  {{"inclusion_decision": "include" | "exclude" | "maybe",
-    "inclusion_reason": "<one sentence>",
-    "fields": {{"<field key>": <value>, ...}}}}
-Use an empty object for "fields" when the decision is not "include"."""
-
-
-def _fields_spec(fields) -> str:
-    lines = []
-    for f in fields:
-        parts = [f"- {f.key} ({f.field_type}) — {f.label}"]
-        if f.help:
-            parts.append(f"note: {f.help}")
-        opts = f.options()
-        if opts:
-            parts.append("allowed values: " + " | ".join(opts))
-        if f.show_if_key:
-            parts.append(f"only when {f.show_if_key} is one of: " + ", ".join(f.show_if_values()))
-        lines.append("\n    ".join(parts))
-    return "\n".join(lines) or "(no extraction fields defined)"
-
-
-def build_system(rq, inclusion_criteria, fields) -> str:
-    inc = "\n".join(f"- {c.label}: {c.description or ''}".rstrip() for c in inclusion_criteria)
-    return _SYSTEM.format(rq=(rq or "(not specified)").strip(),
-                          inclusion=inc or "(no inclusion criteria defined)",
-                          fields=_fields_spec(fields))
+# All prompt text lives in prompts.py; build_system stays exported under this name
+# so callers keep working.
+from prompts import assessment_system as build_system, assessment_user  # noqa: E402
 
 
 # ── Cost estimate (rough, ~4 chars/token; ignores prompt caching, upper bound) ──
@@ -181,7 +134,7 @@ def assess_record(client, system_prompt: str, full_text: str, model: str):
         model=model,
         max_tokens=2000,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": f"Full text:\n\n{text}"}],
+        messages=[{"role": "user", "content": assessment_user(text)}],
     )
     raw = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
     parsed = _parse(raw) or {}

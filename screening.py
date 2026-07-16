@@ -43,32 +43,9 @@ def _update(workspace_id: int, **kw):
 
 
 # ── Prompt ─────────────────────────────────────────────────────────────────────
-
-_SYSTEM = """\
-You are screening records for a scoping review at the TITLE + ABSTRACT stage.
-
-Research question:
-{rq}
-
-Exclude a record if it meets one or more of these exclusion criteria:
-{criteria}
-
-Rules:
-- This is a first-pass title/abstract screen. Apply the exclusion criteria
-  whenever one is met, and exclude records clearly off-topic.
-- Use "maybe" when you genuinely cannot tell from the title and abstract alone
-  (missing abstract, ambiguous scope). Do NOT default to "include" out of
-  caution — park the uncertain ones as "maybe" for a human to look at.
-- Reserve "include" for records that clearly fit and meet no exclusion criterion.
-
-Return ONLY a JSON object, no prose, no code fences:
-  {{"decision": "include" | "exclude" | "maybe", "reason": "<one sentence; name the criterion if excluding>"}}"""
-
-
-def build_system(research_question: str | None, exclusion_criteria: list) -> str:
-    crit = "\n".join(f"- {c.label}: {c.description or ''}".rstrip() for c in exclusion_criteria)
-    return _SYSTEM.format(rq=(research_question or "(not specified)").strip(),
-                          criteria=crit or "(no exclusion criteria defined)")
+# All prompt text lives in prompts.py; build_system stays exported under this name
+# so callers keep working.
+from prompts import screening_system as build_system, screening_user  # noqa: E402
 
 
 # ── Cost estimate (rough, ~4 chars/token; ignores prompt caching, so it reads as
@@ -119,7 +96,7 @@ def screen_record(client, system_prompt: str, title: str, abstract: str,
                   model: str) -> tuple[str, str, int, int]:
     """Returns (decision, reason, tokens_in, tokens_out). Defaults to include on
     a malformed response (screening 1 errs toward inclusion)."""
-    user = f"Title: {title or '(no title)'}\n\nAbstract: {abstract or '(no abstract)'}"
+    user = screening_user(title, abstract)
     resp = _create_with_retry(
         client,
         model=model,
