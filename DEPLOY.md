@@ -17,7 +17,7 @@ synthesis). It calls the Claude API (per-user key) and the
 | `UNPAYWALL_EMAIL` | no | workspace owner's email | contact email sent to the Unpaywall API |
 | `ELSEVIER_API_KEY` | no | _(none)_ | ScienceDirect TDM. Free from [dev.elsevier.com](https://dev.elsevier.com). Reaches Elsevier's open-access articles on its own |
 | `ELSEVIER_INSTTOKEN` | no | _(none)_ | institutional token, needed on top of the key for *subscription* content when not calling from the institution's IP range |
-| `SPRINGER_API_KEY` | no | _(none)_ | Springer Nature open-access API. Free from [dev.springernature.com](https://dev.springernature.com) |
+| `SPRINGER_API_KEY` | no | _(none)_ | Springer Nature **Open Access** API key, free from [dev.springernature.com](https://dev.springernature.com). Not the Meta API key — that returns metadata only |
 | `WILEY_TDM_TOKEN` | no | _(none)_ | Wiley TDM client token, issued from a Wiley Online Library account with the institution's entitlement |
 
 The publisher credentials are normally set **per user**, in Profile → *Publisher

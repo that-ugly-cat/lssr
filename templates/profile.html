@@ -32,7 +32,7 @@
   {% set creds = [
     ('elsevier', 'Elsevier / ScienceDirect', 'API key', 'free from dev.elsevier.com — reaches Elsevier open-access articles on its own'),
     ('elsevier_insttoken', 'Elsevier institutional token', 'Insttoken', 'optional; only needed for subscription content when not on your institution\'s network'),
-    ('springer', 'Springer Nature', 'API key', 'free from dev.springernature.com — open-access content only'),
+    ('springer', 'Springer Nature', 'Open Access API key', 'the Open Access API key from dev.springernature.com — not the Meta one, which returns metadata only. Covers open-access content only'),
     ('wiley', 'Wiley', 'TDM client token', 'from your Wiley Online Library account')
   ] %}
   {% for name, label, field, hint in creds %}
