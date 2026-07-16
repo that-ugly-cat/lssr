@@ -55,7 +55,7 @@
     <tr>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
-        <div class="muted small">{{ r.year or '' }}{% if r.authors %} · {{ r.authors }}{% endif %}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% endif %}</div>
+        <div class="muted small">{{ r.year or '' }}{% if r.authors %} · {{ r.authors }}{% endif %}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% elif r.url %} · <a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.url|truncate(50) }}</a>{% endif %}</div>
       </td>
       <td class="nowrap small">
         {% if r.full_text_status == 'converted' %}<span class="badge badge-ok">converted</span>
