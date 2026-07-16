@@ -15,8 +15,8 @@ synthesis). It calls the Claude API (per-user key) and the
 | `PAPER2MD_URL` | **in practice yes** | `http://localhost:8008` | paper2md service used at step 7. The default only works when paper2md runs on the same host; point it at the deployed instance (e.g. `https://paper2md.borant.eu`) or every conversion fails with "connection refused" |
 | `PAPER2MD_API_KEY` | no, but recommended | _(none)_ | an issued paper2md key, sent as `X-API-Key`. Without it uploads are capped at 10MB; with it, 50MB — papers routinely exceed the anonymous cap |
 | `UNPAYWALL_EMAIL` | no | workspace owner's email | contact email sent to the Unpaywall API |
-| `ELSEVIER_API_KEY` | no | _(none)_ | ScienceDirect TDM. Free from [dev.elsevier.com](https://dev.elsevier.com). Reaches Elsevier's open-access articles on its own |
-| `ELSEVIER_INSTTOKEN` | no | _(none)_ | institutional token, needed on top of the key for *subscription* content when not calling from the institution's IP range |
+| `ELSEVIER_API_KEY` | no | _(none)_ | ScienceDirect TDM. Free from [dev.elsevier.com](https://dev.elsevier.com). On its own it only works from the institution's IP range — on a server it is refused (403) unless the token below is set too |
+| `ELSEVIER_INSTTOKEN` | no | _(none)_ | institutional token the library obtains from Elsevier. Required for *any* Elsevier full text off the institution's network, including from the server |
 | `SPRINGER_API_KEY` | no | _(none)_ | Springer Nature **Open Access** API key, free from [dev.springernature.com](https://dev.springernature.com). Not the Meta API key — that returns metadata only |
 | `WILEY_TDM_TOKEN` | no | _(none)_ | Wiley TDM client token, issued from a Wiley Online Library account with the institution's entitlement |
 

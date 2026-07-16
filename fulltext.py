@@ -320,10 +320,19 @@ WILEY_PREFIXES    = {"10.1002", "10.1111", "10.1046", "10.1034", "10.1049"}
 SPRINGER_PREFIXES = {"10.1007", "10.1186", "10.1038", "10.1140", "10.1057", "10.1245"}
 
 
-def _elsevier(doi: str, key: str, inst: str = "") -> str | None:
-    """ScienceDirect Article Retrieval. The API key alone reaches open-access
-    articles; entitled subscription content also needs X-ELS-Insttoken (issued to
-    the institution) or a call from its IP range."""
+def _note(notes, text: str):
+    if notes is not None:
+        notes.add(text)
+
+
+def _elsevier(doi: str, key: str, inst: str = "", notes=None) -> str | None:
+    """ScienceDirect Article Retrieval.
+
+    The key on its own is not enough — not even for open access. Elsevier grants
+    full text only to an entitled *requestor*: a call from the institution's IP
+    range, or one carrying X-ELS-Insttoken (which the library obtains from
+    Elsevier). Off-network without a token every request 403s, metadata included.
+    """
     if not key:
         return None
     headers = {"X-ELS-APIKey": key}
@@ -336,8 +345,15 @@ def _elsevier(doi: str, key: str, inst: str = "") -> str | None:
             text = r.text.strip()
             if len(text) > 500:
                 return text
+        if r.status_code in (401, 403):
+            _note(notes, f"Elsevier refused the key ({r.status_code})"
+                         + ("" if inst else " — needs an institutional token, or a call from the institution's network"))
+            return None
         # some articles only come back structured — take the text out of the JSON
         r = _get(url, headers={**headers, "Accept": "application/json"}, timeout=45)
+        if r.status_code in (401, 403):
+            _note(notes, f"Elsevier refused the key ({r.status_code})")
+            return None
         if r.status_code == 200:
             body = (r.json().get("full-text-retrieval-response") or {})
             text = (body.get("originalText") or "")
@@ -348,15 +364,18 @@ def _elsevier(doi: str, key: str, inst: str = "") -> str | None:
     return None
 
 
-def _springer(doi: str, key: str) -> str | None:
-    """Springer Nature's open-access API returns JATS — the same shape Europe PMC
-    gives us, so it reuses the same converter. Subscription content needs a
-    separate TDM agreement and is not covered here."""
+def _springer(doi: str, key: str, notes=None) -> str | None:
+    """Springer Nature's *Open Access* API returns JATS — the same shape Europe
+    PMC gives us, so it reuses the same converter. Open-access content only;
+    subscription content needs a separate TDM agreement."""
     if not key:
         return None
     try:
         r = _get("https://api.springernature.com/openaccess/jats",
                  params={"q": f"doi:{doi}", "api_key": key}, timeout=45)
+        if r.status_code in (401, 403):
+            _note(notes, f"Springer refused the key ({r.status_code}) — is it the Open Access API key?")
+            return None
         if r.status_code == 200 and b"<" in r.content[:200]:
             md = jats_to_markdown(r.content)
             return md if len(md) > 500 else None
@@ -365,14 +384,17 @@ def _springer(doi: str, key: str) -> str | None:
     return None
 
 
-def _wiley(doi: str, token: str) -> bytes | None:
-    """Wiley TDM serves a PDF. The client token is issued from a Wiley Online
-    Library account with the institution's entitlement."""
+def _wiley(doi: str, token: str, notes=None) -> bytes | None:
+    """Wiley TDM serves a PDF. The client token comes from static.wiley.com/tdm
+    under the institution's entitlement."""
     if not token:
         return None
     try:
         r = _get(f"https://api.wiley.com/onlinelibrary/tdm/v1/articles/{quote(doi, safe='')}",
                  headers={"Wiley-TDM-Client-Token": token}, timeout=60, allow_redirects=True)
+        if r.status_code in (401, 403):
+            _note(notes, f"Wiley refused the token ({r.status_code})")
+            return None
         if r.status_code == 200 and r.content[:4] == b"%PDF" and len(r.content) > 10_000:
             return r.content
     except Exception:
@@ -380,22 +402,25 @@ def _wiley(doi: str, token: str) -> bytes | None:
     return None
 
 
-def publisher_fulltext(doi: str, keys: dict | None = None) -> tuple[str | None, bytes | None]:
+def publisher_fulltext(doi: str, keys: dict | None = None,
+                       notes=None) -> tuple[str | None, bytes | None]:
     """(markdown, pdf_bytes) from whichever publisher owns this DOI prefix.
     `keys` carries the reviewer's own credentials; a publisher with no key is
-    skipped entirely, so an unconfigured LSSR never calls out."""
+    skipped entirely, so an unconfigured LSSR never calls out. Credentials a
+    publisher rejects are reported through `notes` — a misconfigured key is a
+    thing to fix, not a paper that doesn't exist."""
     keys = keys or {}
     prefix = doi.split("/")[0]
     if prefix in ELSEVIER_PREFIXES:
-        md = _elsevier(doi, keys.get("elsevier", ""), keys.get("elsevier_insttoken", ""))
+        md = _elsevier(doi, keys.get("elsevier", ""), keys.get("elsevier_insttoken", ""), notes)
         if md:
             return md, None
     if prefix in SPRINGER_PREFIXES:
-        md = _springer(doi, keys.get("springer", ""))
+        md = _springer(doi, keys.get("springer", ""), notes)
         if md:
             return md, None
     if prefix in WILEY_PREFIXES:
-        pdf = _wiley(doi, keys.get("wiley", ""))
+        pdf = _wiley(doi, keys.get("wiley", ""), notes)
         if pdf:
             return None, pdf
     return None, None
@@ -417,7 +442,7 @@ def _fetch_jats(url: str) -> str | None:
         return None
 
 
-def _fetch_record(db, workspace_id: int, rec, email: str, keys: dict) -> str:
+def _fetch_record(db, workspace_id: int, rec, email: str, keys: dict, notes=None) -> str:
     """Walk the candidate ladder until a real PDF comes back. If every candidate
     is unreachable (publisher bot walls, mostly) keep the best URL we saw so the
     record lands in the manual-upload queue with a link instead of a dead end."""
@@ -457,7 +482,7 @@ def _fetch_record(db, workspace_id: int, rec, email: str, keys: dict) -> str:
             return "fetched"
 
     # Last layer: the publisher's own TDM API, for what OA channels can't reach.
-    md, pdf = publisher_fulltext(doi, keys)
+    md, pdf = publisher_fulltext(doi, keys, notes)
     if md:
         rec.full_text_md = md
         rec.full_text_status = "converted"
@@ -494,8 +519,9 @@ def _run_fetch(workspace_id: int, email: str, keys: dict | None = None):
                                      "total": total, "done": 0, "fetched": 0, "converted": 0,
                                      "url_only": 0, "failed": 0})
         fetched = converted = url_only = failed = 0
+        notes = set()
         for i, rec in enumerate(targets):
-            outcome = _fetch_record(db, workspace_id, rec, email, keys or {})
+            outcome = _fetch_record(db, workspace_id, rec, email, keys or {}, notes)
             if outcome == "fetched":
                 fetched += 1
             elif outcome == "converted":
@@ -510,6 +536,8 @@ def _run_fetch(workspace_id: int, email: str, keys: dict | None = None):
                f"{url_only} OA link only, {failed} not found.")
         if fetched:
             msg += " Convert the PDFs next."
+        if notes:
+            msg += " ⚠ " + " ".join(sorted(notes))
         _set(workspace_id, "fetch", {"status": "done", "message": msg,
                                      "total": total, "done": total, "fetched": fetched,
                                      "converted": converted, "url_only": url_only, "failed": failed})
