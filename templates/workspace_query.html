@@ -27,6 +27,7 @@
     </div>
     <p class="muted small">The year window applies to every direct-harvest source below.</p>
     <button class="btn btn-primary" type="submit">Save</button>
+    {% if primary_search_url %}<a class="btn btn-small" href="{{ primary_search_url }}" target="_blank" rel="noopener">Open {{ primary_label }} search ↗</a>{% endif %}
   </form>
 
   {% if primary_db in harvest_dbs and primary and primary.query_string %}
@@ -85,13 +86,16 @@
 {% if not has_key %}
 <div class="flash flash-error" style="display:block;">Set your Anthropic API key in <a href="/profile">your profile</a> to enable AI translation.</div>
 {% endif %}
-{% for db, label, tq, harvest in translations %}
+{% for db, label, tq, harvest, search_url in translations %}
 <div class="card">
   <div class="page-head">
     <h2>{{ label }}</h2>
-    <form method="post" action="/w/{{ ws.id }}/query/{{ db }}/translate">
-      <button class="btn btn-small" type="submit" {{ 'disabled' if not (has_key and primary and primary.query_string) else '' }}>Translate with AI</button>
-    </form>
+    <div style="display:flex; gap:8px; align-items:center;">
+      {% if search_url %}<a class="btn btn-small" href="{{ search_url }}" target="_blank" rel="noopener">Open {{ label }} search ↗</a>{% endif %}
+      <form method="post" action="/w/{{ ws.id }}/query/{{ db }}/translate">
+        <button class="btn btn-small" type="submit" {{ 'disabled' if not (has_key and primary and primary.query_string) else '' }}>Translate with AI</button>
+      </form>
+    </div>
   </div>
   <form method="post" action="/w/{{ ws.id }}/query/{{ db }}/save">
     <textarea name="query" rows="2" placeholder="Translated {{ label }} query (editable)">{{ tq.query_string if tq else '' }}</textarea>
@@ -124,7 +128,7 @@
 {% if primary_db in harvest_dbs and primary and primary.query_string %}
 poller('run-form-{{ primary_db }}', 'run-status-{{ primary_db }}', 'run-btn-{{ primary_db }}', '/w/{{ ws.id }}/harvest/{{ primary_db }}/status', 'run-prog-{{ primary_db }}', 'run-fill-{{ primary_db }}');
 {% endif %}
-{% for db, label, tq, harvest in translations %}{% if harvest %}
+{% for db, label, tq, harvest, search_url in translations %}{% if harvest %}
 poller('run-form-{{ db }}', 'run-status-{{ db }}', 'run-btn-{{ db }}', '/w/{{ ws.id }}/harvest/{{ db }}/status', 'run-prog-{{ db }}', 'run-fill-{{ db }}');
 {% endif %}{% endfor %}
 </script>

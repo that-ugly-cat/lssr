@@ -23,7 +23,7 @@ from auth import (
 from models import (
     DATABASES, DB_LABELS, HARVEST_DBS, PIPELINE_STEPS, PRICING, Criterion, Import,
     PublicShare, Record, User, Workspace, WorkspaceMember, can_access, current_iteration,
-    db_label, get_db, get_query, init_db, new_share_token, set_step_done,
+    db_label, db_search_url, get_db, get_query, init_db, new_share_token, set_step_done,
     set_workspace_targets, upsert_query, user_workspaces, workspace_criteria,
     workspace_steps_done, workspace_target_dbs, workspace_years,
 )
@@ -535,7 +535,8 @@ async def query_page(ws_id: int, request: Request, user: User = Depends(get_curr
     target_choices = [(d, db_label(d), d in targets, d in HARVEST_DBS)
                       for d in DATABASES if d != primary_db]
     # translation windows for the selected targets, each with its saved query
-    translations = [(d, db_label(d), get_query(db, ws, d), d in HARVEST_DBS) for d in targets]
+    translations = [(d, db_label(d), get_query(db, ws, d), d in HARVEST_DBS, db_search_url(d))
+                    for d in targets]
     # harvest job state for every active harvestable source (primary + targets)
     harvest_states = {d: _harvest_state(ws.id, d)
                       for d in ([primary_db] + targets) if d in HARVEST_DBS}
@@ -543,6 +544,7 @@ async def query_page(ws_id: int, request: Request, user: User = Depends(get_curr
     return render(request, "workspace_query.html", {
         "user": user, "ws": ws, "tab": "query", "steps_done": workspace_steps_done(ws),
         "primary_db": primary_db, "primary_label": db_label(primary_db), "primary": primary,
+        "primary_search_url": db_search_url(primary_db),
         "year_from": yf, "year_to": yt,
         "db_options": db_options, "target_choices": target_choices,
         "translations": translations, "harvest_states": harvest_states,

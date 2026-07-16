@@ -157,9 +157,33 @@ DB_LABELS = {
 # Databases we can harvest directly (open API, no institutional auth).
 HARVEST_DBS = {"pubmed", "europepmc", "openalex", "eric"}
 
+# Entry point to each database's (advanced) search UI, so a reviewer can jump
+# there to run the translated query. Institutional databases route through the
+# library proxy after login — these are the canonical public entry URLs.
+DB_SEARCH_URLS = {
+    "pubmed": "https://pubmed.ncbi.nlm.nih.gov/advanced/",
+    "europepmc": "https://europepmc.org/advancesearch",
+    "openalex": "https://openalex.org/works",
+    "eric": "https://eric.ed.gov/",
+    "scopus": "https://www.scopus.com/search/form.uri?display=advanced",
+    "wos": "https://www.webofscience.com/wos/woscc/advanced-search",
+    "cinahl": "https://search.ebscohost.com/",
+    "jstor": "https://www.jstor.org/action/showAdvancedSearch",
+    "embase-ovid": "https://ovidsp.ovid.com/",
+    "embase-ebsco": "https://search.ebscohost.com/",
+    "psycinfo-ovid": "https://ovidsp.ovid.com/",
+    "psycinfo-ebsco": "https://search.ebscohost.com/",
+    "philpapers": "https://philpapers.org/search.pl",
+    "heinonline": "https://heinonline.org/HOL/Welcome",
+}
+
 
 def db_label(database: str) -> str:
     return DB_LABELS.get(database, database)
+
+
+def db_search_url(database: str) -> str | None:
+    return DB_SEARCH_URLS.get(database)
 
 
 class SearchQuery(Base):
