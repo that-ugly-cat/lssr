@@ -304,6 +304,49 @@ def store_uploaded_pdf(db, workspace_id: int, rec, pdf_bytes: bytes):
     db.commit()
 
 
+def docx_to_markdown(docx_bytes: bytes) -> str:
+    """.docx → markdown: paragraph text, with Heading/Title styles as #-levels."""
+    import io
+    import docx
+    doc = docx.Document(io.BytesIO(docx_bytes))
+    out = []
+    for p in doc.paragraphs:
+        t = p.text.strip()
+        if not t:
+            continue
+        style = (p.style.name if p.style else "").lower()
+        if style == "title":
+            out.append("# " + t)
+        elif style.startswith("heading"):
+            lvl = "".join(c for c in style if c.isdigit())
+            out.append("#" * (int(lvl) if lvl else 2) + " " + t)
+        else:
+            out.append(t)
+    return "\n\n".join(out).strip()
+
+
+def ingest_upload(db, workspace_id: int, rec, filename: str, data: bytes) -> str:
+    """Manual full-text upload of pdf / docx / md / txt. A PDF is stored for the
+    convert pass; the text formats already are the full text, so they go straight
+    to converted."""
+    name = (filename or "").lower()
+    if name.endswith(".pdf") or data[:4] == b"%PDF":
+        store_uploaded_pdf(db, workspace_id, rec, data)
+        return "fetched"
+    if name.endswith(".docx") or data[:2] == b"PK":   # docx is a zip
+        md = docx_to_markdown(data)
+    else:                                             # md / markdown / txt / plain
+        md = data.decode("utf-8", errors="replace")
+    md = md.strip()
+    if not md:
+        raise ValueError("file is empty or unreadable")
+    rec.full_text_md = md
+    rec.full_text_path = None
+    rec.full_text_status = "converted"
+    db.commit()
+    return "converted"
+
+
 # ── Pass 1: fetch (Unpaywall) ───────────────────────────────────────────────────
 
 # ── Publisher TDM APIs (last layer) ────────────────────────────────────────────

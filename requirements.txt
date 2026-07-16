@@ -10,6 +10,7 @@ anthropic
 requests
 pandas
 openpyxl
+python-docx
 bibtexparser
 rispy
 rapidfuzz

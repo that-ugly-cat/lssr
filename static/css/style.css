@@ -534,3 +534,13 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
   .review-body { grid-template-columns: 1fr; }
   .review-text { border-right: none; border-bottom: 1px solid var(--border); max-height: 40vh; }
 }
+
+/* full-text "?" help affordance */
+.ft-help {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; margin-left: 6px; padding: 0;
+  border-radius: 50%; border: 1px solid var(--border);
+  background: var(--card-hover); color: var(--muted-2);
+  font-size: 11px; font-weight: 700; cursor: pointer; line-height: 1;
+}
+.ft-help:hover { color: var(--text); border-color: var(--accent); }

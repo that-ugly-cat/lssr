@@ -1141,11 +1141,12 @@ async def upload_fulltext(ws_id: int, rid: int, file: UploadFile = File(...),
     rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
     if not rec:
         raise HTTPException(404, "Record not found")
-    pdf_bytes = await file.read()
-    if pdf_bytes[:4] != b"%PDF":
-        raise HTTPException(400, "File does not look like a PDF")
+    data = await file.read()
     import fulltext
-    fulltext.store_uploaded_pdf(db, ws.id, rec, pdf_bytes)
+    try:
+        fulltext.ingest_upload(db, ws.id, rec, file.filename or "", data)
+    except Exception as exc:
+        raise HTTPException(400, f"Could not read file: {exc}")
     return RedirectResponse(f"/w/{ws_id}/fulltext", status_code=302)
 
 

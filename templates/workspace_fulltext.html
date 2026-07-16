@@ -6,9 +6,10 @@
 <div class="cards-label">Steps 6–7 — Full-text retrieval (screening-1 included)</div>
 <div class="card">
   <p class="muted small" style="margin-top:0;">
-    Two passes: first fetch open-access PDFs from Unpaywall, then upload the ones
-    it can't reach, then convert every stored PDF to markdown with paper2md.
-    Converted full texts flow to Assessment.
+    Two passes: <strong>fetch</strong> full text across open-access sources and
+    publisher APIs, then <strong>convert</strong> the PDFs to markdown. Upload the
+    rest by hand. Tap <span class="ft-help" style="position:static; vertical-align:middle;">?</span>
+    on each for the details. Converted full texts flow to Assessment.
   </p>
   <div class="ft-counts muted small">
     <span>📄 {{ ft.included }} included</span> ·
@@ -22,9 +23,9 @@
       <form method="post" action="/w/{{ ws.id }}/fulltext/fetch" id="ft-fetch-form">
         <button class="btn" type="submit" id="ft-fetch-btn"
           {{ 'disabled' if ft.to_fetch == 0 else '' }}>
-          1 · Fetch {{ ft.to_fetch }} OA PDFs
+          1 · Fetch {{ ft.to_fetch }} full texts
         </button>
-        <span class="muted small">Unpaywall → PDF</span>
+        <button class="ft-help" type="button" onclick="document.getElementById('help-fetch').classList.add('open')" title="How fetching works">?</button>
       </form>
       <div class="progress-wrap" id="ft-fetch-prog" style="display:none;">
         <div class="progress"><div class="progress-fill" id="ft-fetch-fill"></div></div>
@@ -37,7 +38,7 @@
           {{ 'disabled' if ft.fetched == 0 else '' }}>
           2 · Convert {{ ft.fetched }} PDFs
         </button>
-        <span class="muted small">paper2md → markdown</span>
+        <button class="ft-help" type="button" onclick="document.getElementById('help-convert').classList.add('open')" title="How converting works">?</button>
       </form>
       <div class="progress-wrap" id="ft-conv-prog" style="display:none;">
         <div class="progress"><div class="progress-fill" id="ft-conv-fill"></div></div>
@@ -64,8 +65,9 @@
         {% else %}<span class="muted">—</span>{% endif %}
         {% if r.full_text_status != 'converted' %}
         <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/fulltext/upload" enctype="multipart/form-data" style="margin-top:4px;">
-          <input type="file" name="file" accept=".pdf" required style="font-size:11px;">
-          <button class="btn btn-small" type="submit">Upload PDF</button>
+          <input type="file" name="file" accept=".pdf,.docx,.md,.markdown,.txt" required style="font-size:11px;">
+          <button class="btn btn-small" type="submit">Upload</button>
+          <div class="muted" style="font-size:10px;">PDF, DOCX, Markdown or TXT</div>
         </form>
         {% endif %}
       </td>
@@ -75,6 +77,41 @@
     {% endfor %}
   </tbody>
 </table>
+
+<div class="overlay" id="help-fetch">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Step 1 — Fetch</div>
+      <button class="modal-close" type="button" onclick="document.getElementById('help-fetch').classList.remove('open')">&times;</button>
+    </div>
+    <p class="small">For every screening-1 <strong>included</strong> record with a DOI, LSSR walks a
+      ladder of open-access sources and stops at the first that yields real full text:</p>
+    <ol class="small" style="padding-left:18px; line-height:1.5;">
+      <li><strong>Europe PMC</strong> — if the article is in PMC, its clean full-text XML is taken directly. No PDF, no conversion needed: these go straight to <em>converted</em>.</li>
+      <li><strong>Unpaywall &amp; OpenAlex</strong> — every open-access location, repository copies before publisher ones, direct PDFs before landing pages.</li>
+      <li><strong>Landing pages</strong> — read for the PDF link publishers embed (<code>citation_pdf_url</code>).</li>
+      <li><strong>Publisher APIs</strong> — Elsevier / Springer / Wiley, only for their own DOIs and only if you've set the key in your profile.</li>
+    </ol>
+    <p class="small">A downloaded PDF is stored for step 2. What no route reaches keeps its best
+      open-access link, so you can grab it by hand and upload it below.</p>
+  </div>
+</div>
+
+<div class="overlay" id="help-convert">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Step 2 — Convert</div>
+      <button class="modal-close" type="button" onclick="document.getElementById('help-convert').classList.remove('open')">&times;</button>
+    </div>
+    <p class="small">Every stored PDF is sent to the <strong>paper2md</strong> service, which returns
+      clean markdown with references, figures and tables stripped — the shape the
+      assessment step reads. Records fetched as XML from Europe PMC are already
+      converted and skip this step.</p>
+    <p class="small">If paper2md is unreachable or rejects a file, the PDF is kept and the record
+      stays fetchable for a retry — the run reports why. Manual uploads of
+      Markdown, TXT or DOCX are already text, so they don't pass through here.</p>
+  </div>
+</div>
 
 {% include "_step_done.html" %}
 {% endblock %}
