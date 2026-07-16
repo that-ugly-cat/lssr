@@ -78,8 +78,7 @@ FastAPI + Jinja2 + SQLAlchemy/SQLite, JWT cookie auth. Per-user credentials
 (Anthropic key, publisher TDM keys) are Fernet-encrypted at rest and set in the
 profile. Admin user management at `/admin`. Background jobs with status polling,
 a progress bar and a rolling time estimate; per-run cost estimates on the LLM
-steps. Ships as a Docker container on port **8013**. See
-[DEPLOY.md](DEPLOY.md) and [SPEC.md](SPEC.md).
+steps. Ships as a Docker container on port **8013**. See [DEPLOY.md](DEPLOY.md).
 
 ## Roadmap
 
