@@ -87,6 +87,7 @@
     · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }} ({{ counts[d] }})</a>
     {% endfor %}
   </span>
+  <a class="btn btn-small" href="/w/{{ ws.id }}/screening/export.xlsx" style="float:right;">Export to Excel ↓</a>
 </div>
 <p class="muted small" style="margin-top:0;">✅ include · 🤔 maybe · ❌ exclude · ⚠️ conflict · ❓ pending — cast your own vote on the right. <strong>maybe</strong> parks a record: it doesn't go to full text until someone moves it to include/exclude. Screening is blind: you see the other reviewers' votes only after you've voted. Conflicts are resolved by the owner.</p>
 

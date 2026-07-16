@@ -11,7 +11,9 @@ import re
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -1176,6 +1178,23 @@ async def screening_status(ws_id: int, user: User = Depends(get_current_user),
     return JSONResponse(get_job(ws_id) or {"status": "idle"})
 
 
+def _xlsx_response(data: bytes, ws, suffix: str) -> Response:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", (ws.name or "workspace")).strip("_")[:60] or "workspace"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{safe}-{suffix}.xlsx"'},
+    )
+
+
+@app.get("/w/{ws_id}/screening/export.xlsx")
+async def export_screening(ws_id: int, user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    from export import screening_xlsx
+    return _xlsx_response(screening_xlsx(db, ws), ws, "screening")
+
+
 @app.post("/w/{ws_id}/records/{rid}/screen1/vote")
 async def vote_screen1(ws_id: int, rid: int, decision: str = Form(...), reason: str = Form(""),
                        back: str = Form("pending"),
@@ -1417,6 +1436,16 @@ async def assessment_status(ws_id: int, user: User = Depends(get_current_user),
     _load_ws(db, user, ws_id)
     import assessment
     return JSONResponse(assessment.get_job(ws_id) or {"status": "idle"})
+
+
+@app.get("/w/{ws_id}/assessment/export.xlsx")
+async def export_assessment(ws_id: int, user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    from models import ensure_extraction_fields
+    ensure_extraction_fields(db, ws)
+    from export import assessment_xlsx
+    return _xlsx_response(assessment_xlsx(db, ws), ws, "assessment")
 
 
 # ── Assessment review modal: screen 2 + extraction in one save ──────────────
