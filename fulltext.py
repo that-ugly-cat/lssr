@@ -18,13 +18,17 @@ Both passes run as background threads. JOBS are keyed by (workspace_id, kind)
 where kind is "fetch" or "convert", so their progress bars poll independently.
 """
 import os
+import re
 import threading
 from pathlib import Path
+from urllib.parse import urljoin
 
 import requests
 
 DATA_ROOT = Path("data/fulltext")
 UA = {"User-Agent": "Mozilla/5.0 (compatible; LSSR/1.0)"}
+TIMEOUT = 20
+MAX_CANDIDATES = 8   # bound the work per record
 
 JOBS: dict[tuple[int, str], dict] = {}
 _lock = threading.Lock()
@@ -46,24 +50,190 @@ def _update(workspace_id: int, kind: str, **kw):
             JOBS[(workspace_id, kind)].update(kw)
 
 
-# ── Unpaywall (step 6) ─────────────────────────────────────────────────────────
+# ── Candidate PDF locations (step 6) ───────────────────────────────────────────
+#
+# Unpaywall's url_for_pdf alone misses a lot. For hybrid OA it is very often null
+# — Unpaywall knows only a landing page — and best_oa_location tends to be the
+# publisher's copy, which is exactly the one behind a bot wall. So: gather
+# candidates from several providers, prefer repository copies (no bot walls), try
+# every direct PDF before paying for a landing-page fetch, and read the PDF link
+# out of landing pages via the citation_pdf_url meta tag most publishers emit
+# (the same trick Zotero and Scholar use).
 
-def _oa_pdf_url(doi: str, email: str) -> str | None:
+
+def _get(url: str, **kw):
+    kw.setdefault("timeout", TIMEOUT)
+    kw.setdefault("headers", UA)
+    return requests.get(url, **kw)
+
+
+def _europepmc(doi: str):
+    """Europe PMC's PDF routes 404 for us (including the one its own API
+    advertises), but fullTextXML serves the whole article — no bot wall, no
+    upload cap, and cleaner than anything we'd get back out of a PDF. For a
+    PubMed-shaped corpus this is the highest-yield source, so we take the XML."""
+    results = []
     try:
-        r = requests.get(f"https://api.unpaywall.org/v2/{doi}?email={email}",
-                         timeout=10, headers=UA)
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        best = data.get("best_oa_location") or {}
-        if best.get("url_for_pdf"):
-            return best["url_for_pdf"]
-        for loc in data.get("oa_locations", []):
-            if loc.get("url_for_pdf"):
-                return loc["url_for_pdf"]
+        r = _get("https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+                 params={"query": f'DOI:"{doi}"', "format": "json", "resultType": "core"})
+        if r.status_code == 200:
+            results = ((r.json().get("resultList") or {}).get("result") or [])[:1]
     except Exception:
-        pass
-    return None
+        results = []
+    for it in results:
+        pmcid = it.get("pmcid")
+        if pmcid and (it.get("isOpenAccess") == "Y" or it.get("inEPMC") == "Y"):
+            yield ("xml", f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML")
+
+
+def _unpaywall(doi: str, email: str):
+    locs = []
+    try:
+        r = _get(f"https://api.unpaywall.org/v2/{doi}", params={"email": email})
+        if r.status_code == 200:
+            locs = r.json().get("oa_locations") or []
+    except Exception:
+        locs = []
+    repo_first = sorted(locs, key=lambda l: 0 if l.get("host_type") == "repository" else 1)
+    for loc in repo_first:
+        if loc.get("url_for_pdf"):
+            yield ("pdf", loc["url_for_pdf"])
+    for loc in repo_first:
+        if loc.get("url_for_landing_page"):
+            yield ("landing", loc["url_for_landing_page"])
+
+
+def _openalex(doi: str, email: str):
+    data = {}
+    try:
+        r = _get(f"https://api.openalex.org/works/doi:{doi}", params={"mailto": email})
+        if r.status_code == 200:
+            data = r.json()
+    except Exception:
+        data = {}
+    locs = [l for l in (data.get("locations") or []) if l.get("is_oa")]
+    repo_first = sorted(locs, key=lambda l: 0 if (l.get("source") or {}).get("type") == "repository" else 1)
+    for loc in repo_first:
+        if loc.get("pdf_url"):
+            yield ("pdf", loc["pdf_url"])
+    best = data.get("best_oa_location") or {}
+    if best.get("pdf_url"):
+        yield ("pdf", best["pdf_url"])
+    for loc in repo_first:
+        if loc.get("landing_page_url"):
+            yield ("landing", loc["landing_page_url"])
+    if best.get("landing_page_url"):
+        yield ("landing", best["landing_page_url"])
+
+
+_KIND_ORDER = {"xml": 0, "pdf": 1, "landing": 2}
+
+
+def candidates(doi: str, email: str) -> list[tuple[str, str]]:
+    """Ordered, de-duplicated (kind, url): full-text XML first (cleanest, always
+    reachable), then direct PDFs, then landing pages (which cost an extra fetch)."""
+    seen, out = set(), []
+    for gen in (_europepmc(doi), _unpaywall(doi, email), _openalex(doi, email)):
+        for kind, url in gen:
+            if url and url not in seen:
+                seen.add(url)
+                out.append((kind, url))
+    out.sort(key=lambda c: _KIND_ORDER[c[0]])   # stable — provider order kept within a kind
+    return out[:MAX_CANDIDATES]
+
+
+# ── JATS full text → markdown ──────────────────────────────────────────────────
+
+_SKIP_TAGS = {"ref-list", "back", "fn-group", "table-wrap", "fig", "graphic",
+              "supplementary-material", "table", "front", "journal-meta"}
+
+
+def _itext(el) -> str:
+    return re.sub(r"\s+", " ", "".join(el.itertext())).strip()
+
+
+def _walk_jats(el, level: int, out: list):
+    for child in el:
+        tag = child.tag.split("}")[-1]
+        if tag in _SKIP_TAGS:
+            continue
+        if tag == "sec":
+            title = child.find("title")
+            if title is not None:
+                heading = _itext(title)
+                if heading:
+                    out.append("#" * min(level, 6) + " " + heading)
+            _walk_jats(child, level + 1, out)
+        elif tag == "title":
+            continue                      # emitted by the parent sec
+        elif tag in ("p", "caption"):
+            text = _itext(child)
+            if text:
+                out.append(text)
+        else:
+            _walk_jats(child, level, out)
+
+
+def _heading_level(block: str) -> int:
+    return len(block) - len(block.lstrip("#"))
+
+
+def _prune_empty_sections(blocks: list) -> list:
+    """Drop headings left with nothing under them — dropping a ref-list leaves its
+    'References' title behind. A heading followed by a *deeper* one still has
+    content (its subsections), so only same-or-higher level (or the end) counts as
+    empty. Walking backwards makes it cascade."""
+    kept = []
+    for b in reversed(blocks):
+        if b.startswith("#"):
+            nxt = kept[-1] if kept else None
+            if nxt is None or (nxt.startswith("#") and _heading_level(nxt) <= _heading_level(b)):
+                continue
+        kept.append(b)
+    return list(reversed(kept))
+
+
+def jats_to_markdown(xml_bytes: bytes) -> str:
+    """JATS full text → markdown. References, figures and tables are dropped —
+    the same shape paper2md returns for a PDF."""
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml_bytes)
+    out = []
+    title = root.find(".//article-title")
+    if title is not None and _itext(title):
+        out.append("# " + _itext(title))
+    abstract = root.find(".//abstract")
+    if abstract is not None:
+        out.append("## Abstract")
+        _walk_jats(abstract, 3, out)
+    body = root.find(".//body")
+    if body is not None:
+        _walk_jats(body, 2, out)
+    return "\n\n".join(_prune_empty_sections(out)).strip()
+
+
+_PDF_META = re.compile(
+    r'<meta[^>]*?(?:name|property)=["\']citation_pdf_url["\'][^>]*?content=["\']([^"\']+)["\']', re.I)
+_PDF_META_REV = re.compile(
+    r'<meta[^>]*?content=["\']([^"\']+)["\'][^>]*?(?:name|property)=["\']citation_pdf_url["\']', re.I)
+
+
+def pdf_from_landing(url: str) -> tuple[bytes | None, str | None]:
+    """Resolve a landing page to a PDF. Returns (pdf_bytes, pdf_url): a landing
+    page may redirect straight to the PDF, otherwise we read citation_pdf_url."""
+    try:
+        r = _get(url, allow_redirects=True, timeout=25)
+    except Exception:
+        return None, None
+    if not r.ok:
+        return None, None
+    ctype = r.headers.get("Content-Type", "")
+    if "pdf" in ctype or r.content[:4] == b"%PDF":
+        return (r.content if len(r.content) > 10_000 else None), r.url
+    if "html" not in ctype:
+        return None, None
+    m = _PDF_META.search(r.text) or _PDF_META_REV.search(r.text)
+    return None, urljoin(r.url, m.group(1)) if m else None
 
 
 def _download_pdf(url: str) -> bytes | None:
@@ -136,28 +306,69 @@ def store_uploaded_pdf(db, workspace_id: int, rec, pdf_bytes: bytes):
 
 # ── Pass 1: fetch (Unpaywall) ───────────────────────────────────────────────────
 
+def _fetch_jats(url: str) -> str | None:
+    try:
+        r = _get(url, timeout=30)
+        if r.status_code != 200:
+            return None
+        # Europe PMC serves some articles with an XML declaration and others with
+        # a bare DOCTYPE — sniff for either rather than one exact prefix.
+        head = r.content.lstrip()[:120]
+        if not head.startswith((b"<?xml", b"<!DOCTYPE", b"<article")):
+            return None
+        md = jats_to_markdown(r.content)
+        return md if len(md) > 500 else None
+    except Exception:
+        return None
+
+
 def _fetch_record(db, workspace_id: int, rec, email: str) -> str:
+    """Walk the candidate ladder until a real PDF comes back. If every candidate
+    is unreachable (publisher bot walls, mostly) keep the best URL we saw so the
+    record lands in the manual-upload queue with a link instead of a dead end."""
     doi = (rec.doi or "").strip()
     if not doi:
         rec.full_text_status = "failed"
         db.commit()
         return "failed"
-    url = _oa_pdf_url(doi, email)
-    if not url:
-        rec.full_text_status = "failed"
-        db.commit()
-        return "failed"
-    pdf = _download_pdf(url)
-    if not pdf:
-        rec.full_text_url = url          # keep OA URL for manual retrieval
+
+    fallback = None
+    for kind, url in candidates(doi, email):
+        pdf = None
+        if kind == "xml":
+            # Full text straight from Europe PMC: no PDF to store, no paper2md
+            # round trip — this record is already done.
+            md = _fetch_jats(url)
+            if md:
+                rec.full_text_md = md
+                rec.full_text_url = url
+                rec.full_text_status = "converted"
+                db.commit()
+                return "converted"
+            continue
+        if kind == "pdf":
+            fallback = fallback or url
+            pdf = _download_pdf(url)
+        else:
+            pdf, pdf_url = pdf_from_landing(url)
+            fallback = fallback or pdf_url or url
+            if pdf is None and pdf_url:
+                pdf = _download_pdf(pdf_url)
+        if pdf:
+            path = _store_pdf(workspace_id, rec.id, pdf)
+            rec.full_text_path = str(path)
+            rec.full_text_status = "fetched"
+            db.commit()
+            return "fetched"
+
+    if fallback:
+        rec.full_text_url = fallback      # keep the OA URL for manual retrieval
         rec.full_text_status = "url"
         db.commit()
         return "url"
-    path = _store_pdf(workspace_id, rec.id, pdf)
-    rec.full_text_path = str(path)
-    rec.full_text_status = "fetched"
+    rec.full_text_status = "failed"
     db.commit()
-    return "fetched"
+    return "failed"
 
 
 def _run_fetch(workspace_id: int, email: str):
@@ -170,23 +381,29 @@ def _run_fetch(workspace_id: int, email: str):
                              Record.screen1_decision == "include",
                              Record.full_text_status.in_(["none", "failed", "url"])).all())
         total = len(targets)
-        _set(workspace_id, "fetch", {"status": "running", "message": f"Fetching {total} OA PDFs…",
-                                     "total": total, "done": 0, "fetched": 0, "url_only": 0, "failed": 0})
-        fetched = url_only = failed = 0
+        _set(workspace_id, "fetch", {"status": "running", "message": f"Fetching {total} full texts…",
+                                     "total": total, "done": 0, "fetched": 0, "converted": 0,
+                                     "url_only": 0, "failed": 0})
+        fetched = converted = url_only = failed = 0
         for i, rec in enumerate(targets):
             outcome = _fetch_record(db, workspace_id, rec, email)
             if outcome == "fetched":
                 fetched += 1
+            elif outcome == "converted":
+                converted += 1
             elif outcome == "url":
                 url_only += 1
             else:
                 failed += 1
-            _update(workspace_id, "fetch", done=i + 1, fetched=fetched,
+            _update(workspace_id, "fetch", done=i + 1, fetched=fetched, converted=converted,
                     url_only=url_only, failed=failed)
-        _set(workspace_id, "fetch", {"status": "done",
-                                     "message": f"Done. {fetched} PDFs fetched, {url_only} OA link only, {failed} not found. Upload the rest, then convert.",
+        msg = (f"Done. {converted} full texts straight from Europe PMC, {fetched} PDFs fetched, "
+               f"{url_only} OA link only, {failed} not found.")
+        if fetched:
+            msg += " Convert the PDFs next."
+        _set(workspace_id, "fetch", {"status": "done", "message": msg,
                                      "total": total, "done": total, "fetched": fetched,
-                                     "url_only": url_only, "failed": failed})
+                                     "converted": converted, "url_only": url_only, "failed": failed})
     except Exception as exc:
         _set(workspace_id, "fetch", {"status": "error", "message": str(exc), "error": str(exc)})
     finally:
