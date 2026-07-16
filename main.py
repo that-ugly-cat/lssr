@@ -7,6 +7,7 @@ shows the step scaffold with everything past the foundation marked "coming".
 """
 import json
 import os
+import re
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
@@ -270,41 +271,106 @@ async def revoke_share(share_id: int, user: User = Depends(get_current_user),
     raise HTTPException(403, "Owner required")
 
 
+def _year_hist(years):
+    """Counter of year→count → a filled, contiguous histogram."""
+    if not years:
+        return [], None, None
+    ymin, ymax = min(years), max(years)
+    peak = max(years.values())
+    hist = [{"year": y, "count": years.get(y, 0),
+             "pct": round(years.get(y, 0) / peak * 100) if peak else 0}
+            for y in range(ymin, ymax + 1)]
+    return hist, ymin, ymax
+
+
+def _bars(counter, top_n=None):
+    """Counter → sorted [{label, count, pct}] for a horizontal bar chart."""
+    items = counter.most_common(top_n) if top_n else counter.most_common()
+    peak = items[0][1] if items else 1
+    return [{"label": str(k), "count": c, "pct": round(c / peak * 100)} for k, c in items]
+
+
 def _public_stats(db, ws_id: int) -> dict:
-    """Records + screening stats for the public page: year histogram, type
-    counts, keyword cloud, screening breakdown."""
+    """Everything the public page charts: records, screening, full-text, and the
+    extraction aggregates over the finally-included papers."""
     from collections import Counter
+
+    from models import authoritative_values
     recs = db.query(Record).filter(Record.workspace_id == ws_id,
                                    Record.is_removed == False).all()  # noqa: E712
-    years = Counter(r.year for r in recs if r.year)
-    year_hist, ymin, ymax = [], None, None
-    if years:
-        ymin, ymax = min(years), max(years)
-        peak = max(years.values())
-        year_hist = [{"year": y, "count": years.get(y, 0),
-                      "pct": round(years.get(y, 0) / peak * 100) if peak else 0}
-                     for y in range(ymin, ymax + 1)]
+
+    # ── records ──
+    year_hist, ymin, ymax = _year_hist(Counter(r.year for r in recs if r.year))
     type_lbl = {"article": "papers", "book": "books",
                 "book_chapter": "book chapters", "grey": "grey literature"}
-    types = Counter(r.type or "article" for r in recs)
-    type_counts = [{"label": type_lbl.get(t, t), "count": c} for t, c in types.most_common()]
+    type_counts = [{"label": type_lbl.get(t, t), "count": c}
+                   for t, c in Counter(r.type or "article" for r in recs).most_common()]
     kw = Counter()
+    authors = Counter()
     for r in recs:
         for k in _fromjson(r.keywords_json):
             term = (k or "").strip().lower()
             if term:
                 kw[term] += 1
+        for a in re.split(r"\s*[;]\s*|\s+and\s+", r.authors or ""):
+            a = a.strip().strip(",").strip()
+            if a and len(a) > 1:
+                authors[a] += 1
     top = kw.most_common(45)
     kwpeak = top[0][1] if top else 1
     keywords = [{"term": t, "count": c, "size": round(0.85 + 1.75 * (c / kwpeak), 2)}
                 for t, c in top]
-    def sc(d):
-        return sum(1 for r in recs if r.screen1_decision == d)
-    screen = {d: sc(d) for d in ("include", "maybe", "exclude", "conflict", "pending")}
+
+    # ── screening 1 & 2 ──
+    def sc(field, d):
+        return sum(1 for r in recs if getattr(r, field) == d)
+    screen = {d: sc("screen1_decision", d) for d in ("include", "maybe", "exclude", "conflict", "pending")}
     screen["total"] = len(recs)
+    s1_incl = [r for r in recs if r.screen1_decision == "include"]
+    screen2 = {d: sum(1 for r in s1_incl if r.screen2_decision == d)
+               for d in ("include", "maybe", "exclude", "conflict", "pending")}
+    screen2["total"] = len(s1_incl)
+
+    # ── full-text pie (over screen-1 included) ──
+    ftc = Counter(("converted" if r.full_text_status == "converted"
+                   else "oalink" if r.full_text_status == "url"
+                   else "none") for r in s1_incl)
+    fulltext = {"converted": ftc.get("converted", 0), "oalink": ftc.get("oalink", 0),
+                "none": ftc.get("none", 0), "total": len(s1_incl)}
+
+    # ── extraction aggregates over the finally-included papers ──
+    included = [r for r in recs if r.screen2_decision == "include"]
+    ext = {r.id: authoritative_values(db, r) for r in included}
+    def fcount(key):
+        c = Counter()
+        for r in included:
+            v = ext[r.id].get(key)
+            if isinstance(v, list):
+                for x in v:
+                    c[str(x)] += 1
+            elif v not in (None, ""):
+                c[str(v)] += 1
+        return c
+    study_years = Counter()
+    for r in included:
+        v = str(ext[r.id].get("study_year", "")).strip()
+        m = re.search(r"\d{4}", v)
+        if m:
+            study_years[int(m.group())] += 1
+    sy_hist, sy_min, sy_max = _year_hist(study_years)
+    assessment = {
+        "n": len(included),
+        "country": _bars(fcount("country"), 20),
+        "study_type": _bars(fcount("study_type")),
+        "design": _bars(fcount("methodology_design")),
+        "data": _bars(fcount("methodology_data")),
+        "time": _bars(fcount("methodology_time")),
+        "study_year_hist": sy_hist, "study_year_min": sy_min, "study_year_max": sy_max,
+    }
     return {"n_records": len(recs), "year_hist": year_hist, "year_min": ymin,
             "year_max": ymax, "type_counts": type_counts, "keywords": keywords,
-            "screen": screen}
+            "authors": _bars(authors, 25), "screen": screen, "screen2": screen2,
+            "fulltext": fulltext, "assessment": assessment}
 
 
 @app.get("/r/{token}", response_class=HTMLResponse)

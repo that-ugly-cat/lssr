@@ -1,86 +1,165 @@
 {% extends "base.html" %}
 {% block title %}{{ ws.name }}{% endblock %}
 {% block body %}
-<h1>{{ ws.name }}</h1>
-{% if ws.research_question %}<p class="muted">{{ ws.research_question }}</p>{% endif %}
+{% set has_records = 'records' in steps_done %}
+{% set has_fulltext = 'fulltext' in steps_done %}
+{% set has_assessment = 'assessment' in steps_done %}
+{% set st = stats %}
 
-<div class="pub-steps">
-  {% for s in steps %}
-  <span class="pub-step {{ 'done' if s in steps_done else 'pending' }}">
-    <span class="pub-step-mark">{{ '✓' if s in steps_done else '○' }}</span> {{ s }}
-  </span>
+{% macro barchart(items) %}
+<div class="pub-bars">
+  {% for it in items %}
+  <div class="pub-bar-row">
+    <span class="pub-bar-label" title="{{ it.label }}">{{ it.label }}</span>
+    <span class="pub-bar-track"><span class="pub-bar-val" style="width: {{ it.pct }}%;"></span></span>
+    <span class="pub-bar-n">{{ it.count }}</span>
+  </div>
+  {% else %}
+  <p class="muted small">No data.</p>
   {% endfor %}
 </div>
+{% endmacro %}
 
-{% if queries %}
-<div class="cards-label">Search queries</div>
-<div class="card">
-  {% for db, q in queries %}
-  <div style="margin-bottom:12px;">
-    <div class="muted small" style="text-transform:uppercase; letter-spacing:0.5px;">{{ db }}</div>
-    <pre class="pub-query">{{ q }}</pre>
-  </div>
+{% macro yearhist(hist, ymin, ymax) %}
+<div class="pub-hist" role="img" aria-label="Histogram by year">
+  {% for b in hist %}<div class="pub-bar" title="{{ b.year }}: {{ b.count }}"><div class="pub-bar-fill" style="height: {{ b.pct }}%;"></div></div>{% endfor %}
+</div>
+<div class="pub-hist-axis"><span>{{ ymin }}</span><span>{{ ymax }}</span></div>
+{% endmacro %}
+
+{% macro screenbar(sc) %}
+<div class="screen-progress">
+  {% for key, color in [('include','var(--ok)'),('maybe','var(--accent)'),('exclude','var(--danger)'),('conflict','var(--warn)'),('pending','var(--muted-3)')] %}
+  {% if sc[key] %}<div class="seg" style="width: {{ (sc[key] / sc.total * 100)|round(2) }}%; background: {{ color }};"></div>{% endif %}
   {% endfor %}
 </div>
-{% endif %}
-
-{% if 'records' in steps_done %}
-<div class="cards-label">Records — {{ stats.n_records }}</div>
-<div class="card">
-  {% if stats.type_counts %}
-  <div class="pub-types">
-    {% for t in stats.type_counts %}<span class="badge badge-muted">{{ t.count }} {{ t.label }}</span>{% endfor %}
-  </div>
-  {% endif %}
-
-  {% if stats.year_hist %}
-  <div class="pub-block-label">Publications by year</div>
-  <div class="pub-hist" role="img" aria-label="Histogram of publications by year">
-    {% for b in stats.year_hist %}
-    <div class="pub-bar" title="{{ b.year }}: {{ b.count }}"><div class="pub-bar-fill" style="height: {{ b.pct }}%;"></div></div>
-    {% endfor %}
-  </div>
-  <div class="pub-hist-axis"><span>{{ stats.year_min }}</span><span>{{ stats.year_max }}</span></div>
-  {% endif %}
-
-  {% if stats.keywords %}
-  <div class="pub-block-label">Keywords</div>
-  <div class="pub-cloud">
-    {% for k in stats.keywords %}<span style="font-size: {{ k.size }}em;" title="{{ k.term }}: {{ k.count }}">{{ k.term }}</span>{% endfor %}
-  </div>
-  {% endif %}
+<div class="screen-legend">
+  <span><span class="dot" style="background:var(--ok);"></span> ✅ {{ sc.include }} included</span>
+  <span><span class="dot" style="background:var(--accent);"></span> 🤔 {{ sc.maybe }} maybe</span>
+  <span><span class="dot" style="background:var(--danger);"></span> ❌ {{ sc.exclude }} excluded</span>
+  {% if sc.conflict %}<span><span class="dot" style="background:var(--warn);"></span> ⚠️ {{ sc.conflict }} conflict</span>{% endif %}
+  <span><span class="dot" style="background:var(--muted-3);"></span> ❓ {{ sc.pending }} pending</span>
+  <span class="muted">of {{ sc.total }}</span>
 </div>
-{% endif %}
+{% endmacro %}
 
-{% if stats.screen.total %}
-{% set sc = stats.screen %}
-<div class="cards-label">Screening{% if 'screening' in steps_done %} — {{ sc.include }} included, {{ sc.exclude }} excluded{% endif %}</div>
-<div class="card">
-  <div class="screen-progress">
-    {% for key, color in [('include','var(--ok)'),('maybe','var(--accent)'),('exclude','var(--danger)'),('conflict','var(--warn)'),('pending','var(--muted-3)')] %}
-    {% if sc[key] %}<div class="seg" style="width: {{ (sc[key] / sc.total * 100)|round(2) }}%; background: {{ color }};"></div>{% endif %}
-    {% endfor %}
-  </div>
-  <div class="screen-legend">
-    <span><span class="dot" style="background:var(--ok);"></span> ✅ {{ sc.include }} included</span>
-    <span><span class="dot" style="background:var(--accent);"></span> 🤔 {{ sc.maybe }} maybe</span>
-    <span><span class="dot" style="background:var(--danger);"></span> ❌ {{ sc.exclude }} excluded</span>
-    {% if sc.conflict %}<span><span class="dot" style="background:var(--warn);"></span> ⚠️ {{ sc.conflict }} conflict</span>{% endif %}
-    <span><span class="dot" style="background:var(--muted-3);"></span> ❓ {{ sc.pending }} pending</span>
-    <span class="muted">of {{ sc.total }}</span>
-  </div>
+<div class="pub-layout">
+  <nav class="pub-index">
+    <div class="pub-index-inner">
+      <a href="#top">Overview</a>
+      {% if queries %}<a href="#queries">Queries</a>{% endif %}
+      {% if has_records %}<a href="#records">Records</a>{% endif %}
+      {% if has_fulltext %}<a href="#fulltext">Full text</a>{% endif %}
+      {% if st.screen.total %}<a href="#screening">Screening</a>{% endif %}
+      {% if st.screen2.total %}<a href="#assessment">Assessment</a>{% endif %}
+      {% if syn %}<a href="#synthesis">Synthesis</a>{% endif %}
+    </div>
+  </nav>
+
+  <main class="pub-main">
+    <section id="top">
+      <h1>{{ ws.name }}</h1>
+      {% if ws.description %}<p>{{ ws.description }}</p>{% endif %}
+      {% if ws.research_question %}
+      <div class="pub-rq"><div class="pub-rq-label">Research question</div>{{ ws.research_question | markdown }}</div>
+      {% endif %}
+      <div class="pub-steps">
+        {% for s in steps %}
+        <span class="pub-step {{ 'done' if s in steps_done else 'pending' }}">
+          <span class="pub-step-mark">{{ '✓' if s in steps_done else '○' }}</span> {{ s }}
+        </span>
+        {% endfor %}
+      </div>
+    </section>
+
+    {% if queries %}
+    <section id="queries">
+      <h2>Search queries</h2>
+      {% for db, q in queries %}
+      <div style="margin-bottom:12px;">
+        <div class="muted small" style="text-transform:uppercase; letter-spacing:0.5px;">{{ db }}</div>
+        <pre class="pub-query">{{ q }}</pre>
+      </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if has_records %}
+    <section id="records">
+      <h2>Records <span class="muted">— {{ st.n_records }}</span></h2>
+      {% if st.type_counts %}<div class="pub-types">{% for t in st.type_counts %}<span class="badge badge-muted">{{ t.count }} {{ t.label }}</span>{% endfor %}</div>{% endif %}
+      {% if st.year_hist %}
+      <h3>Publications by year</h3>
+      {{ yearhist(st.year_hist, st.year_min, st.year_max) }}
+      {% endif %}
+      {% if st.authors %}<h3>Most frequent authors</h3>{{ barchart(st.authors) }}{% endif %}
+      {% if st.keywords %}
+      <h3>Keywords</h3>
+      <div class="pub-cloud">{% for k in st.keywords %}<span style="font-size: {{ k.size }}em;" title="{{ k.count }}">{{ k.term }}</span>{% endfor %}</div>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if has_fulltext %}
+    {% set ft = st.fulltext %}
+    <section id="fulltext">
+      <h2>Full text</h2>
+      {% if ft.total %}
+      {% set cp = (ft.converted / ft.total * 100)|round(2) %}
+      {% set op = ((ft.converted + ft.oalink) / ft.total * 100)|round(2) %}
+      <div class="pub-pie-wrap">
+        <div class="pub-pie" style="background: conic-gradient(var(--ok) 0 {{ cp }}%, var(--warn) {{ cp }}% {{ op }}%, var(--muted-3) {{ op }}% 100%);"></div>
+        <div class="pub-pie-legend">
+          <span><span class="dot" style="background:var(--ok);"></span> {{ ft.converted }} full text retrieved</span>
+          <span><span class="dot" style="background:var(--warn);"></span> {{ ft.oalink }} open-access link only</span>
+          <span><span class="dot" style="background:var(--muted-3);"></span> {{ ft.none }} not found</span>
+          <span class="muted">of {{ ft.total }} included at screening 1</span>
+        </div>
+      </div>
+      {% else %}<p class="muted">No records reached full text yet.</p>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if st.screen.total %}
+    <section id="screening">
+      <h2>Screening <span class="muted">— title &amp; abstract</span></h2>
+      {{ screenbar(st.screen) }}
+    </section>
+    {% endif %}
+
+    {% if st.screen2.total %}
+    <section id="assessment">
+      <h2>Assessment <span class="muted">— full text</span></h2>
+      {{ screenbar(st.screen2) }}
+
+      {% if has_assessment and st.assessment.n %}
+      {% set a = st.assessment %}
+      <h3 style="margin-top:20px;">Included papers <span class="muted">— {{ a.n }}</span></h3>
+      <div class="pub-grid">
+        {% if a.study_type %}<div><h4>Study type</h4>{{ barchart(a.study_type) }}</div>{% endif %}
+        {% if a.country %}<div><h4>Country</h4>{{ barchart(a.country) }}</div>{% endif %}
+        {% if a.study_year_hist %}<div class="pub-grid-full"><h4>Study year</h4>{{ yearhist(a.study_year_hist, a.study_year_min, a.study_year_max) }}</div>{% endif %}
+        {% if a.design %}<div><h4>Methodology — design</h4>{{ barchart(a.design) }}</div>{% endif %}
+        {% if a.data %}<div><h4>Methodology — data</h4>{{ barchart(a.data) }}</div>{% endif %}
+        {% if a.time %}<div><h4>Methodology — timeframe</h4>{{ barchart(a.time) }}</div>{% endif %}
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if syn %}
+    <section id="synthesis">
+      <h2>Synthesis</h2>
+      <p class="muted small">Living scoping review · last updated {{ syn.generated_at.strftime('%Y-%m-%d') }}</p>
+      {% for b in blocks %}
+      <h3>{{ b.heading }}</h3>
+      <div class="card">{{ b.narrative | markdown }}</div>
+      {% endfor %}
+      {% if prisma %}{% include "_prisma.html" %}{% endif %}
+    </section>
+    {% endif %}
+
+    <p class="muted small" style="margin-top:28px;">Generated with LSSR — Living Systematic Scoping Review.</p>
+  </main>
 </div>
-{% endif %}
-
-{% if syn %}
-<div class="cards-label">Synthesis</div>
-<p class="muted small">Living scoping review · last updated {{ syn.generated_at.strftime('%Y-%m-%d') }}</p>
-{% for b in blocks %}
-<div class="cards-label">{{ b.heading }}</div>
-<div class="card">{{ b.narrative | markdown }}</div>
-{% endfor %}
-{% if prisma %}{% include "_prisma.html" %}{% endif %}
-{% endif %}
-
-<p class="muted small" style="margin-top:20px;">Generated with LSSR — Living Systematic Scoping Review.</p>
 {% endblock %}
