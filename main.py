@@ -1090,22 +1090,28 @@ async def upload_fulltext(ws_id: int, rid: int, file: UploadFile = File(...),
 async def assessment_page(ws_id: int, request: Request, user: User = Depends(get_current_user),
                           db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
-    from models import Assessment
+    from models import ScreenDecision, ensure_extraction_fields, workspace_extraction_fields
+    ensure_extraction_fields(db, ws)
     records = (db.query(Record)
                  .filter(Record.workspace_id == ws.id, Record.is_removed == False,  # noqa: E712
                          Record.screen1_decision == "include").order_by(Record.id.desc()).all())
-    findings = {}
-    for a in db.query(Assessment).filter(Assessment.workspace_id == ws.id).all():
-        findings.setdefault(a.record_id, []).append(a)
-    ready = sum(1 for r in records if r.full_text_status == "converted"
-                and r.screen2_decision == "pending")
+    rec_ids = [r.id for r in records]
+    votes = {}
+    my_reviewed = set()
+    for v in (db.query(ScreenDecision)
+                .filter(ScreenDecision.stage == "screen2",
+                        ScreenDecision.record_id.in_(rec_ids)).all() if rec_ids else []):
+        votes.setdefault(v.record_id, []).append(v)
+        if v.reviewer_kind == "user" and v.reviewer_id == user.id:
+            my_reviewed.add(v.record_id)
+    n_fields = len(workspace_extraction_fields(db, ws))
     n_converted = sum(1 for r in records if r.full_text_status == "converted")
     return render(request, "workspace_assessment.html", {
         "user": user, "ws": ws, "tab": "assessment", "steps_done": workspace_steps_done(ws),
-        "records": records,
-        "findings": findings, "ready": ready, "n_converted": n_converted,
-        "n_assessment": len(workspace_criteria(db, ws, "assessment")),
-        "has_key": bool(_user_api_key(user)),
+        "records": records, "votes": votes, "my_reviewed": my_reviewed,
+        "n_converted": n_converted, "n_fields": n_fields,
+        "reviewers_required": ws.screen1_reviewers_required or 1,
+        "is_owner": ws.owner_id == user.id or user.is_admin,
     })
 
 
@@ -1130,6 +1136,116 @@ async def assessment_status(ws_id: int, user: User = Depends(get_current_user),
     _load_ws(db, user, ws_id)
     import assessment
     return JSONResponse(assessment.get_job(ws_id) or {"status": "idle"})
+
+
+def _field_visible(field, values: dict) -> bool:
+    """Evaluate a field's show_if against the current values dict."""
+    if not field.show_if_key:
+        return True
+    parent = values.get(field.show_if_key)
+    allowed = field.show_if_values()
+    if isinstance(parent, list):
+        return any(p in allowed for p in parent)
+    return parent in allowed
+
+
+# ── Assessment review modal: screen 2 + extraction in one save ──────────────
+
+@app.get("/w/{ws_id}/assessment/{rid}/review", response_class=HTMLResponse)
+async def review_fragment(ws_id: int, rid: int, request: Request,
+                          user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
+    if not rec:
+        raise HTTPException(404, "Record not found")
+    from models import (Extraction, ScreenDecision, ensure_extraction_fields,
+                        workspace_extraction_fields)
+    ensure_extraction_fields(db, ws)
+    fields = workspace_extraction_fields(db, ws)
+
+    def _vals(kind, rid_):
+        row = (db.query(Extraction)
+                 .filter(Extraction.record_id == rec.id, Extraction.reviewer_kind == kind,
+                         Extraction.reviewer_id == rid_).first())
+        return row.values() if row else None
+
+    mine = _vals("user", user.id)
+    values = mine if mine is not None else (_vals("model", None) or {})  # AI draft pre-fill
+    my_vote = (db.query(ScreenDecision)
+                 .filter(ScreenDecision.record_id == rec.id, ScreenDecision.stage == "screen2",
+                         ScreenDecision.reviewer_kind == "user",
+                         ScreenDecision.reviewer_id == user.id).first())
+    other_votes = (db.query(ScreenDecision)
+                     .filter(ScreenDecision.record_id == rec.id, ScreenDecision.stage == "screen2")
+                     .all())
+    return render(request, "_review_form.html", {
+        "user": user, "ws": ws, "rec": rec, "fields": fields,
+        "inclusion": workspace_criteria(db, ws, "inclusion"),
+        "values": values, "my_vote": my_vote, "other_votes": other_votes,
+        "is_owner": ws.owner_id == user.id or user.is_admin,
+        "has_final": _vals("final", None) is not None,
+    })
+
+
+@app.post("/w/{ws_id}/assessment/{rid}/review")
+async def save_review(ws_id: int, rid: int, request: Request,
+                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
+    if not rec:
+        raise HTTPException(404, "Record not found")
+    from models import (ensure_extraction_fields, recompute_record_screen2, upsert_extraction,
+                        upsert_screen_decision, workspace_extraction_fields)
+    ensure_extraction_fields(db, ws)
+    fields = workspace_extraction_fields(db, ws)
+    form = await request.form()
+    raw = {}
+    for f in fields:
+        if f.field_type == "multiselect":
+            vals = [v for v in form.getlist(f"f_{f.key}") if v]
+            if vals:
+                raw[f.key] = vals
+        else:
+            v = (form.get(f"f_{f.key}") or "").strip()
+            if v:
+                raw[f.key] = v
+    values = {f.key: raw[f.key] for f in fields if f.key in raw and _field_visible(f, raw)}
+    upsert_extraction(db, ws, rec, "user", user.id, values)
+    if form.get("set_final") and (ws.owner_id == user.id or user.is_admin):
+        upsert_extraction(db, ws, rec, "final", None, values)
+    decision = form.get("screen2_decision") or ""
+    if decision in ("include", "exclude", "maybe"):
+        upsert_screen_decision(db, rec, "screen2", "user", user.id, decision,
+                               (form.get("screen2_reason") or "").strip() or "full-text review")
+        recompute_record_screen2(db, ws, rec)
+    db.commit()
+    return RedirectResponse(f"/w/{ws_id}/assessment", status_code=302)
+
+
+@app.post("/w/{ws_id}/records/{rid}/screen2/adjudicate")
+async def adjudicate_screen2(ws_id: int, rid: int, decision: str = Form(...),
+                             user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    if not (ws.owner_id == user.id or user.is_admin):
+        raise HTTPException(403, "Adjudicator (owner/admin) required")
+    if decision not in ("include", "exclude", "maybe", "clear"):
+        raise HTTPException(400, "Invalid decision")
+    rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
+    if rec:
+        from models import ScreenDecision, recompute_record_screen2, upsert_screen_decision
+        if decision == "clear":
+            for row in (db.query(ScreenDecision)
+                          .filter(ScreenDecision.record_id == rec.id,
+                                  ScreenDecision.stage == "screen2",
+                                  ScreenDecision.reviewer_kind == "adjudicator").all()):
+                db.delete(row)
+            db.flush()
+        else:
+            upsert_screen_decision(db, rec, "screen2", "adjudicator", user.id, decision,
+                                   "adjudication")
+        recompute_record_screen2(db, ws, rec)
+        db.commit()
+    return RedirectResponse(f"/w/{ws_id}/assessment", status_code=302)
 
 
 # ── Synthesis (step 10) ─────────────────────────────────────────────────────

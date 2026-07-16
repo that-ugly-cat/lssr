@@ -3,60 +3,61 @@
 {% block body %}
 {% include "_ws_tabs.html" %}
 
-<div class="cards-label">Steps 8–9 — Screening 2 + assessment (full text)</div>
+<div class="cards-label">Steps 8–9 — Screening 2 + extraction (full text)</div>
 <div class="card">
   <p class="muted small" style="margin-top:0;">
-    One conditional call per full text: inclusion decision, and — only if
-    included — a finding per assessment criterion. Excluded records cost no
-    assessment tokens. Retrieve and convert full texts in <a href="/w/{{ ws.id }}/fulltext">Full text</a> first.
+    Open a record to review it: read the full text, decide inclusion against the
+    inclusion criteria, and fill the extraction fields — all in one pass. Retrieve
+    full texts in <a href="/w/{{ ws.id }}/fulltext">Full text</a>; define the fields in
+    <a href="/w/{{ ws.id }}/settings">Settings</a>.
   </p>
-  {% if n_assessment == 0 %}
-  <div class="flash flash-error" style="display:block;">Define assessment criteria in <a href="/w/{{ ws.id }}/settings">Settings</a> first.</div>
-  {% elif not has_key %}
-  <div class="flash flash-error" style="display:block;">Set your Anthropic API key in <a href="/profile">your profile</a> first.</div>
-  {% elif n_converted == 0 %}
-  <div class="flash flash-error" style="display:block;">No converted full texts yet — retrieve them in <a href="/w/{{ ws.id }}/fulltext">Full text</a>.</div>
-  {% endif %}
-  <form method="post" action="/w/{{ ws.id }}/assessment/run" id="as-form">
-    <button class="btn btn-primary" type="submit" id="as-btn"
-      {{ 'disabled' if (n_assessment == 0 or not has_key or ready == 0) else '' }}>
-      Run on {{ ready }} full texts
-    </button>
-    <span class="muted small">Only records included at screening 1 with converted full text, still pending.</span>
-  </form>
-  <div id="as-status" class="flash" style="display:none;"></div>
+  <p class="muted small" style="margin:0;">
+    ✅ include · 🤔 maybe · ❌ exclude · ⚠️ conflict · ❓ pending —
+    {{ reviewers_required }} reviewer{{ 's' if reviewers_required != 1 else '' }} required · {{ n_fields }} extraction field{{ 's' if n_fields != 1 else '' }}.
+  </p>
 </div>
 
 <table class="table">
-  <thead><tr><th>Title</th><th>Full text</th><th>Screen 2</th><th>Findings</th></tr></thead>
+  <thead><tr><th>Title</th><th>Full text</th><th>Screen 2</th><th class="ta-right">Review</th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
-        <div class="muted small">{{ r.year or '' }}{% if r.authors %} · {{ r.authors }}{% endif %}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% endif %}</div>
+        <div class="muted small">{{ r.year or '' }}{% if r.authors %} · {{ r.authors }}{% endif %}</div>
       </td>
       <td class="nowrap small">
         {% if r.full_text_status == 'converted' %}<span class="badge badge-ok">converted</span>
-        {% elif r.full_text_status == 'fetched' %}<span class="badge badge-warn">PDF only</span>
-        {% elif r.full_text_status == 'url' %}<span class="badge badge-warn">OA link</span>
-        {% elif r.full_text_status == 'failed' %}<span class="badge badge-muted">not found</span>
-        {% else %}<span class="muted">—</span>{% endif %}
+        {% elif r.full_text_status in ['fetched','url'] %}<span class="badge badge-warn">not converted</span>
+        {% else %}<span class="badge badge-muted">no full text</span>{% endif %}
       </td>
       <td class="nowrap">
-        {% if r.screen2_decision == 'include' %}<span class="badge badge-ok">include</span>
-        {% elif r.screen2_decision == 'exclude' %}<span class="badge" style="background:var(--danger-bg);color:var(--danger);">exclude</span>
-        {% elif r.full_text_status != 'converted' %}<span class="badge badge-muted">no full text</span>
-        {% else %}<span class="badge badge-muted">pending</span>{% endif %}
-        {% if r.screen2_reason %}<div class="muted small rationale">{{ r.screen2_reason }}</div>{% endif %}
-      </td>
-      <td class="small">
-        {% for a in findings.get(r.id, []) %}
-        <div style="margin-bottom:6px;">
-          <strong>{{ a.criterion.label if a.criterion else '?' }}:</strong> {{ a.finding }}
-          {% if a.citation %}<div class="muted" style="font-style:italic;">“{{ a.citation }}”</div>{% endif %}
+        <span style="font-size:16px;">
+          {% if r.screen2_decision == 'include' %}✅{% elif r.screen2_decision == 'exclude' %}❌{% elif r.screen2_decision == 'maybe' %}🤔{% elif r.screen2_decision == 'conflict' %}⚠️{% else %}❓{% endif %}
+        </span>
+        {% if r.screen2_by == 'adjudicator' %}<span class="badge badge-model">adjudicated</span>
+        {% elif r.screen2_by == 'human' %}<span class="badge badge-ok">reviewers</span>
+        {% elif r.screen2_by == 'conflict' %}<span class="badge badge-warn">conflict</span>
+        {% elif r.screen2_by == 'model' %}<span class="badge badge-muted">model</span>{% endif %}
+        {% set humanrows = votes.get(r.id, []) | selectattr('reviewer_kind','equalto','user') | list %}
+        {% if humanrows %}<div class="muted small">{{ humanrows|length }}/{{ reviewers_required }} reviewed</div>{% endif %}
+        {% if is_owner and r.screen2_decision == 'conflict' %}
+        <div style="margin-top:4px; display:flex; gap:4px;">
+          <span class="muted small">resolve:</span>
+          {% for d, em in [('include','✅'),('exclude','❌')] %}
+          <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/screen2/adjudicate" style="display:inline;">
+            <input type="hidden" name="decision" value="{{ d }}">
+            <button class="btn btn-small btn-danger" type="submit">{{ em }}</button>
+          </form>
+          {% endfor %}
         </div>
-        {% else %}<span class="muted">—</span>{% endfor %}
+        {% endif %}
+      </td>
+      <td class="ta-right nowrap">
+        {% if r.full_text_status == 'converted' %}
+        <button class="btn btn-small {{ 'btn-primary' if r.id not in my_reviewed else '' }}" type="button"
+                onclick="openReview({{ r.id }})">{{ 'Review' if r.id not in my_reviewed else 'Edit' }}</button>
+        {% else %}<span class="muted small">retrieve first</span>{% endif %}
       </td>
     </tr>
     {% else %}
@@ -66,36 +67,54 @@
 </table>
 
 {% include "_step_done.html" %}
+
+<div class="overlay" id="review-modal">
+  <div class="modal modal-xl">
+    <div id="review-body"></div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-const asForm = document.getElementById('as-form');
-if (asForm) {
-  const box = document.getElementById('as-status'), btn = document.getElementById('as-btn');
-  let sawRunning = false;
-  async function poll() {
-    const j = await (await fetch('/w/{{ ws.id }}/assessment/status')).json();
-    if (j.status === 'idle') return;
-    if (j.status === 'running') {
-      sawRunning = true;
-      btn.disabled = true; box.style.display = 'block'; box.className = 'flash';
-      box.textContent = (j.message || 'running') + (j.total ? ` (${j.done}/${j.total})` : '');
-      setTimeout(poll, 2000);
-    } else if (j.status === 'done') {
-      if (sawRunning) {
-        box.style.display = 'block'; box.className = 'flash flash-ok';
-        box.textContent = j.message || 'Done.';
-        setTimeout(() => location.reload(), 1500);
-      }
-    } else if (j.status === 'error') {
-      box.style.display = 'block'; box.className = 'flash flash-error';
-      box.textContent = 'Error: ' + (j.message || 'unknown');
-      btn.disabled = false;
-    }
-  }
-  asForm.addEventListener('submit', () => { sawRunning = true; setTimeout(poll, 800); });
-  poll();
+function applyConditionals(root) {
+  const fieldVal = (key) => {
+    const el = root.querySelector(`[name="f_${key}"]`);
+    if (!el) return null;
+    if (el.multiple) return Array.from(el.selectedOptions).map(o => o.value);
+    return el.value;
+  };
+  root.querySelectorAll('.rev-field[data-show-if-key]').forEach(div => {
+    const pk = div.dataset.showIfKey;
+    let allowed = [];
+    try { allowed = JSON.parse(div.dataset.showIfValues || '[]'); } catch (e) {}
+    const pv = fieldVal(pk);
+    const show = Array.isArray(pv) ? pv.some(v => allowed.includes(v)) : allowed.includes(pv);
+    div.style.display = show ? '' : 'none';
+  });
 }
+async function openReview(rid) {
+  const modal = document.getElementById('review-modal');
+  const body = document.getElementById('review-body');
+  body.innerHTML = '<p class="muted" style="padding:24px;">Loading…</p>';
+  modal.classList.add('open');
+  const html = await (await fetch(`/w/{{ ws.id }}/assessment/${rid}/review`)).text();
+  body.innerHTML = html;
+  const root = document.getElementById('review-cond-root');
+  if (root) {
+    applyConditionals(root);
+    root.querySelectorAll('[name^="f_"]').forEach(el =>
+      el.addEventListener('change', () => applyConditionals(root)));
+    root.querySelectorAll('.rev-radio input').forEach(el =>
+      el.addEventListener('change', () => {
+        root.querySelectorAll('.rev-radio').forEach(l => l.classList.remove('on'));
+        el.closest('.rev-radio').classList.add('on');
+      }));
+  }
+}
+function closeReview() { document.getElementById('review-modal').classList.remove('open'); }
+document.getElementById('review-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'review-modal') closeReview();
+});
 </script>
 {% endblock %}

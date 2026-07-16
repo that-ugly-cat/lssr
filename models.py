@@ -457,6 +457,19 @@ def recompute_record_screen1(db, workspace, record):
     record.screen1_at = datetime.utcnow()
 
 
+def recompute_record_screen2(db, workspace, record):
+    """Recache Record.screen2_* from the stage='screen2' ScreenDecision rows.
+    Same resolution as screen 1 (adjudicator > human consensus > model). No commit."""
+    rows = (db.query(ScreenDecision)
+              .filter(ScreenDecision.record_id == record.id,
+                      ScreenDecision.stage == "screen2").all())
+    dec, by, reason = resolve_screen1(rows, workspace.screen1_reviewers_required or 1)
+    record.screen2_decision = dec
+    record.screen2_by = by
+    record.screen2_reason = reason
+    record.screen2_at = datetime.utcnow()
+
+
 # ── Cost tracking (LLM steps) ──────────────────────────────────────────────────
 
 # Pricing per million tokens (input, output) — approximate, update when Anthropic

@@ -1,0 +1,76 @@
+{% set mydec = my_vote.decision if my_vote else '' %}
+<div class="review-head">
+  <div>
+    <strong>{{ rec.title or '(untitled)' }}</strong>
+    <div class="muted small">{{ rec.year or '' }}{% if rec.authors %} · {{ rec.authors }}{% endif %}{% if rec.doi %} · <a href="https://doi.org/{{ rec.doi }}" target="_blank" rel="noopener">{{ rec.doi }}</a>{% endif %}</div>
+  </div>
+  <button class="modal-close" type="button" onclick="closeReview()">&times;</button>
+</div>
+
+<div class="review-body" id="review-cond-root">
+  <div class="review-text">
+    {% if rec.full_text_md %}{{ rec.full_text_md | markdown }}
+    {% else %}<p class="muted">No converted full text for this record.</p>{% endif %}
+  </div>
+
+  <form class="review-form" method="post" action="/w/{{ ws.id }}/assessment/{{ rec.id }}/review">
+    {% if inclusion %}
+    <div class="rev-crit">
+      <div class="rev-crit-head">Inclusion criteria (screening 2)</div>
+      {% for c in inclusion %}
+      <div class="rev-crit-item"><strong>{{ c.label }}</strong>{% if c.description %} — <span class="muted">{{ c.description }}</span>{% endif %}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="rev-section-label">Screening 2 — include on full text?</div>
+    <div class="rev-decision">
+      {% for d, em in [('include','✅ include'),('maybe','🤔 maybe'),('exclude','❌ exclude')] %}
+      <label class="rev-radio {{ 'on' if mydec == d else '' }}">
+        <input type="radio" name="screen2_decision" value="{{ d }}" {{ 'checked' if mydec == d else '' }}> {{ em }}
+      </label>
+      {% endfor %}
+    </div>
+    <input type="text" name="screen2_reason" value="{{ my_vote.reason if my_vote and my_vote.reason != 'full-text review' else '' }}" placeholder="reason (optional)" style="width:100%; margin-top:6px;">
+
+    {% if other_votes | selectattr('reviewer_kind','equalto','user') | rejectattr('reviewer_id','equalto',user.id) | list %}
+    <div class="muted small" style="margin-top:6px;">Others:
+      {% for v in other_votes %}{% if v.reviewer_kind == 'user' and v.reviewer_id != user.id %}{{ v.reviewer.name if v.reviewer else 'reviewer' }} {{ {'include':'✅','exclude':'❌','maybe':'🤔'}.get(v.decision,'·') }} · {% endif %}{% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="rev-section-label">Data extraction</div>
+    {% for f in fields %}
+    <div class="rev-field" data-key="{{ f.key }}"
+         {% if f.show_if_key %}data-show-if-key="{{ f.show_if_key }}" data-show-if-values='{{ f.show_if_values() | tojson }}'{% endif %}>
+      <label>{{ f.label }}{% if f.help %} <span class="muted small">— {{ f.help }}</span>{% endif %}
+        {% if f.field_type == 'textarea' %}
+        <textarea name="f_{{ f.key }}" rows="2">{{ values.get(f.key, '') }}</textarea>
+        {% elif f.field_type == 'number' %}
+        <input type="number" step="any" name="f_{{ f.key }}" value="{{ values.get(f.key, '') }}">
+        {% elif f.field_type == 'select' %}
+        <select name="f_{{ f.key }}">
+          <option value="">—</option>
+          {% for o in f.options() %}<option value="{{ o }}" {{ 'selected' if values.get(f.key) == o else '' }}>{{ o }}</option>{% endfor %}
+        </select>
+        {% elif f.field_type == 'multiselect' %}
+        <select name="f_{{ f.key }}" multiple size="6">
+          {% for o in f.options() %}<option value="{{ o }}" {{ 'selected' if o in (values.get(f.key) or []) else '' }}>{{ o }}</option>{% endfor %}
+        </select>
+        {% else %}
+        <input type="text" name="f_{{ f.key }}" value="{{ values.get(f.key, '') }}">
+        {% endif %}
+      </label>
+    </div>
+    {% else %}
+    <p class="muted small">No extraction fields defined — add them in <a href="/w/{{ ws.id }}/settings">Settings</a>.</p>
+    {% endfor %}
+
+    <div class="review-actions">
+      {% if is_owner %}
+      <label class="check-row" style="margin:0;"><input type="checkbox" name="set_final" value="1"> also set as final version</label>
+      {% endif %}
+      <button class="btn btn-primary" type="submit">Save review</button>
+    </div>
+  </form>
+</div>
