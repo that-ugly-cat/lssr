@@ -12,7 +12,8 @@ synthesis). It calls the Claude API (per-user key) and the
 | `JWT_SECRET` | **yes, in production** | `change-me-in-production` | signs JWTs — set a long random value |
 | `FERNET_KEY` | **yes, in production** | `change-me-in-production` | encrypts per-user Anthropic API keys at rest |
 | `DATABASE_URL` | no | `sqlite:////app/data/lssr.db` | SQLite path |
-| `PAPER2MD_URL` | no | `http://localhost:8008` | paper2md service used at step 7 |
+| `PAPER2MD_URL` | **in practice yes** | `http://localhost:8008` | paper2md service used at step 7. The default only works when paper2md runs on the same host; point it at the deployed instance (e.g. `https://paper2md.borant.eu`) or every conversion fails with "connection refused" |
+| `PAPER2MD_API_KEY` | no, but recommended | _(none)_ | an issued paper2md key, sent as `X-API-Key`. Without it uploads are capped at 10MB; with it, 50MB — papers routinely exceed the anonymous cap |
 | `UNPAYWALL_EMAIL` | no | workspace owner's email | contact email sent to the Unpaywall API |
 
 Generate the keys:
@@ -55,9 +56,12 @@ lssr.borant.eu {
 
 Reload after editing: `sudo systemctl reload caddy`.
 
-`PAPER2MD_URL` should point at the paper2md container. On the shared box that is
-another localhost port (e.g. `http://localhost:8008`); reachability depends on
-Docker networking — put both on the same Docker network or use the host gateway.
+`PAPER2MD_URL` must point at a paper2md the app can actually reach. The simplest
+and most reliable choice is its public URL (`https://paper2md.borant.eu`). A
+`http://localhost:8008` only works if paper2md listens on the same host *and*
+network namespace — from inside a container localhost is the container itself, so
+conversions fail with `Connection refused`. Add `PAPER2MD_API_KEY` (issued from
+paper2md's admin page) to lift the upload cap to 50MB.
 
 ## 5. Verify
 

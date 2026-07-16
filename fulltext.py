@@ -80,13 +80,22 @@ def _download_pdf(url: str) -> bytes | None:
 # ── paper2md (step 7) ──────────────────────────────────────────────────────────
 
 def pdf_to_markdown(pdf_bytes: bytes, paper2md_url: str) -> str:
+    """POST the PDF to paper2md. PAPER2MD_API_KEY is optional but lifts the
+    upload cap (10MB anonymous → 50MB keyed), so papers need it."""
+    headers = {}
+    key = os.environ.get("PAPER2MD_API_KEY", "").strip()
+    if key:
+        headers["X-API-Key"] = key
     resp = requests.post(
         f"{paper2md_url.rstrip('/')}/convert",
         files={"file": ("paper.pdf", pdf_bytes, "application/pdf")},
         data={"remove_references": "true", "format": "json"},
+        headers=headers,
         timeout=360,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        # surface paper2md's own complaint (bad key, too large, queue full…)
+        raise RuntimeError(f"paper2md {resp.status_code}: {resp.text[:200]}")
     data = resp.json()
     return data.get("markdown") or data.get("text") or ""
 
