@@ -585,6 +585,46 @@ def init_db():
                 pass
     _backfill_screen_decisions()
     _retire_assessment_criteria()
+    _upgrade_methodology_fields()
+
+
+def _upgrade_methodology_fields():
+    """One-time: the single 'methodology_empirical' builtin became three
+    single-choice axes (design / data / timeframe) + a free-text for 'Other'.
+    Replace the old field wherever it's still around, in place. Idempotent."""
+    db = SessionLocal()
+    try:
+        olds = (db.query(ExtractionField)
+                  .filter(ExtractionField.key == "methodology_empirical").all())
+        if not olds:
+            return
+        from extraction_defaults import builtin_fields
+        new_defs = [f for f in builtin_fields()
+                    if f["key"] in ("methodology_design", "methodology_data",
+                                    "methodology_time", "methodology_other")]
+        for old in olds:
+            ws_id, base = old.workspace_id, old.position
+            existing = {k for (k,) in db.query(ExtractionField.key)
+                        .filter(ExtractionField.workspace_id == ws_id).all()}
+            db.query(ExtractionField).filter(ExtractionField.id == old.id).delete()
+            # shift later fields down to make room for the three extra axes
+            for f in (db.query(ExtractionField)
+                        .filter(ExtractionField.workspace_id == ws_id,
+                                ExtractionField.position > base).all()):
+                f.position += len(new_defs) - 1
+            for i, d in enumerate(new_defs):
+                if d["key"] in existing:
+                    continue
+                db.add(ExtractionField(
+                    workspace_id=ws_id, key=d["key"], label=d["label"], help=d.get("help"),
+                    field_type=d["field_type"],
+                    options_json=json.dumps(d.get("options") or []) or None,
+                    show_if_key=d.get("show_if_key"),
+                    show_if_values_json=json.dumps(d["show_if_values"]) if d.get("show_if_values") else None,
+                    builtin=True, position=base + i))
+        db.commit()
+    finally:
+        db.close()
 
 
 def _retire_assessment_criteria():
