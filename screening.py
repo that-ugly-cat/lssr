@@ -102,12 +102,26 @@ def _parse(content: str) -> dict | None:
         return None
 
 
+def _create_with_retry(client, *, tries: int = 3, **kw):
+    """Anthropic call with a couple of retries for transient failures
+    (rate limits, 5xx, network blips)."""
+    import time
+    for attempt in range(tries):
+        try:
+            return client.messages.create(**kw)
+        except Exception:
+            if attempt == tries - 1:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+
+
 def screen_record(client, system_prompt: str, title: str, abstract: str,
                   model: str) -> tuple[str, str, int, int]:
     """Returns (decision, reason, tokens_in, tokens_out). Defaults to include on
     a malformed response (screening 1 errs toward inclusion)."""
     user = f"Title: {title or '(no title)'}\n\nAbstract: {abstract or '(no abstract)'}"
-    resp = client.messages.create(
+    resp = _create_with_retry(
+        client,
         model=model,
         max_tokens=300,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
@@ -163,12 +177,18 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
         tin = tout = 0
         included = excluded = maybe = 0
 
-        def work(rec):
-            d, r, i, o = screen_record(client, system, rec.title or "", rec.abstract or "", model)
-            return rec.id, d, r, i, o
+        # Snapshot the text now, on the job thread. Reading rec.title/abstract
+        # inside a worker would lazy-reload after a commit expired them, hitting
+        # the shared SQLite session from another thread — the "prepared state" bug.
+        snaps = [(r.id, r.title or "", r.abstract or "") for r in pending]
+
+        def work(snap):
+            rid, title, abstract = snap
+            d, r, i, o = screen_record(client, system, title, abstract, model)
+            return rid, d, r, i, o
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-            futures = {ex.submit(work, rec): rec.id for rec in pending}
+            futures = {ex.submit(work, s): s[0] for s in snaps}
             done = 0
             for fut in as_completed(futures):
                 rec_id = futures[fut]

@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -689,6 +689,19 @@ async def edit_record(ws_id: int, rid: int, title: str = Form(...), authors: str
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 
+def _delete_records(db, ws, recs):
+    """Hard-delete records and their orphaned screen/extraction rows."""
+    rids = [r.id for r in recs]
+    if not rids:
+        return
+    from models import Extraction, ScreenDecision
+    db.query(ScreenDecision).filter(ScreenDecision.record_id.in_(rids)).delete(synchronize_session=False)
+    db.query(Extraction).filter(Extraction.record_id.in_(rids)).delete(synchronize_session=False)
+    for r in recs:
+        db.delete(r)     # raw_refs cascade via the relationship
+    db.commit()
+
+
 @app.post("/w/{ws_id}/records/{rid}/remove")
 async def remove_record(ws_id: int, rid: int,
                         user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -697,11 +710,18 @@ async def remove_record(ws_id: int, rid: int,
     ws = _load_ws(db, user, ws_id)
     rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
     if rec:
-        from models import Extraction, ScreenDecision
-        db.query(ScreenDecision).filter(ScreenDecision.record_id == rid).delete()
-        db.query(Extraction).filter(Extraction.record_id == rid).delete()
-        db.delete(rec)   # raw_refs cascade via the relationship
-        db.commit()
+        _delete_records(db, ws, [rec])
+    return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
+
+
+@app.post("/w/{ws_id}/records/remove-batch")
+async def remove_records_batch(ws_id: int, ids: str = Form(...),
+                               user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+    recs = (db.query(Record).filter(Record.id.in_(id_list), Record.workspace_id == ws.id).all()
+            if id_list else [])
+    _delete_records(db, ws, recs)
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 
@@ -1133,6 +1153,20 @@ async def fulltext_convert_status(ws_id: int, user: User = Depends(get_current_u
     _load_ws(db, user, ws_id)
     import fulltext
     return JSONResponse(fulltext.get_job(ws_id, "convert") or {"status": "idle"})
+
+
+@app.get("/w/{ws_id}/records/{rid}/pdf")
+async def record_pdf(ws_id: int, rid: int, user: User = Depends(get_current_user),
+                     db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
+    if not rec or not rec.full_text_path:
+        raise HTTPException(404, "No stored PDF for this record")
+    p = Path(rec.full_text_path)
+    if not p.exists():
+        raise HTTPException(404, "PDF file missing")
+    return FileResponse(str(p), media_type="application/pdf",
+                        headers={"Content-Disposition": f'inline; filename="record-{rid}.pdf"'})
 
 
 @app.post("/w/{ws_id}/records/{rid}/fulltext/upload")

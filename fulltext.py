@@ -264,8 +264,18 @@ def pdf_to_markdown(pdf_bytes: bytes, paper2md_url: str) -> str:
         timeout=360,
     )
     if not resp.ok:
+        code = resp.status_code
+        body = (resp.text or "").strip()
+        # A Cloudflare/edge error page, not paper2md itself.
+        if code == 524 or (code >= 520 and "<html" in body[:400].lower()):
+            raise RuntimeError(
+                f"paper2md timed out at the proxy ({code}, Cloudflare's ~100s limit) — the "
+                "PDF is large/slow to convert. Point PAPER2MD_URL at paper2md's internal "
+                "address so the call skips the proxy.")
+        if code in (502, 503, 504):
+            raise RuntimeError(f"paper2md unreachable ({code})")
         # surface paper2md's own complaint (bad key, too large, queue full…)
-        raise RuntimeError(f"paper2md {resp.status_code}: {resp.text[:200]}")
+        raise RuntimeError(f"paper2md {code}: {body[:200]}")
     data = resp.json()
     return data.get("markdown") or data.get("text") or ""
 

@@ -51,13 +51,18 @@
 
 <div class="page-head" style="margin-top:6px;">
   <div class="cards-label" style="margin:0;">Pool ({{ active_n }})</div>
-  <div style="display:flex; gap:8px;">
+  <div style="display:flex; gap:8px; align-items:center;">
+    <button class="btn btn-danger btn-small" type="button" id="batch-del-btn" style="display:none;"
+            onclick="confirmBatchDelete()">Delete selected (<span id="sel-count">0</span>)</button>
     <form method="post" action="/w/{{ ws.id }}/records/dedup/run">
       <button class="btn btn-small" type="submit">Deduplicate</button>
     </form>
     <button class="btn btn-small" type="button" onclick="document.getElementById('add-rec').classList.add('open')">Add record</button>
   </div>
 </div>
+<form method="post" action="/w/{{ ws.id }}/records/remove-batch" id="batch-form">
+  <input type="hidden" name="ids" id="batch-ids">
+</form>
 
 <form method="get" class="filter-bar">
   <input type="hidden" name="sort" value="{{ f.sort }}">
@@ -80,10 +85,11 @@
 
 <table class="table">
   {% set type_lbl = {'article': 'paper', 'book': 'book', 'book_chapter': 'book chapter', 'grey': 'grey lit'} %}
-  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Type</th><th>Source</th><th>DBs</th><th></th></tr></thead>
+  <thead><tr><th class="nowrap"><input type="checkbox" id="sel-all" title="Select all"></th><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Type</th><th>Source</th><th>DBs</th><th></th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr>
+      <td class="nowrap"><input type="checkbox" class="rec-sel" value="{{ r.id }}"></td>
       <td class="nowrap">{{ r.year or '—' }}</td>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
@@ -107,7 +113,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="6" class="muted">No records match. Adjust the filter, or run a PubMed search / import a file.</td></tr>
+    <tr><td colspan="7" class="muted">No records match. Adjust the filter, or run a PubMed search / import a file.</td></tr>
     {% endfor %}
   </tbody>
 </table>
@@ -167,12 +173,51 @@
 {% endblock %}
 
 {% block scripts %}
+<div id="toast-host"></div>
 <script>
 function editRecord(r) {
   document.getElementById('edit-form').action = `/w/{{ ws.id }}/records/${r.id}/edit`;
   for (const k of ['title','authors','year','doi','url','source','type','abstract'])
     document.getElementById('edit-' + k).value = r[k];
   document.getElementById('edit-rec').classList.add('open');
+}
+
+// ── selection + batch delete ──
+const selAll = document.getElementById('sel-all');
+const delBtn = document.getElementById('batch-del-btn');
+const countEl = document.getElementById('sel-count');
+function selected() { return Array.from(document.querySelectorAll('.rec-sel:checked')); }
+function refreshSelection() {
+  const n = selected().length;
+  countEl.textContent = n;
+  delBtn.style.display = n ? '' : 'none';
+}
+document.querySelectorAll('.rec-sel').forEach(cb => cb.addEventListener('change', refreshSelection));
+if (selAll) selAll.addEventListener('change', () => {
+  document.querySelectorAll('.rec-sel').forEach(cb => { cb.checked = selAll.checked; });
+  refreshSelection();
+});
+
+// confirmation toast (non-blocking, replaces window.confirm)
+function toastConfirm(message, onConfirm) {
+  const host = document.getElementById('toast-host');
+  host.innerHTML = '';
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = `<span>${message}</span>`;
+  const ok = document.createElement('button'); ok.className = 'btn btn-danger btn-small'; ok.textContent = 'Delete';
+  const no = document.createElement('button'); no.className = 'btn btn-small'; no.textContent = 'Cancel';
+  no.onclick = () => host.innerHTML = '';
+  ok.onclick = () => { host.innerHTML = ''; onConfirm(); };
+  t.append(no, ok); host.append(t);
+}
+function confirmBatchDelete() {
+  const ids = selected().map(cb => cb.value);
+  if (!ids.length) return;
+  toastConfirm(`Delete ${ids.length} record${ids.length > 1 ? 's' : ''} permanently? Not tracked.`, () => {
+    document.getElementById('batch-ids').value = ids.join(',');
+    document.getElementById('batch-form').submit();
+  });
 }
 </script>
 {% endblock %}

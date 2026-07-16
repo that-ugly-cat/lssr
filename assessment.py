@@ -159,10 +159,23 @@ def coerce_values(fields, raw: dict) -> dict:
     return {k: v for k, v in out.items() if field_visible(by_key[k], out)}
 
 
+def _create_with_retry(client, *, tries: int = 3, **kw):
+    """Anthropic call with a couple of retries for transient failures."""
+    import time
+    for attempt in range(tries):
+        try:
+            return client.messages.create(**kw)
+        except Exception:
+            if attempt == tries - 1:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+
+
 def assess_record(client, system_prompt: str, full_text: str, model: str):
     """Returns (decision, reason, raw_fields, tokens_in, tokens_out)."""
     text = (full_text or "")[:MAX_TEXT_CHARS]
-    resp = client.messages.create(
+    resp = _create_with_retry(
+        client,
         model=model,
         max_tokens=2000,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
@@ -223,12 +236,17 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
         tin = tout = 0
         included = excluded = maybe = 0
 
-        def work(rec):
-            d, r, fl, i, o = assess_record(client, system, rec.full_text_md or "", model)
-            return rec.id, d, r, fl, i, o
+        # Snapshot the full text on the job thread — reading it inside a worker
+        # after a commit expired it would hit the shared session cross-thread.
+        snaps = [(r.id, r.full_text_md or "") for r in targets]
+
+        def work(snap):
+            rid, md = snap
+            d, r, fl, i, o = assess_record(client, system, md, model)
+            return rid, d, r, fl, i, o
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-            futures = {ex.submit(work, rec): rec.id for rec in targets}
+            futures = {ex.submit(work, s): s[0] for s in snaps}
             done = 0
             for fut in as_completed(futures):
                 rec_id = futures[fut]

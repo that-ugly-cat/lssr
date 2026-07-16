@@ -6,7 +6,10 @@
     <strong>{{ rec.title or '(untitled)' }}</strong>
     <div class="muted small">{{ rec.year or '' }}{% if rec.authors %} · {{ rec.authors }}{% endif %}{% if rec.doi %} · <a href="https://doi.org/{{ rec.doi }}" target="_blank" rel="noopener">{{ rec.doi }}</a>{% endif %}</div>
   </div>
-  <button class="modal-close" type="button" onclick="closeReview()">&times;</button>
+  <div style="display:flex; gap:8px; align-items:center;">
+    {% if rec.full_text_path %}<a class="btn btn-small" href="/w/{{ ws.id }}/records/{{ rec.id }}/pdf" target="_blank" rel="noopener">Open PDF ↗</a>{% endif %}
+    <button class="modal-close" type="button" onclick="closeReview()">&times;</button>
+  </div>
 </div>
 
 <div class="review-body" id="review-cond-root">
