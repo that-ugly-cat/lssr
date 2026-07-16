@@ -3,6 +3,18 @@
 *Spec & design — bozza per validazione*
 *v0.1 — 2026-07-10*
 
+> **Stato (lug 2026): la pipeline 1–10 è costruita, testata e deployata.** Questo
+> SPEC è il documento di design originale; alcune scelte sono evolute. Per lo
+> stato reale del prodotto vedi **README.md** (utente) e la git history. Cambi
+> principali dallo spec originale: screening 1 **e** 2 sono multi-revisore in
+> cieco con conflitto/adjudication e bucket *maybe*; l'assessment è **estrazione
+> dati strutturata** (campi tipizzati con `show_if`, non finding a testo libero —
+> il modello `Assessment` è stato ritirato); il full text ha una **scala di
+> provider** (Europe PMC XML → Unpaywall/OpenAlex → landing `citation_pdf_url` →
+> API TDM editoriali) oltre a paper2md; la sintesi narra i campi text/textarea.
+> **Prossimo passo: query translation + import automatico da altri DB** (oggi
+> l'import da Scopus/WoS/CINAHL/JSTOR è manuale BibTeX/RIS/Excel).
+
 ---
 
 ## 1. Visione
