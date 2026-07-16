@@ -602,3 +602,9 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
   .pub-grid { grid-template-columns: 1fr; }
   .pub-bar-row { grid-template-columns: 96px 1fr 28px; }
 }
+
+/* methodology option help — sits above the review modal (z-index 200) */
+.overlay-top { z-index: 500; }
+.method-help { margin: 0; }
+.method-help dt { font-weight: 700; font-size: 14px; margin-top: 10px; }
+.method-help dd { margin: 2px 0 0; font-size: 13px; color: var(--muted-2); line-height: 1.4; }

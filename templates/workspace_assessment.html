@@ -110,6 +110,34 @@
     <div id="review-body"></div>
   </div>
 </div>
+
+{% set method_help = {
+  'methodology_design': ('Methodology — design', [
+    ('Observational', 'Observe and collect data on individuals or groups without intervening in any way.'),
+    ('Experimental', 'Manipulate one or more variables to determine their effect on an outcome — e.g. randomized controlled trials, quasi-experimental studies.'),
+    ('Descriptive', 'Describe the characteristics of a group or population, without establishing cause-and-effect.'),
+    ('Analytical', 'Attempt to establish cause-and-effect between variables — e.g. case-control and cohort studies.')]),
+  'methodology_data': ('Methodology — data', [
+    ('Quantitative', 'Numerical data and statistical analysis to test hypotheses and make predictions.'),
+    ('Qualitative', 'Non-numerical data — interviews, focus groups, observations — to explore subjective experiences, attitudes and beliefs.'),
+    ('Mixed methods', 'Both qualitative and quantitative approaches.')]),
+  'methodology_time': ('Methodology — timeframe', [
+    ('Longitudinal', 'Follow individuals or groups over an extended period, to study change over time.'),
+    ('Cross-sectional', 'Collect data at a single point in time, to study prevalence or distribution in a population.')]),
+} %}
+{% for key, (heading, items) in method_help.items() %}
+<div class="overlay overlay-top" id="help-{{ key }}">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">{{ heading }}</div>
+      <button class="modal-close" type="button" onclick="document.getElementById('help-{{ key }}').classList.remove('open')">&times;</button>
+    </div>
+    <dl class="method-help">
+      {% for term, desc in items %}<dt>{{ term }}</dt><dd>{{ desc }}</dd>{% endfor %}
+    </dl>
+  </div>
+</div>
+{% endfor %}
 {% endblock %}
 
 {% block scripts %}
@@ -159,6 +187,14 @@ function closeReview() { document.getElementById('review-modal').classList.remov
 document.getElementById('review-modal').addEventListener('click', (e) => {
   if (e.target.id === 'review-modal') closeReview();
 });
+
+// methodology option help (opens above the review modal)
+function openMethodHelp(key) {
+  const el = document.getElementById('help-' + key);
+  if (el) el.classList.add('open');
+}
+document.querySelectorAll('.overlay-top').forEach(o =>
+  o.addEventListener('click', (e) => { if (e.target === o) o.classList.remove('open'); }));
 
 poller('as-form', 'as-status', 'as-btn', '/w/{{ ws.id }}/assessment/status', 'as-prog', 'as-fill');
 </script>
