@@ -37,11 +37,18 @@ def _set(workspace_id: int, data: dict):
 # ── PRISMA counts ──────────────────────────────────────────────────────────────
 
 def compute_prisma(db, workspace_id: int) -> dict:
-    from models import Record, RawReference
+    from sqlalchemy import func
+    from models import DB_LABELS, Record, RawReference
     R = Record
     def rc(*filters):
         return db.query(R).filter(R.workspace_id == workspace_id, *filters).count()
 
+    # records identified per source database (one RawReference per provenance)
+    by_source = {}
+    for dbkey, n in (db.query(RawReference.database, func.count())
+                       .filter(RawReference.workspace_id == workspace_id)
+                       .group_by(RawReference.database).all()):
+        by_source[DB_LABELS.get(dbkey, dbkey or "other")] = n
     identified = db.query(RawReference).filter(RawReference.workspace_id == workspace_id).count()
     records_total = rc()
     screened = rc(R.is_removed == False)                                   # noqa: E712
@@ -51,6 +58,7 @@ def compute_prisma(db, workspace_id: int) -> dict:
     included_final = rc(R.is_removed == False, R.screen2_decision == "include")  # noqa: E712
     return {
         "identified": identified,
+        "by_source": by_source,
         "duplicates_removed": max(identified - records_total, 0),
         "screened": screened,
         "excluded_screen1": rc(R.is_removed == False, R.screen1_decision == "exclude"),  # noqa: E712
@@ -63,6 +71,106 @@ def compute_prisma(db, workspace_id: int) -> dict:
         "excluded_screen2": rc(R.is_removed == False, R.screen2_decision == "exclude"),  # noqa: E712
         "included_final": included_final,
     }
+
+
+# ── PRISMA flow diagram (inline SVG, theme-aware) ───────────────────────────────
+
+_SVG_FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"
+
+
+def prisma_svg(prisma: dict):
+    """Render the PRISMA counts as a top-to-bottom flow diagram (inline SVG).
+    Colours come from the page's CSS custom properties, so it follows the theme.
+    Returns Markup so templates can drop it in with no escaping."""
+    from markupsafe import Markup
+    import html as _h
+    if not prisma:
+        return Markup("")
+    p = prisma
+    src = p.get("by_source") or {}
+    ident = [f"{k}: {v}" for k, v in src.items()]
+    ident += [f"Total: {p.get('identified', 0)}"] if ident else [f"Records identified: {p.get('identified', 0)}"]
+    stages = [
+        {"g": "Identification", "lines": ident, "boldlast": bool(src),
+         "side": [f"Duplicates removed: {p.get('duplicates_removed', 0)}"]},
+        {"g": "Screening", "lines": ["Screened vs exclusion criteria",
+                                     f"(screening 1): {p.get('screened', 0)}"],
+         "side": [f"Excluded: {p.get('excluded_screen1', 0)}"]},
+        {"g": "Screening", "lines": [f"Full texts retrieved: {p.get('fulltext_retrieved', 0)}",
+                                     f"of {p.get('fulltext_sought', 0)} sought"],
+         "side": [f"Not retrieved: {p.get('fulltext_not_retrieved', 0)}"]},
+        {"g": "Screening", "lines": ["Assessed vs inclusion criteria",
+                                     f"(screening 2): {p.get('assessed', 0)}"],
+         "side": [f"Excluded: {p.get('excluded_screen2', 0)}"]},
+        {"g": "Included", "lines": ["Studies included in the review:",
+                                    str(p.get('included_final', 0))], "bold": True, "side": None},
+    ]
+    LH, GAP, PAD = 15, 30, 16
+    SPINE_X, SPINE_W, SIDE_X, SIDE_W, LBL_X, LBL_W, WD = 64, 250, 396, 210, 6, 30, 620
+
+    y, pos = PAD, []
+    for st in stages:
+        h = max(52, len(st["lines"]) * LH + 22)
+        pos.append((y, h))
+        y += h + GAP
+    H = y - GAP + PAD
+
+    def esc(s):
+        return _h.escape(str(s))
+
+    def box(x, y0, w, h, lines, bold=False, boldlast=False, muted=False):
+        out = [f'<rect x="{x}" y="{y0}" width="{w}" height="{h}" rx="6" '
+               f'fill="var(--card)" stroke="var(--border)" stroke-width="1"/>']
+        n, cx = len(lines), x + w / 2
+        sy = y0 + h / 2 - (n - 1) * LH / 2
+        for i, ln in enumerate(lines):
+            fw = "700" if (bold or (boldlast and i == n - 1)) else "400"
+            col = "var(--muted-2)" if muted else "var(--text)"
+            out.append(f'<text x="{cx:.0f}" y="{sy + i * LH:.0f}" text-anchor="middle" '
+                       f'dominant-baseline="central" font-size="12" font-weight="{fw}" '
+                       f'fill="{col}">{esc(ln)}</text>')
+        return "".join(out)
+
+    parts = [f'<svg viewBox="0 0 {WD} {int(H)}" xmlns="http://www.w3.org/2000/svg" '
+             f'font-family="{_SVG_FONT}" style="width:100%;height:auto;max-width:640px;">',
+             '<defs><marker id="pr-ah" markerWidth="9" markerHeight="9" refX="6.5" refY="3" '
+             'orient="auto"><path d="M0,0 L6.5,3 L0,6 Z" fill="var(--muted-2)"/></marker></defs>']
+
+    # left group labels spanning their stages
+    groups = []
+    for i, st in enumerate(stages):
+        if groups and groups[-1][0] == st["g"]:
+            groups[-1][2] = i
+        else:
+            groups.append([st["g"], i, i])
+    for g, i0, i1 in groups:
+        top, bot = pos[i0][0], pos[i1][0] + pos[i1][1]
+        cx, cy = LBL_X + LBL_W / 2, (top + bot) / 2
+        parts.append(f'<rect x="{LBL_X}" y="{top}" width="{LBL_W}" height="{bot - top}" rx="5" '
+                     f'fill="var(--card-hover)" stroke="var(--border)"/>')
+        parts.append(f'<text x="{cx}" y="{cy}" text-anchor="middle" dominant-baseline="central" '
+                     f'font-size="11" font-weight="700" fill="var(--muted)" '
+                     f'transform="rotate(-90 {cx} {cy})">{esc(g)}</text>')
+
+    # spine boxes, vertical arrows, side boxes + horizontal arrows
+    for i, st in enumerate(stages):
+        y0, h = pos[i]
+        parts.append(box(SPINE_X, y0, SPINE_W, h, st["lines"],
+                         bold=st.get("bold", False), boldlast=st.get("boldlast", False)))
+        if i < len(stages) - 1:
+            x = SPINE_X + SPINE_W / 2
+            parts.append(f'<line x1="{x}" y1="{y0 + h}" x2="{x}" y2="{pos[i + 1][0] - 2}" '
+                         f'stroke="var(--muted-2)" stroke-width="1.5" marker-end="url(#pr-ah)"/>')
+        if st.get("side"):
+            sh = max(38, len(st["side"]) * LH + 18)
+            sy = y0 + (h - sh) / 2
+            parts.append(f'<line x1="{SPINE_X + SPINE_W}" y1="{y0 + h / 2}" x2="{SIDE_X - 2}" '
+                         f'y2="{y0 + h / 2}" stroke="var(--muted-2)" stroke-width="1.5" '
+                         f'marker-end="url(#pr-ah)"/>')
+            parts.append(box(SIDE_X, sy, SIDE_W, sh, st["side"], muted=True))
+
+    parts.append("</svg>")
+    return Markup("".join(parts))
 
 
 # ── Citations (procedural — never authored by the LLM) ──────────────────────────

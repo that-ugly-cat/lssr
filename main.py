@@ -54,6 +54,9 @@ def _fromjson(raw):
 
 templates.env.filters["fromjson"] = _fromjson
 
+from synthesis import prisma_svg as _prisma_svg  # noqa: E402
+templates.env.globals["prisma_svg"] = _prisma_svg
+
 init_db()
 
 
