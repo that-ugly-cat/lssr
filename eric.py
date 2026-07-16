@@ -58,7 +58,12 @@ def search(query: str, year_from: int, year_to: int, on_progress) -> list[dict]:
     while True:
         params = {"search": q, "format": "json", "rows": ROWS, "start": start, "fields": FIELDS}
         url = f"{BASE}?{urlencode(params)}"
-        data = _json.loads(http.request("GET", url).data.decode("utf-8"))
+        http_resp = http.request("GET", url)
+        data = _json.loads(http_resp.data.decode("utf-8"))
+        if http_resp.status >= 400 or "error" in data:
+            err = data.get("error")
+            msg = (err.get("msg") if isinstance(err, dict) else err) or f"HTTP {http_resp.status}"
+            raise RuntimeError(f"ERIC rejected the query: {msg}")
         resp = data.get("response", {})
         if total is None:
             total = resp.get("numFound", 0)

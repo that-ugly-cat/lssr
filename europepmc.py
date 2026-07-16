@@ -62,7 +62,11 @@ def search(query: str, year_from: int, year_to: int, on_progress) -> list[dict]:
         params = {"query": q, "format": "json", "pageSize": PAGE,
                   "cursorMark": cursor, "resultType": "core"}
         url = f"{BASE}?{urlencode(params)}"
-        data = _json.loads(http.request("GET", url).data.decode("utf-8"))
+        resp = http.request("GET", url)
+        if resp.status >= 400:
+            raise RuntimeError(f"Europe PMC rejected the query (HTTP {resp.status}): "
+                               f"{resp.data.decode('utf-8', 'replace')[:200]}")
+        data = _json.loads(resp.data.decode("utf-8"))
         if total is None:
             total = data.get("hitCount", 0)
             on_progress(status="downloading",

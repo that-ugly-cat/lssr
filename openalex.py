@@ -69,7 +69,11 @@ def search(query: str, year_from: int, year_to: int, on_progress) -> list[dict]:
         if mailto:
             params["mailto"] = mailto
         url = f"{BASE}?{urlencode(params)}"
-        data = _json.loads(http.request("GET", url).data.decode("utf-8"))
+        resp = http.request("GET", url)
+        data = _json.loads(resp.data.decode("utf-8"))
+        if resp.status >= 400 or "error" in data:
+            msg = data.get("message") or data.get("error") or f"HTTP {resp.status}"
+            raise RuntimeError(f"OpenAlex rejected the query: {msg}")
         meta = data.get("meta", {})
         if total is None:
             total = meta.get("count", 0)
