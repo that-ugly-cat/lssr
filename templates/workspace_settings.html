@@ -3,6 +3,16 @@
 {% block body %}
 {% include "_ws_tabs.html" %}
 
+<div class="cards-label">Review details</div>
+<div class="card">
+  <form method="post" action="/w/{{ ws.id }}/settings/details">
+    <label>Description <textarea name="description" rows="2">{{ ws.description or '' }}</textarea></label>
+    <label>Research question(s) <textarea name="research_question" rows="3">{{ ws.research_question or '' }}</textarea></label>
+    <button class="btn btn-small" type="submit" style="margin-top:8px;">Save details</button>
+  </form>
+  <p class="muted small">Shown at the top of the public link page, and used as context for the LLM steps.</p>
+</div>
+
 <div class="cards-label">Screening / assessment model</div>
 <div class="card">
   <form method="post" action="/w/{{ ws.id }}/settings/model" class="inline-form">

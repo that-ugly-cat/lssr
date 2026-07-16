@@ -64,8 +64,12 @@
     <thead><tr><th>Public link</th><th></th></tr></thead>
     <tbody>
       {% for s in shares %}
+      {% set full = request.base_url|string ~ 'r/' ~ s.token %}
       <tr>
-        <td><code>/r/{{ s.token }}</code></td>
+        <td>
+          <a href="/r/{{ s.token }}" target="_blank" rel="noopener"><code>{{ full }}</code></a>
+          <button class="btn btn-small" type="button" onclick="navigator.clipboard.writeText('{{ full }}')" title="Copy">copy</button>
+        </td>
         <td class="ta-right">
           {% if is_owner %}
           <form method="post" action="/share/{{ s.id }}/revoke" style="display:inline;">

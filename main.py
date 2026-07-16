@@ -869,6 +869,16 @@ async def set_model(ws_id: int, screening_model: str = Form(...),
     return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
 
 
+@app.post("/w/{ws_id}/settings/details")
+async def set_details(ws_id: int, description: str = Form(""), research_question: str = Form(""),
+                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    ws.description = description.strip() or None
+    ws.research_question = research_question.strip() or None
+    db.commit()
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+
+
 @app.post("/w/{ws_id}/settings/screening")
 async def set_screening_config(ws_id: int, reviewers_required: int = Form(...),
                                user: User = Depends(get_current_user), db: Session = Depends(get_db)):
