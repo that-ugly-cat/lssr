@@ -157,6 +157,13 @@ DB_LABELS = {
 # Databases we can harvest directly (open API, no institutional auth).
 HARVEST_DBS = {"pubmed", "europepmc", "openalex", "eric"}
 
+# Databases a workspace may author its canonical query in (the "start from"
+# source that translation flows out of). Kept to the two sensible poles: PubMed
+# (richest syntax — MeSH + field tags — so down-translation loses the least) and
+# OpenAlex (broadest, most multidisciplinary corpus). Every other database is
+# target-only. PubMed is the recommended default; see the note in the Query tab.
+SOURCE_DBS = ["pubmed", "openalex"]
+
 # Entry point to each database's (advanced) search UI, so a reviewer can jump
 # there to run the translated query. Institutional databases route through the
 # library proxy after login — these are the canonical public entry URLs.

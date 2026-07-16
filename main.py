@@ -21,11 +21,11 @@ from auth import (
     verify_password,
 )
 from models import (
-    DATABASES, DB_LABELS, HARVEST_DBS, PIPELINE_STEPS, PRICING, Criterion, Import,
-    PublicShare, Record, User, Workspace, WorkspaceMember, can_access, current_iteration,
-    db_label, db_search_url, get_db, get_query, init_db, new_share_token, set_step_done,
-    set_workspace_targets, upsert_query, user_workspaces, workspace_criteria,
-    workspace_steps_done, workspace_target_dbs, workspace_years,
+    DATABASES, DB_LABELS, HARVEST_DBS, PIPELINE_STEPS, PRICING, SOURCE_DBS, Criterion,
+    Import, PublicShare, Record, User, Workspace, WorkspaceMember, can_access,
+    current_iteration, db_label, db_search_url, get_db, get_query, init_db,
+    new_share_token, set_step_done, set_workspace_targets, upsert_query, user_workspaces,
+    workspace_criteria, workspace_steps_done, workspace_target_dbs, workspace_years,
 )
 
 BASE = Path(__file__).parent
@@ -530,8 +530,10 @@ async def query_page(ws_id: int, request: Request, user: User = Depends(get_curr
     primary = get_query(db, ws, primary_db)
     targets = workspace_target_dbs(ws)                       # active targets, minus primary
     yf, yt = workspace_years(ws)
-    # start-from options and the target multiselect (everything except the primary)
-    db_options = [(d, db_label(d)) for d in DATABASES]
+    # start-from is limited to the two source databases; keep a legacy primary
+    # visible if some older workspace points elsewhere.
+    source_keys = SOURCE_DBS + ([primary_db] if primary_db not in SOURCE_DBS else [])
+    db_options = [(d, db_label(d)) for d in source_keys]
     target_choices = [(d, db_label(d), d in targets, d in HARVEST_DBS)
                       for d in DATABASES if d != primary_db]
     # translation windows for the selected targets, each with its saved query
@@ -558,8 +560,8 @@ async def save_primary_query(ws_id: int, primary_db: str = Form(...), query: str
                              year_from: int = Form(...), year_to: int = Form(...),
                              user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
-    if primary_db not in DATABASES:
-        raise HTTPException(400, "Invalid database")
+    if primary_db not in SOURCE_DBS:
+        raise HTTPException(400, "Start-from must be PubMed or OpenAlex")
     if year_from > year_to:
         year_from, year_to = year_to, year_from
     ws.primary_db = primary_db

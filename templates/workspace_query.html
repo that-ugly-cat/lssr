@@ -14,6 +14,15 @@
         {% endfor %}
       </select>
     </label>
+    <p class="muted small">
+      Author your query here; it's translated from this database to the others.
+      <strong>PubMed</strong> is the recommended source — its MeSH and field tags make
+      the richest starting point, so translations lose the least. <strong>OpenAlex</strong>
+      covers the broadest, most multidisciplinary corpus, but its free-text syntax has no
+      controlled vocabulary, so translations to controlled-vocabulary databases come out as
+      free text. Either way you can still harvest OpenAlex in full — add it as a target below
+      and Run it.
+    </p>
     <label>Query (in the starting database's syntax)
       <textarea name="query" rows="3" placeholder='e.g. (infodemic[tiab] OR misinformation[tiab]) AND ethics[tiab]'>{{ primary.query_string if primary else '' }}</textarea>
     </label>
