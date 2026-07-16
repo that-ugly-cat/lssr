@@ -19,4 +19,37 @@
     <button class="btn btn-primary btn-small" type="submit">Save</button>
   </form>
 </div>
+
+<div class="cards-label">Publisher full-text access</div>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">
+    Used at the full-text step, <strong>only after</strong> the open-access routes
+    have failed, and only for that publisher's own DOIs. These are your
+    credentials under your institution's entitlement — leave one blank and that
+    publisher is simply skipped. Stored encrypted at rest.
+  </p>
+
+  {% set creds = [
+    ('elsevier', 'Elsevier / ScienceDirect', 'API key', 'free from dev.elsevier.com — reaches Elsevier open-access articles on its own'),
+    ('elsevier_insttoken', 'Elsevier institutional token', 'Insttoken', 'optional; only needed for subscription content when not on your institution\'s network'),
+    ('springer', 'Springer Nature', 'API key', 'free from dev.springernature.com — open-access content only'),
+    ('wiley', 'Wiley', 'TDM client token', 'from your Wiley Online Library account')
+  ] %}
+  {% for name, label, field, hint in creds %}
+  <div style="margin-bottom:14px;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <strong style="font-size:14px;">{{ label }}</strong>
+      {% if pub[name].user %}<span class="badge badge-ok">set</span>
+      {% elif pub[name].env %}<span class="badge badge-muted">using server default</span>
+      {% else %}<span class="badge badge-muted">not set — skipped</span>{% endif %}
+    </div>
+    <p class="muted small" style="margin:2px 0 6px;">{{ hint }}</p>
+    <form method="post" action="/profile/publisher-key/{{ name }}" class="inline-form">
+      <input type="password" name="value" style="max-width:320px;"
+             placeholder="{{ 'leave blank to remove' if pub[name].user else field }}">
+      <button class="btn btn-small" type="submit">Save</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
 {% endblock %}

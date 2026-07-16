@@ -44,6 +44,12 @@ class User(Base):
     name                  = Column(String, nullable=False)
     hashed_password       = Column(String, nullable=False)
     api_key_encrypted     = Column(String, nullable=True)   # Anthropic key, Fernet-encrypted
+    # Publisher TDM credentials (step 6, last layer) — per user, because the
+    # entitlement follows the person and their institution, not the server.
+    elsevier_key_encrypted       = Column(String, nullable=True)
+    elsevier_insttoken_encrypted = Column(String, nullable=True)
+    springer_key_encrypted       = Column(String, nullable=True)
+    wiley_token_encrypted        = Column(String, nullable=True)
     totp_secret_encrypted = Column(String, nullable=True)   # TOTP secret, Fernet-encrypted
     totp_enabled          = Column(Boolean, default=False)
     backup_codes_json     = Column(Text, nullable=True)     # sha256 hashes of unused backup codes
@@ -565,6 +571,10 @@ def init_db():
             "ALTER TABLE workspaces ADD COLUMN screening_model VARCHAR DEFAULT 'claude-haiku-4-5'",
             "ALTER TABLE workspaces ADD COLUMN screen1_reviewers_required INTEGER DEFAULT 1",
             "ALTER TABLE workspaces ADD COLUMN steps_done_json VARCHAR",
+            "ALTER TABLE users ADD COLUMN elsevier_key_encrypted VARCHAR",
+            "ALTER TABLE users ADD COLUMN elsevier_insttoken_encrypted VARCHAR",
+            "ALTER TABLE users ADD COLUMN springer_key_encrypted VARCHAR",
+            "ALTER TABLE users ADD COLUMN wiley_token_encrypted VARCHAR",
             "ALTER TABLE records ADD COLUMN full_text_status VARCHAR DEFAULT 'none'",
             "ALTER TABLE records ADD COLUMN full_text_url VARCHAR",
         ]:

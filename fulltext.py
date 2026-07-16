@@ -320,15 +320,13 @@ WILEY_PREFIXES    = {"10.1002", "10.1111", "10.1046", "10.1034", "10.1049"}
 SPRINGER_PREFIXES = {"10.1007", "10.1186", "10.1038", "10.1140", "10.1057", "10.1245"}
 
 
-def _elsevier(doi: str) -> str | None:
+def _elsevier(doi: str, key: str, inst: str = "") -> str | None:
     """ScienceDirect Article Retrieval. The API key alone reaches open-access
     articles; entitled subscription content also needs X-ELS-Insttoken (issued to
     the institution) or a call from its IP range."""
-    key = os.environ.get("ELSEVIER_API_KEY", "").strip()
     if not key:
         return None
     headers = {"X-ELS-APIKey": key}
-    inst = os.environ.get("ELSEVIER_INSTTOKEN", "").strip()
     if inst:
         headers["X-ELS-Insttoken"] = inst
     url = f"https://api.elsevier.com/content/article/doi/{doi}"
@@ -350,11 +348,10 @@ def _elsevier(doi: str) -> str | None:
     return None
 
 
-def _springer(doi: str) -> str | None:
+def _springer(doi: str, key: str) -> str | None:
     """Springer Nature's open-access API returns JATS — the same shape Europe PMC
     gives us, so it reuses the same converter. Subscription content needs a
     separate TDM agreement and is not covered here."""
-    key = os.environ.get("SPRINGER_API_KEY", "").strip()
     if not key:
         return None
     try:
@@ -368,10 +365,9 @@ def _springer(doi: str) -> str | None:
     return None
 
 
-def _wiley(doi: str) -> bytes | None:
+def _wiley(doi: str, token: str) -> bytes | None:
     """Wiley TDM serves a PDF. The client token is issued from a Wiley Online
     Library account with the institution's entitlement."""
-    token = os.environ.get("WILEY_TDM_TOKEN", "").strip()
     if not token:
         return None
     try:
@@ -384,19 +380,22 @@ def _wiley(doi: str) -> bytes | None:
     return None
 
 
-def publisher_fulltext(doi: str) -> tuple[str | None, bytes | None]:
-    """(markdown, pdf_bytes) from whichever publisher owns this DOI prefix."""
+def publisher_fulltext(doi: str, keys: dict | None = None) -> tuple[str | None, bytes | None]:
+    """(markdown, pdf_bytes) from whichever publisher owns this DOI prefix.
+    `keys` carries the reviewer's own credentials; a publisher with no key is
+    skipped entirely, so an unconfigured LSSR never calls out."""
+    keys = keys or {}
     prefix = doi.split("/")[0]
     if prefix in ELSEVIER_PREFIXES:
-        md = _elsevier(doi)
+        md = _elsevier(doi, keys.get("elsevier", ""), keys.get("elsevier_insttoken", ""))
         if md:
             return md, None
     if prefix in SPRINGER_PREFIXES:
-        md = _springer(doi)
+        md = _springer(doi, keys.get("springer", ""))
         if md:
             return md, None
     if prefix in WILEY_PREFIXES:
-        pdf = _wiley(doi)
+        pdf = _wiley(doi, keys.get("wiley", ""))
         if pdf:
             return None, pdf
     return None, None
@@ -418,7 +417,7 @@ def _fetch_jats(url: str) -> str | None:
         return None
 
 
-def _fetch_record(db, workspace_id: int, rec, email: str) -> str:
+def _fetch_record(db, workspace_id: int, rec, email: str, keys: dict) -> str:
     """Walk the candidate ladder until a real PDF comes back. If every candidate
     is unreachable (publisher bot walls, mostly) keep the best URL we saw so the
     record lands in the manual-upload queue with a link instead of a dead end."""
@@ -458,7 +457,7 @@ def _fetch_record(db, workspace_id: int, rec, email: str) -> str:
             return "fetched"
 
     # Last layer: the publisher's own TDM API, for what OA channels can't reach.
-    md, pdf = publisher_fulltext(doi)
+    md, pdf = publisher_fulltext(doi, keys)
     if md:
         rec.full_text_md = md
         rec.full_text_status = "converted"
@@ -481,7 +480,7 @@ def _fetch_record(db, workspace_id: int, rec, email: str) -> str:
     return "failed"
 
 
-def _run_fetch(workspace_id: int, email: str):
+def _run_fetch(workspace_id: int, email: str, keys: dict | None = None):
     from models import Record, SessionLocal
     db = SessionLocal()
     try:
@@ -496,7 +495,7 @@ def _run_fetch(workspace_id: int, email: str):
                                      "url_only": 0, "failed": 0})
         fetched = converted = url_only = failed = 0
         for i, rec in enumerate(targets):
-            outcome = _fetch_record(db, workspace_id, rec, email)
+            outcome = _fetch_record(db, workspace_id, rec, email, keys or {})
             if outcome == "fetched":
                 fetched += 1
             elif outcome == "converted":
@@ -520,8 +519,9 @@ def _run_fetch(workspace_id: int, email: str):
         db.close()
 
 
-def start_fetch(workspace_id: int, email: str):
-    threading.Thread(target=_run_fetch, args=(workspace_id, email), daemon=True).start()
+def start_fetch(workspace_id: int, email: str, keys: dict | None = None):
+    threading.Thread(target=_run_fetch, args=(workspace_id, email, keys or {}),
+                     daemon=True).start()
 
 
 # ── Pass 2: convert (paper2md) ──────────────────────────────────────────────────

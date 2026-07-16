@@ -20,10 +20,15 @@ synthesis). It calls the Claude API (per-user key) and the
 | `SPRINGER_API_KEY` | no | _(none)_ | Springer Nature open-access API. Free from [dev.springernature.com](https://dev.springernature.com) |
 | `WILEY_TDM_TOKEN` | no | _(none)_ | Wiley TDM client token, issued from a Wiley Online Library account with the institution's entitlement |
 
-The publisher keys are the last layer of step 6: they run only after the
-open-access ladder (Europe PMC → Unpaywall/OpenAlex → landing pages) has failed,
-and only for DOIs carrying that publisher's prefix. Leave one unset and its
-publisher is simply skipped.
+The publisher credentials are normally set **per user**, in Profile → *Publisher
+full-text access*: the entitlement follows the person and their institution, not
+the server. The env vars above are only a fallback default for users who haven't
+set their own — on a shared box you can leave them empty.
+
+Either way they are the last layer of step 6: they run only after the open-access
+ladder (Europe PMC → Unpaywall/OpenAlex → landing pages) has failed, and only for
+DOIs carrying that publisher's prefix. Leave one unset and its publisher is
+simply skipped.
 
 Generate the keys:
 

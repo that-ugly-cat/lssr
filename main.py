@@ -85,6 +85,32 @@ def _user_api_key(user: User) -> str | None:
     return os.environ.get("ANTHROPIC_API_KEY")
 
 
+_PUBLISHER_FIELDS = {
+    "elsevier": ("elsevier_key_encrypted", "ELSEVIER_API_KEY"),
+    "elsevier_insttoken": ("elsevier_insttoken_encrypted", "ELSEVIER_INSTTOKEN"),
+    "springer": ("springer_key_encrypted", "SPRINGER_API_KEY"),
+    "wiley": ("wiley_token_encrypted", "WILEY_TDM_TOKEN"),
+}
+
+
+def _user_publisher_keys(user: User) -> dict:
+    """The reviewer's own publisher TDM credentials, falling back to a
+    server-wide env default. A publisher with no credential is left out, and
+    fulltext skips it entirely."""
+    import crypto
+    keys = {}
+    for name, (column, env) in _PUBLISHER_FIELDS.items():
+        value = ""
+        stored = getattr(user, column, None)
+        if stored:
+            try:
+                value = crypto.decrypt(stored)
+            except Exception:
+                value = ""
+        keys[name] = value or os.environ.get(env, "").strip()
+    return keys
+
+
 def _apply_record_filters(query, q: str, source: str, rtype: str, yf: str, yt: str,
                           sort: str, order: str):
     """Shared filter + sort for the Records and Screening tables."""
@@ -313,7 +339,28 @@ async def public_review(token: str, request: Request, db: Session = Depends(get_
 
 @app.get("/profile", response_class=HTMLResponse)
 async def profile(request: Request, user: User = Depends(get_current_user)):
-    return render(request, "profile.html", {"user": user, "has_key": bool(user.api_key_encrypted)})
+    # which publisher credentials this user has, and which fall back to the server's
+    pub = {name: {"user": bool(getattr(user, column, None)),
+                  "env": bool(os.environ.get(env, "").strip())}
+           for name, (column, env) in _PUBLISHER_FIELDS.items()}
+    return render(request, "profile.html", {
+        "user": user, "has_key": bool(user.api_key_encrypted), "pub": pub,
+    })
+
+
+@app.post("/profile/publisher-key/{name}")
+async def set_publisher_key(name: str, value: str = Form(""),
+                            user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """Save one publisher credential; blank clears it — same contract as the
+    Anthropic key, so each credential is edited independently."""
+    if name not in _PUBLISHER_FIELDS:
+        raise HTTPException(400, "Unknown credential")
+    import crypto
+    v = value.strip()
+    setattr(user, _PUBLISHER_FIELDS[name][0], crypto.encrypt(v) if v else None)
+    db.commit()
+    return RedirectResponse("/profile", status_code=302)
 
 
 @app.post("/profile/api-key")
@@ -1037,7 +1084,7 @@ async def run_fulltext_fetch(ws_id: int, user: User = Depends(get_current_user),
     if job and job.get("status") == "running":
         raise HTTPException(409, "Full-text fetch already in progress")
     email = os.environ.get("UNPAYWALL_EMAIL") or ws.owner.email
-    fulltext.start_fetch(ws.id, email)
+    fulltext.start_fetch(ws.id, email, _user_publisher_keys(user))
     return RedirectResponse(f"/w/{ws_id}/fulltext", status_code=302)
 
 
