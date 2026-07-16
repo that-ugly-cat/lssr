@@ -5,7 +5,6 @@
 
 <div class="stat-grid">
   <div class="stat-card"><div class="stat-num">{{ active_n }}</div><div class="stat-label">Records</div></div>
-  <div class="stat-card"><div class="stat-num">{{ removed_n }}</div><div class="stat-label">Removed</div></div>
 </div>
 
 <div class="cards-label">Step 3 — Import references</div>
@@ -47,28 +46,20 @@
 {% set f = filters %}
 {% macro sorth(field, label) %}
   {%- set no = 'asc' if (f.sort == field and f.order == 'desc') else 'desc' -%}
-  <a class="th-sort" href="?show={{ f.show }}&q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f.rtype }}&yf={{ f.yf }}&yt={{ f.yt }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
+  <a class="th-sort" href="?q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f.rtype }}&yf={{ f.yf }}&yt={{ f.yt }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
 {%- endmacro %}
 
 <div class="page-head" style="margin-top:6px;">
-  <div class="cards-label" style="margin:0;">
-    Pool
-    <span style="font-weight:400; text-transform:none; letter-spacing:0;">
-      · <a href="/w/{{ ws.id }}/records?show=active" class="{{ '' if show=='removed' else 'muted' }}">Active ({{ active_n }})</a>
-      · <a href="/w/{{ ws.id }}/records?show=removed" class="{{ 'muted' if show!='removed' else '' }}">Removed ({{ removed_n }})</a>
-    </span>
-  </div>
+  <div class="cards-label" style="margin:0;">Pool ({{ active_n }})</div>
   <div style="display:flex; gap:8px;">
     <form method="post" action="/w/{{ ws.id }}/records/dedup/run">
       <button class="btn btn-small" type="submit">Deduplicate</button>
     </form>
-    <button class="btn btn-small" type="button"
-            onclick="document.getElementById('add-rec').classList.add('open')">Add record</button>
+    <button class="btn btn-small" type="button" onclick="document.getElementById('add-rec').classList.add('open')">Add record</button>
   </div>
 </div>
 
 <form method="get" class="filter-bar">
-  <input type="hidden" name="show" value="{{ f.show }}">
   <input type="hidden" name="sort" value="{{ f.sort }}">
   <input type="hidden" name="order" value="{{ f.order }}">
   <input type="text" name="q" value="{{ f.q }}" placeholder="Search title / author / abstract" style="max-width:260px;">
@@ -84,7 +75,7 @@
   <input type="number" name="yf" value="{{ f.yf }}" placeholder="year ≥" style="max-width:100px;">
   <input type="number" name="yt" value="{{ f.yt }}" placeholder="year ≤" style="max-width:100px;">
   <button class="btn btn-small" type="submit">Filter</button>
-  <a class="btn btn-small" href="/w/{{ ws.id }}/records?show={{ f.show }}">Clear</a>
+  <a class="btn btn-small" href="/w/{{ ws.id }}/records">Clear</a>
 </form>
 
 <table class="table">
@@ -96,7 +87,7 @@
       <td class="nowrap">{{ r.year or '—' }}</td>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
-        <div class="muted small">{{ r.authors or '' }}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% endif %}</div>
+        <div class="muted small">{{ r.authors or '' }}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% elif r.url %} · <a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.url|truncate(60) }}</a>{% endif %}</div>
         {% if r.abstract %}
         <details class="abstract-toggle"><summary class="muted small">abstract</summary><div class="small" style="margin-top:4px; max-width:75ch;">{{ r.abstract }}</div></details>
         {% else %}<div class="muted small" style="font-style:italic;">no abstract</div>{% endif %}
@@ -107,15 +98,12 @@
         {% for db in r.source_dbs_json|fromjson %}<span class="badge badge-muted">{{ db }}</span> {% endfor %}
       </td>
       <td class="ta-right nowrap">
-        {% if show == 'removed' %}
-        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/restore" style="display:inline;">
-          <button class="btn btn-small" type="submit">Restore</button>
+        <button class="btn btn-small" type="button"
+          onclick='editRecord({{ {"id": r.id, "title": r.title or "", "authors": r.authors or "", "year": r.year or "", "doi": r.doi or "", "url": r.url or "", "source": r.source or "", "type": r.type or "article", "abstract": r.abstract or ""}|tojson }})'>Edit</button>
+        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/remove" style="display:inline;"
+              onsubmit="return confirm('Delete this record permanently? Removals at this stage aren’t tracked.');">
+          <button class="btn btn-danger btn-small" type="submit">Delete</button>
         </form>
-        {% else %}
-        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/remove" style="display:inline;">
-          <button class="btn btn-danger btn-small" type="submit">Remove</button>
-        </form>
-        {% endif %}
       </td>
     </tr>
     {% else %}
@@ -125,6 +113,30 @@
 </table>
 {% if records|length >= 500 %}<p class="muted small">Showing first 500 — narrow the filter to see more.</p>{% endif %}
 
+{% macro record_fields(prefix) %}
+  <label>Title <input type="text" name="title" id="{{ prefix }}-title" required></label>
+  <div class="inline-form">
+    <label style="flex:2;">Authors <input type="text" name="authors" id="{{ prefix }}-authors"></label>
+    <label style="flex:1;">Year <input type="text" name="year" id="{{ prefix }}-year"></label>
+  </div>
+  <div class="inline-form">
+    <label style="flex:1;">DOI <input type="text" name="doi" id="{{ prefix }}-doi"></label>
+    <label style="flex:1;">Type
+      <select name="type" id="{{ prefix }}-type">
+        <option value="article">Article</option>
+        <option value="book">Book</option>
+        <option value="book_chapter">Book chapter</option>
+        <option value="grey">Grey literature</option>
+      </select>
+    </label>
+  </div>
+  <div class="inline-form">
+    <label style="flex:1;">URL <input type="text" name="url" id="{{ prefix }}-url" placeholder="used when there's no DOI"></label>
+    <label style="flex:1;">Source <input type="text" name="source" id="{{ prefix }}-source"></label>
+  </div>
+  <label>Abstract <textarea name="abstract" id="{{ prefix }}-abstract" rows="2"></textarea></label>
+{% endmacro %}
+
 <div class="overlay" id="add-rec">
   <div class="modal">
     <div class="modal-header">
@@ -132,28 +144,35 @@
       <button class="modal-close" type="button" onclick="document.getElementById('add-rec').classList.remove('open')">&times;</button>
     </div>
     <form method="post" action="/w/{{ ws.id }}/records/add">
-      <label>Title <input type="text" name="title" required></label>
-      <div class="inline-form">
-        <label style="flex:2;">Authors <input type="text" name="authors"></label>
-        <label style="flex:1;">Year <input type="text" name="year"></label>
-      </div>
-      <div class="inline-form">
-        <label style="flex:1;">DOI <input type="text" name="doi"></label>
-        <label style="flex:1;">Source <input type="text" name="source"></label>
-        <label style="flex:1;">Type
-          <select name="type">
-            <option value="article">Article</option>
-            <option value="book">Book</option>
-            <option value="book_chapter">Book chapter</option>
-            <option value="grey">Grey literature</option>
-          </select>
-        </label>
-      </div>
-      <label>Abstract <textarea name="abstract" rows="2"></textarea></label>
+      {{ record_fields('add') }}
       <button class="btn btn-primary" type="submit" style="margin-top:12px;">Add record</button>
     </form>
   </div>
 </div>
 
+<div class="overlay" id="edit-rec">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Edit record</div>
+      <button class="modal-close" type="button" onclick="document.getElementById('edit-rec').classList.remove('open')">&times;</button>
+    </div>
+    <form method="post" id="edit-form">
+      {{ record_fields('edit') }}
+      <button class="btn btn-primary" type="submit" style="margin-top:12px;">Save changes</button>
+    </form>
+  </div>
+</div>
+
 {% include "_step_done.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function editRecord(r) {
+  document.getElementById('edit-form').action = `/w/{{ ws.id }}/records/${r.id}/edit`;
+  for (const k of ['title','authors','year','doi','url','source','type','abstract'])
+    document.getElementById('edit-' + k).value = r[k];
+  document.getElementById('edit-rec').classList.add('open');
+}
+</script>
 {% endblock %}

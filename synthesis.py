@@ -47,7 +47,6 @@ def compute_prisma(db, workspace_id: int) -> dict:
     return {
         "identified": identified,
         "duplicates_removed": max(identified - records_total, 0),
-        "records_manually_removed": rc(R.is_removed == True),             # noqa: E712
         "screened": screened,
         "excluded_screen1": rc(R.is_removed == False, R.screen1_decision == "exclude"),  # noqa: E712
         "included_screen1": included_s1,

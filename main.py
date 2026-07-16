@@ -519,29 +519,26 @@ async def translate_route(ws_id: int, database: str, user: User = Depends(get_cu
 # ── Records pool (steps 3-4) ────────────────────────────────────────────────
 
 @app.get("/w/{ws_id}/records", response_class=HTMLResponse)
-async def records_page(ws_id: int, request: Request, show: str = "active",
+async def records_page(ws_id: int, request: Request,
                        q: str = "", source: str = "", rtype: str = "",
                        yf: str = "", yt: str = "", sort: str = "year", order: str = "desc",
                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     query = db.query(Record).filter(Record.workspace_id == ws.id,
-                                    Record.is_removed == (show == "removed"))
+                                    Record.is_removed == False)  # noqa: E712
     query = _apply_record_filters(query, q, source, rtype, yf, yt, sort, order)
     records = query.limit(500).all()
 
     active_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                        Record.is_removed == False).count()  # noqa: E712
-    removed_n = db.query(Record).filter(Record.workspace_id == ws.id,
-                                        Record.is_removed == True).count()  # noqa: E712
     imports = db.query(Import).filter(Import.workspace_id == ws.id).order_by(
         Import.created_at.desc()).limit(10).all()
     dbs_present = _dbs_present(db, ws.id)
     return render(request, "workspace_records.html", {
         "user": user, "ws": ws, "tab": "records", "steps_done": workspace_steps_done(ws),
-        "records": records,
-        "active_n": active_n, "removed_n": removed_n, "show": show,
+        "records": records, "active_n": active_n,
         "imports": imports, "dbs_present": dbs_present,
-        "filters": {"show": show, "q": q, "source": source, "rtype": rtype,
+        "filters": {"q": q, "source": source, "rtype": rtype,
                     "yf": yf, "yt": yt, "sort": sort, "order": order},
     })
 
@@ -640,21 +637,25 @@ async def import_excel_apply(ws_id: int, request: Request, token: str = Form(...
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 
+def _parse_year(year: str):
+    return int("".join(c for c in year if c.isdigit())[:4]) if any(c.isdigit() for c in year) else None
+
+
 @app.post("/w/{ws_id}/records/add")
 async def add_record(ws_id: int, title: str = Form(...), authors: str = Form(""),
-                     year: str = Form(""), doi: str = Form(""), abstract: str = Form(""),
-                     source: str = Form(""), type: str = Form("article"),
+                     year: str = Form(""), doi: str = Form(""), url: str = Form(""),
+                     abstract: str = Form(""), source: str = Form(""), type: str = Form("article"),
                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     it = current_iteration(db, ws)
     from ingest import canonical_key, normalize_doi
-    yr = int("".join(c for c in year if c.isdigit())[:4]) if any(c.isdigit() for c in year) else None
+    yr = _parse_year(year)
     ref = {"type": type, "authors": authors.strip(), "year": yr, "title": title.strip(),
-           "abstract": abstract.strip(), "doi": doi.strip(), "url": "", "source": source.strip(),
-           "keywords": [], "mesh": [], "language": ""}
+           "abstract": abstract.strip(), "doi": doi.strip(), "url": url.strip(),
+           "source": source.strip(), "keywords": [], "mesh": [], "language": ""}
     rec = Record(workspace_id=ws.id, type=type, authors=authors.strip() or None, year=yr,
                  title=title.strip(), abstract=abstract.strip() or None,
-                 doi=normalize_doi(doi) or None, source=source.strip() or None,
+                 doi=normalize_doi(doi) or None, url=url.strip() or None, source=source.strip() or None,
                  keywords_json="[]", mesh_json="[]",
                  source_dbs_json=json.dumps(["manual"]), canonical_key=canonical_key(ref) or None,
                  added_manually=True, first_seen_iter_id=it.id, last_seen_iter_id=it.id)
@@ -663,28 +664,45 @@ async def add_record(ws_id: int, title: str = Form(...), authors: str = Form("")
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 
-@app.post("/w/{ws_id}/records/{rid}/remove")
-async def remove_record(ws_id: int, rid: int, reason: str = Form(""),
-                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+@app.post("/w/{ws_id}/records/{rid}/edit")
+async def edit_record(ws_id: int, rid: int, title: str = Form(...), authors: str = Form(""),
+                      year: str = Form(""), doi: str = Form(""), url: str = Form(""),
+                      abstract: str = Form(""), source: str = Form(""), type: str = Form("article"),
+                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
-    if rec:
-        rec.is_removed = True
-        rec.removed_reason = reason.strip() or "manual removal"
-        db.commit()
+    if not rec:
+        raise HTTPException(404, "Record not found")
+    from ingest import canonical_key, normalize_doi
+    if type not in ("article", "book", "book_chapter", "grey"):
+        type = "article"
+    rec.title = title.strip()
+    rec.authors = authors.strip() or None
+    rec.year = _parse_year(year)
+    rec.doi = normalize_doi(doi) or None
+    rec.url = url.strip() or None
+    rec.source = source.strip() or None
+    rec.type = type
+    rec.abstract = abstract.strip() or None
+    rec.canonical_key = canonical_key({"doi": rec.doi, "title": rec.title, "year": rec.year}) or None
+    db.commit()
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 
-@app.post("/w/{ws_id}/records/{rid}/restore")
-async def restore_record(ws_id: int, rid: int, user: User = Depends(get_current_user),
-                         db: Session = Depends(get_db)):
+@app.post("/w/{ws_id}/records/{rid}/remove")
+async def remove_record(ws_id: int, rid: int,
+                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Hard delete — at the records stage a removal leaves no trace (removals are
+    tracked from screening onward, as exclude decisions)."""
     ws = _load_ws(db, user, ws_id)
     rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
     if rec:
-        rec.is_removed = False
-        rec.removed_reason = None
+        from models import Extraction, ScreenDecision
+        db.query(ScreenDecision).filter(ScreenDecision.record_id == rid).delete()
+        db.query(Extraction).filter(Extraction.record_id == rid).delete()
+        db.delete(rec)   # raw_refs cascade via the relationship
         db.commit()
-    return RedirectResponse(f"/w/{ws_id}/records?show=removed", status_code=302)
+    return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 
 # ── Manual dedup pass (step 4, on demand) ───────────────────────────────────
