@@ -24,11 +24,17 @@ A workspace is one living review. Users belong to one or more workspaces; each
 step can be marked *done* (a ✓ on its tab and Overview), and a workspace can
 expose read-only public links to its dashboard and published synthesis.
 
-1. **Query & refinement** — a PubMed search, with MeSH/keyword frequencies to
-   refine it.
-2. **Query translation** — LLM-assisted translation to Scopus / Web of Science /
-   CINAHL / JSTOR syntax, always human-editable. *(Import from those DBs is
-   currently manual — see Roadmap.)*
+1. **Query** — author the canonical query in one source database: **PubMed**
+   (richest syntax, the recommended default) or **OpenAlex** (broadest,
+   multidisciplinary corpus). MeSH/keyword frequencies help refine it, and a
+   shared publication-year window applies to every source.
+2. **Translation & sources** — LLM-assisted, **source-aware** translation into
+   any of 14 databases (Scopus, Web of Science, Embase, APA PsycInfo, CINAHL,
+   JSTOR, PhilPapers, HeinOnline, ERIC…), always human-editable, each with a link
+   to that database's search page. Four of them have open APIs and can be
+   **harvested directly** (PubMed, Europe PMC, OpenAlex, ERIC); the rest you
+   export and import under Records. Deduplication merges provenance across all
+   sources, so each database grafts onto the same pool.
 3. **Records** — BibTeX / RIS / Excel imports (Excel with a column-mapping step),
    plus manual entry and editing; incremental **deduplication** (DOI-exact then
    fuzzy title+year, keeping the most complete version and merging provenance).
@@ -55,8 +61,16 @@ expose read-only public links to its dashboard and published synthesis.
    country, study year, study type and the three empirical-methodology axes
    (design / data / timeframe). Each record's authoritative values are the
    owner-curated *final* row, else the latest reviewer's, else the model draft.
-7. **Synthesis** — a narrative block per free-text extraction field with inline
-   citations, plus PRISMA counts, on the public page.
+7. **Synthesis** — a "Study characteristics" block summarising the structured
+   fields' distributions (computed, not written by the LLM), then one narrative
+   block per free-text criterion. Citations are built **procedurally** from each
+   record (author, year, DOI/link): the LLM only places a study token, so a
+   citation can't be hallucinated. PRISMA counts are rendered as a **flow
+   diagram**, on the public page.
+
+The screening and assessment tables (and full text) carry filters; screening and
+assessment export to **Excel** (the assessment sheet is the record × field
+extraction matrix).
 
 Press **Refresh** to open a new iteration: it re-runs the searches and
 re-deduplicates, screening and assessing only the newly found records — the
@@ -78,12 +92,17 @@ FastAPI + Jinja2 + SQLAlchemy/SQLite, JWT cookie auth. Per-user credentials
 (Anthropic key, publisher TDM keys) are Fernet-encrypted at rest and set in the
 profile. Admin user management at `/admin`. Background jobs with status polling,
 a progress bar and a rolling time estimate; per-run cost estimates on the LLM
-steps. Ships as a Docker container on port **8013**. See [DEPLOY.md](DEPLOY.md).
+steps. Every prompt sent to a model lives in a single `prompts.py`, for auditing
+and explainability. Ships as a Docker container on port **8013**. See
+[DEPLOY.md](DEPLOY.md).
 
 ## Roadmap
 
-Automated import from Scopus / Web of Science / CINAHL / JSTOR (the query
-translation exists; ingest from those DBs is still manual BibTeX/RIS/Excel).
+Automated import from the paywalled databases (Scopus / Web of Science / Embase /
+APA PsycInfo / CINAHL / JSTOR / HeinOnline) via their institutional APIs — the
+query translation and manual import already exist; direct ingest needs
+institutional credentials (Scopus/Embase = Elsevier, which requires an
+institutional token from a server).
 
 ## License
 

@@ -148,6 +148,11 @@ def db_date_syntax(db: str, yf: int, yt: int) -> str | None:
     }.get(db)
 
 
+# System prompt for one translation call. It fixes the contract that makes the
+# output safe to save straight into a query box: return the bare query string, no
+# prose and no code fences (translate.py still strips fences defensively, because
+# models occasionally add them anyway). The user message (translate_user, below)
+# supplies the source and target rules and the query itself.
 TRANSLATE_SYSTEM = (
     "You are an expert research librarian who translates bibliographic database "
     "queries between syntaxes for systematic reviews. You preserve the search "
@@ -189,6 +194,12 @@ def translate_user(source_db: str, source_query: str, target_db: str,
 
 # ══ Screening 1 — title + abstract (screening.py) ════════════════════════════
 
+# First-pass screen against the workspace's *exclusion* criteria, on title +
+# abstract only. Design choices baked into the text: a three-way decision
+# (include/exclude/maybe) where "maybe" parks the genuinely-uncertain for a human
+# rather than defaulting to "include"; and a strict JSON-only reply so screening.py
+# can parse it. {rq} / {criteria} are filled by screening_system() from the
+# workspace's research question and exclusion criteria.
 SCREENING_SYSTEM = """\
 You are screening records for a scoping review at the TITLE + ABSTRACT stage.
 
@@ -222,6 +233,13 @@ def screening_user(title, abstract) -> str:
 
 # ══ Assessment — screening 2 + extraction, on full text (assessment.py) ══════
 
+# One call over the full text does both screen-2 (inclusion decision against the
+# *inclusion* criteria) and the structured data extraction — the token-saving
+# "single conditional call" (extraction only when the decision is include). The
+# text is explicit that fields must be grounded in the article (never guessed),
+# that conditional fields follow their show_if, and that free-text answers should
+# carry a verbatim «guillemet» quote. {rq} / {inclusion} / {fields} are filled by
+# assessment_system(); _fields_spec() renders the field schema the model must obey.
 ASSESSMENT_SYSTEM = """\
 You are conducting the FULL-TEXT stage of a scoping review.
 
@@ -279,6 +297,12 @@ def assessment_user(full_text) -> str:
 
 # ══ Synthesis — narrative per assessment criterion (synthesis.py) ════════════
 
+# Aggregates the per-study findings for one theme into a narrative paragraph. The
+# critical rule is the citation contract: the model cites ONLY by inserting a study
+# token ([S1], [S2]…) and never writes an author, year, or link itself. synthesis.py
+# then substitutes each token with a citation built procedurally from the record's
+# own fields, so a citation can't be hallucinated — the model only chooses where a
+# reference goes, never what it says. synthesis_user() feeds the tokened findings.
 SYNTHESIS_SYSTEM = """\
 You are writing the results section of a scoping review. For the theme below,
 synthesize the provided per-study findings into one coherent narrative paragraph
