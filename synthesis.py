@@ -78,33 +78,45 @@ def compute_prisma(db, workspace_id: int) -> dict:
 _SVG_FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"
 
 
-def prisma_svg(prisma: dict):
+def prisma_svg(prisma: dict, steps_done=None):
     """Render the PRISMA counts as a top-to-bottom flow diagram (inline SVG).
     Colours come from the page's CSS custom properties, so it follows the theme.
+    With steps_done, stages whose pipeline step isn't marked done render as
+    muted dashed 'pending' placeholders instead of counts.
     Returns Markup so templates can drop it in with no escaping."""
     from markupsafe import Markup
     import html as _h
     if not prisma:
         return Markup("")
     p = prisma
+    done = None if steps_done is None else set(steps_done)
     src = p.get("by_source") or {}
     ident = [f"{k}: {v}" for k, v in src.items()]
     ident += [f"Total: {p.get('identified', 0)}"] if ident else [f"Records identified: {p.get('identified', 0)}"]
     stages = [
-        {"g": "Identification", "lines": ident, "boldlast": bool(src),
+        {"g": "Identification", "step": "records", "pending_title": "Records identified",
+         "lines": ident, "boldlast": bool(src),
          "side": [f"Duplicates removed: {p.get('duplicates_removed', 0)}"]},
-        {"g": "Screening", "lines": ["Screened vs exclusion criteria",
-                                     f"(screening 1): {p.get('screened', 0)}"],
+        {"g": "Screening", "step": "screening", "pending_title": "Screening 1 (title/abstract)",
+         "lines": ["Screened vs exclusion criteria",
+                   f"(screening 1): {p.get('screened', 0)}"],
          "side": [f"Excluded: {p.get('excluded_screen1', 0)}"]},
-        {"g": "Screening", "lines": [f"Full texts retrieved: {p.get('fulltext_retrieved', 0)}",
-                                     f"of {p.get('fulltext_sought', 0)} sought"],
+        {"g": "Screening", "step": "fulltext", "pending_title": "Full text retrieval",
+         "lines": [f"Full texts retrieved: {p.get('fulltext_retrieved', 0)}",
+                   f"of {p.get('fulltext_sought', 0)} sought"],
          "side": [f"Not retrieved: {p.get('fulltext_not_retrieved', 0)}"]},
-        {"g": "Screening", "lines": ["Assessed vs inclusion criteria",
-                                     f"(screening 2): {p.get('assessed', 0)}"],
+        {"g": "Screening", "step": "assessment", "pending_title": "Assessment (screening 2)",
+         "lines": ["Assessed vs inclusion criteria",
+                   f"(screening 2): {p.get('assessed', 0)}"],
          "side": [f"Excluded: {p.get('excluded_screen2', 0)}"]},
-        {"g": "Included", "lines": ["Studies included in the review:",
-                                    str(p.get('included_final', 0))], "bold": True, "side": None},
+        {"g": "Included", "step": "assessment", "pending_title": "Studies included in the review",
+         "lines": ["Studies included in the review:",
+                   str(p.get('included_final', 0))], "bold": True, "side": None},
     ]
+    for st in stages:
+        if done is not None and st["step"] not in done:
+            st.update(lines=[st["pending_title"], "pending"], side=None,
+                      bold=False, boldlast=False, pending=True)
     LH, GAP, PAD = 15, 30, 16
     SPINE_X, SPINE_W, SIDE_X, SIDE_W, LBL_X, LBL_W, WD = 64, 250, 396, 210, 6, 30, 620
 
@@ -118,9 +130,10 @@ def prisma_svg(prisma: dict):
     def esc(s):
         return _h.escape(str(s))
 
-    def box(x, y0, w, h, lines, bold=False, boldlast=False, muted=False):
+    def box(x, y0, w, h, lines, bold=False, boldlast=False, muted=False, dashed=False):
+        dash = ' stroke-dasharray="5 4"' if dashed else ""
         out = [f'<rect x="{x}" y="{y0}" width="{w}" height="{h}" rx="6" '
-               f'fill="var(--card)" stroke="var(--border)" stroke-width="1"/>']
+               f'fill="var(--card)" stroke="var(--border)" stroke-width="1"{dash}/>']
         n, cx = len(lines), x + w / 2
         sy = y0 + h / 2 - (n - 1) * LH / 2
         for i, ln in enumerate(lines):
@@ -156,7 +169,8 @@ def prisma_svg(prisma: dict):
     for i, st in enumerate(stages):
         y0, h = pos[i]
         parts.append(box(SPINE_X, y0, SPINE_W, h, st["lines"],
-                         bold=st.get("bold", False), boldlast=st.get("boldlast", False)))
+                         bold=st.get("bold", False), boldlast=st.get("boldlast", False),
+                         muted=st.get("pending", False), dashed=st.get("pending", False)))
         if i < len(stages) - 1:
             x = SPINE_X + SPINE_W / 2
             parts.append(f'<line x1="{x}" y1="{y0 + h}" x2="{x}" y2="{pos[i + 1][0] - 2}" '

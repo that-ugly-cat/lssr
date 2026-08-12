@@ -55,6 +55,7 @@ def _fromjson(raw):
 
 templates.env.filters["fromjson"] = _fromjson
 
+from synthesis import compute_prisma as _compute_prisma  # noqa: E402
 from synthesis import prisma_svg as _prisma_svg  # noqa: E402
 templates.env.globals["prisma_svg"] = _prisma_svg
 
@@ -219,6 +220,7 @@ async def workspace_overview(ws_id: int, request: Request,
         "is_owner": ws.owner_id == user.id or user.is_admin,
         "members": members, "shares": shares, "steps_done": workspace_steps_done(ws),
         "iterations": iterations, "iter_new": iter_new,
+        "prisma": _compute_prisma(db, ws.id),
     })
 
 
@@ -412,7 +414,7 @@ async def public_review(token: str, request: Request, db: Session = Depends(get_
     from models import Synthesis
     syn = db.query(Synthesis).filter(Synthesis.workspace_id == ws.id,
                                      Synthesis.published == True).first()  # noqa: E712
-    prisma = json.loads(syn.prisma_json) if (syn and syn.prisma_json) else None
+    prisma = _compute_prisma(db, ws.id)
     blocks = sorted(syn.blocks, key=lambda b: b.position) if syn else []
     queries = []
     if "query" in steps_done:
@@ -1602,13 +1604,12 @@ async def synthesis_page(ws_id: int, request: Request, user: User = Depends(get_
     ws = _load_ws(db, user, ws_id)
     from models import Synthesis
     syn = db.query(Synthesis).filter(Synthesis.workspace_id == ws.id).first()
-    prisma = json.loads(syn.prisma_json) if (syn and syn.prisma_json) else None
     blocks = sorted(syn.blocks, key=lambda b: b.position) if syn else []
     shares = db.query(PublicShare).filter(PublicShare.workspace_id == ws.id,
                                           PublicShare.active == True).all()  # noqa: E712
     return render(request, "workspace_synthesis.html", {
         "user": user, "ws": ws, "tab": "synthesis", "steps_done": workspace_steps_done(ws),
-        "syn": syn, "prisma": prisma,
+        "syn": syn,
         "blocks": blocks, "shares": shares, "has_key": bool(_user_api_key(user)),
         "is_owner": ws.owner_id == user.id or user.is_admin,
     })

@@ -33,8 +33,6 @@
 <div class="flash" style="display:block;">Published, but no public link yet — create one in <a href="/w/{{ ws.id }}">Overview</a>.</div>
 {% endif %}
 
-{% if prisma %}{% include "_prisma.html" %}{% endif %}
-
 {% for b in blocks %}
 <div class="cards-label">{{ b.heading }}</div>
 <div class="card">{{ b.narrative | markdown }}</div>

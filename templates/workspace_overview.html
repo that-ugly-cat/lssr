@@ -14,7 +14,7 @@
     (3, 'Screening', 'Title/abstract screening vs exclusion criteria', 'screening'),
     (4, 'Full text', 'Retrieve open-access PDFs & convert to markdown', 'fulltext'),
     (5, 'Assessment', 'Full-text screening & structured extraction', 'assessment'),
-    (6, 'Synthesis', 'Narrative synthesis, PRISMA & public page', 'synthesis')
+    (6, 'Synthesis', 'Narrative synthesis & public page', 'synthesis')
   ] %}
   <div class="pipeline-steps">
     {% for n, label, desc, tab in stages %}
@@ -28,6 +28,8 @@
     {% endfor %}
   </div>
 </div>
+
+{% include "_prisma.html" %}
 
 <div class="cards-label">Iterations (living review)</div>
 <div class="card">

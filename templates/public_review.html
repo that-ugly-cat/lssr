@@ -47,6 +47,7 @@
   <nav class="pub-index">
     <div class="pub-index-inner">
       <a href="#top">Overview</a>
+      <a href="#prisma">PRISMA</a>
       {% if queries %}<a href="#queries">Queries</a>{% endif %}
       {% if has_records %}<a href="#records">Records</a>{% endif %}
       {% if has_fulltext %}<a href="#fulltext">Full text</a>{% endif %}
@@ -70,6 +71,10 @@
         </span>
         {% endfor %}
       </div>
+    </section>
+
+    <section id="prisma">
+      {% include "_prisma.html" %}
     </section>
 
     {% if queries %}
@@ -165,7 +170,6 @@
       <h3>{{ b.heading }}</h3>
       <div class="card">{{ b.narrative | markdown }}</div>
       {% endfor %}
-      {% if prisma %}{% include "_prisma.html" %}{% endif %}
     </section>
     {% endif %}
 
