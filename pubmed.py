@@ -17,6 +17,8 @@ from urllib.parse import quote_plus
 
 import urllib3
 
+from authors import join_authors
+
 http = urllib3.PoolManager()
 RATE_LIMIT = 0.4  # seconds between NCBI requests (E-utilities policy)
 
@@ -80,7 +82,10 @@ def parse_medline(article: str) -> dict:
     title = find(r"(?<=TI\s\s-\s).*") or find(r"(?<=BTI\s-\s).*")
     return {
         "type": rtype,
-        "authors": ", ".join(findall(r"(?<=AU\s\s-\s).*")) or ", ".join(findall(r"(?<=ED\s\s-\s).*")),
+        "authors": (join_authors(findall(r"(?<=FAU\s-\s).*"))
+                    or join_authors(findall(r"(?<=AU\s\s-\s).*"))
+                    or join_authors(findall(r"(?<=FED\s-\s).*"))
+                    or join_authors(findall(r"(?<=ED\s\s-\s).*"))),
         "year": int(year) if year else None,
         "title": title,
         "abstract": find(r"(?<=AB\s\s-\s).*") or find(r"(?<=OAB\s-\s).*"),

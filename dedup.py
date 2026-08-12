@@ -35,10 +35,9 @@ def _norm_url(url: str | None) -> str:
 
 
 def _first_surname(authors: str | None) -> str:
-    if not authors:
-        return ""
-    first = authors.split(";")[0].split(",")[0].strip()
-    return first.split()[0].lower() if first else ""
+    from authors import split_authors, surname_of
+    names = split_authors(authors)
+    return surname_of(names[0]).lower() if names else ""
 
 
 def pair_key(a_id: int, b_id: int) -> str:

@@ -88,6 +88,16 @@
     <section id="records">
       <h2>Records <span class="muted">— {{ st.n_records }}</span></h2>
       {% if st.type_counts %}<div class="pub-types">{% for t in st.type_counts %}<span class="badge badge-muted">{{ t.count }} {{ t.label }}</span>{% endfor %}</div>{% endif %}
+      {% if st.sources %}
+      <h3>Records by database</h3>
+      <div class="pub-pie-wrap">
+        <div class="pub-pie" style="background: conic-gradient({% for s in st.sources %}{{ s.color }} {{ s.start }}% {{ s.end }}%{{ ', ' if not loop.last }}{% endfor %});"></div>
+        <div class="pub-pie-legend">
+          {% for s in st.sources %}<span><span class="dot" style="background:{{ s.color }};"></span> {{ s.count }} {{ s.label }}</span>{% endfor %}
+          {% if st.sources_overlap %}<span class="muted">deduplicated records found by more than one database count once per database</span>{% endif %}
+        </div>
+      </div>
+      {% endif %}
       {% if st.year_hist %}
       <h3>Publications by year</h3>
       {{ yearhist(st.year_hist, st.year_min, st.year_max) }}

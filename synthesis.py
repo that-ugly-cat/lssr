@@ -179,13 +179,12 @@ def citation(rec) -> str:
     """Full inline citation built from the record's own fields:
     'Surname et al., Year, https://doi.org/…'. The LLM never writes this — it only
     emits a study token that we substitute here, so citations can't be hallucinated."""
-    authors = (rec.authors or "").strip()
+    from authors import split_authors, surname_of
+    names = split_authors(rec.authors)
     year = rec.year or "n.d."
-    if authors:
-        first = authors.split(",")[0].split(";")[0].strip()
-        surname = first.split()[0] if first else "Anon"
-        multi = ("," in authors) or (";" in authors) or (" and " in authors)
-        who = f"{surname} et al." if multi else surname
+    if names:
+        surname = surname_of(names[0]) or "Anon"
+        who = f"{surname} et al." if len(names) > 1 else surname
     else:
         who = "Anon"
     link = f"https://doi.org/{rec.doi}" if rec.doi else (rec.url or "")

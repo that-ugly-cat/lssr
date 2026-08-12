@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 import urllib3
 
 import harvest_common
+from authors import join_authors
 
 http = urllib3.PoolManager()
 BASE = "https://api.ies.ed.gov/eric/"
@@ -38,7 +39,7 @@ def _parse(d: dict) -> dict:
     year = d.get("publicationdateyear")
     return {
         "type": "article" if eid.startswith("EJ") else "grey",
-        "authors": ", ".join(_list(d.get("author"))),
+        "authors": join_authors(_list(d.get("author"))),
         "year": int(year) if year and str(year).isdigit() else None,
         "title": _s(d.get("title")),
         "abstract": _s(d.get("description")),

@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import urllib3
 
 import harvest_common
+from authors import join_authors
 
 http = urllib3.PoolManager()
 BASE = "https://api.openalex.org/works"
@@ -33,7 +34,7 @@ def _reconstruct_abstract(inv: dict | None) -> str:
 
 def _parse(r: dict) -> dict:
     doi = (r.get("doi") or "").replace("https://doi.org/", "")
-    authors = ", ".join(
+    authors = join_authors(
         (a.get("author") or {}).get("display_name", "")
         for a in r.get("authorships", []) if a.get("author"))
     mesh = [m.get("descriptor_name", "") for m in r.get("mesh", []) if m.get("descriptor_name")]

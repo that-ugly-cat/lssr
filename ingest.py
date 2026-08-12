@@ -23,6 +23,7 @@ import re
 
 from rapidfuzz import fuzz
 
+from authors import canonicalize, join_authors
 from models import Import, Iteration, RawReference, Record
 
 FUZZY_THRESHOLD = 95  # title similarity (same year) to treat as a duplicate
@@ -246,7 +247,7 @@ def parse_bibtex(text: str) -> list[dict]:
         year = int(re.sub(r"[^0-9]", "", year)[:4]) if re.search(r"\d{4}", year) else None
         refs.append({
             "type": _BIBTEX_TYPES.get(etype, "grey"),
-            "authors": re.sub(r"\s+and\s+", ", ", e.get("author", "")).strip(),
+            "authors": join_authors(re.split(r"\s+and\s+", e.get("author", ""))),
             "year": year,
             "title": re.sub(r"[{}]", "", e.get("title", "")).strip(),
             "abstract": e.get("abstract", "").strip(),
@@ -279,7 +280,8 @@ def parse_ris(text: str) -> list[dict]:
                   or e.get("alternate_title3") or e.get("publisher") or "")
         refs.append({
             "type": _RIS_TYPES.get(ty, "grey"),
-            "authors": ", ".join(authors) if isinstance(authors, list) else str(authors),
+            "authors": (join_authors(authors) if isinstance(authors, list)
+                        else canonicalize(str(authors))),
             "year": year,
             "title": (e.get("title") or e.get("primary_title") or "").strip(),
             "abstract": (e.get("abstract") or e.get("notes_abstract") or "").strip(),
@@ -348,7 +350,7 @@ def excel_to_refs(file_bytes: bytes, mapping: dict, type_col: str | None,
         rtype = _norm_type(str(row[type_col])) if (type_col and type_col in cols) else default_type
         refs.append({
             "type": rtype,
-            "authors": g("authors"),
+            "authors": canonicalize(g("authors")),
             "year": int(ym.group()) if ym else None,
             "title": title,
             "abstract": g("abstract"),

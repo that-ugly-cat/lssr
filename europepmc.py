@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import urllib3
 
 import harvest_common
+from authors import canonicalize, join_authors
 
 http = urllib3.PoolManager()
 BASE = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
@@ -41,7 +42,9 @@ def _parse(r: dict) -> dict:
         url = ""
     return {
         "type": "article",
-        "authors": r.get("authorString", "") or "",
+        "authors": (join_authors(a.get("fullName", "") for a in
+                                 ((r.get("authorList") or {}).get("author") or []))
+                    or canonicalize(r.get("authorString", ""))),
         "year": int(year) if year and str(year).isdigit() else None,
         "title": r.get("title", "") or "",
         "abstract": r.get("abstractText", "") or "",

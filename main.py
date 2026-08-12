@@ -22,6 +22,7 @@ from auth import (
     create_token, get_current_user, get_user_or_none, hash_password, require_admin,
     verify_password,
 )
+from authors import author_key, canonicalize, split_authors
 from models import (
     DATABASES, DB_LABELS, HARVEST_DBS, PIPELINE_STEPS, PRICING, SOURCE_DBS, Criterion,
     Import, PublicShare, Record, User, Workspace, WorkspaceMember, can_access,
@@ -305,6 +306,19 @@ def _public_stats(db, ws_id: int) -> dict:
     recs = db.query(Record).filter(Record.workspace_id == ws_id,
                                    Record.is_removed == False).all()  # noqa: E712
 
+    # ── records per source database (pie) ──
+    src = Counter(d for r in recs for d in _fromjson(r.source_dbs_json))
+    palette = ["#63b3ed", "#68d391", "#f6ad55", "#b794f4", "#fc8181",
+               "#4fd1c5", "#f687b3", "#90cdf4", "#fbd38d", "#a0aec0"]
+    src_total = sum(src.values())
+    sources, acc = [], 0.0
+    for i, (d, c) in enumerate(src.most_common()):
+        start = acc
+        acc += c / src_total * 100
+        sources.append({"label": "Manual entry" if d == "manual" else db_label(d),
+                        "count": c, "color": palette[i % len(palette)],
+                        "start": round(start, 2), "end": round(acc, 2)})
+
     # ── records ──
     year_hist, ymin, ymax = _year_hist(Counter(r.year for r in recs if r.year))
     type_lbl = {"article": "papers", "book": "books",
@@ -312,16 +326,21 @@ def _public_stats(db, ws_id: int) -> dict:
     type_counts = [{"label": type_lbl.get(t, t), "count": c}
                    for t, c in Counter(r.type or "article" for r in recs).most_common()]
     kw = Counter()
-    authors = Counter()
+    author_counts = Counter()   # merge key → count ('Mario Rossi' + 'Rossi M')
+    author_forms = {}           # merge key → Counter of the forms seen
     for r in recs:
         for k in _fromjson(r.keywords_json):
             term = (k or "").strip().lower()
             if term:
                 kw[term] += 1
-        for a in re.split(r"\s*[;]\s*|\s+and\s+", r.authors or ""):
-            a = a.strip().strip(",").strip()
-            if a and len(a) > 1:
-                authors[a] += 1
+        for a in split_authors(r.authors):
+            if len(a) > 1:
+                key = author_key(a)
+                author_counts[key] += 1
+                author_forms.setdefault(key, Counter())[a] += 1
+    authors = Counter()
+    for key, c in author_counts.items():
+        authors[author_forms[key].most_common(1)[0][0]] += c
     top = kw.most_common(45)
     kwpeak = top[0][1] if top else 1
     keywords = [{"term": t, "count": c, "size": round(0.85 + 1.75 * (c / kwpeak), 2)}
@@ -375,6 +394,7 @@ def _public_stats(db, ws_id: int) -> dict:
     }
     return {"n_records": len(recs), "year_hist": year_hist, "year_min": ymin,
             "year_max": ymax, "type_counts": type_counts, "keywords": keywords,
+            "sources": sources, "sources_overlap": src_total > len(recs),
             "authors": _bars(authors, 25), "screen": screen, "screen2": screen2,
             "fulltext": fulltext, "assessment": assessment}
 
@@ -611,7 +631,7 @@ async def harvest_status(ws_id: int, database: str, user: User = Depends(get_cur
 
 
 @app.post("/w/{ws_id}/query/{database}/save")
-async def save_translation(ws_id: int, database: str, query: str = Form(...),
+async def save_translation(ws_id: int, database: str, query: str = Form(""),
                            user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     if database not in DATABASES or database == (ws.primary_db or "pubmed"):
@@ -779,10 +799,10 @@ async def add_record(ws_id: int, title: str = Form(...), authors: str = Form("")
     it = current_iteration(db, ws)
     from ingest import canonical_key, normalize_doi
     yr = _parse_year(year)
-    ref = {"type": type, "authors": authors.strip(), "year": yr, "title": title.strip(),
+    ref = {"type": type, "authors": canonicalize(authors), "year": yr, "title": title.strip(),
            "abstract": abstract.strip(), "doi": doi.strip(), "url": url.strip(),
            "source": source.strip(), "keywords": [], "mesh": [], "language": ""}
-    rec = Record(workspace_id=ws.id, type=type, authors=authors.strip() or None, year=yr,
+    rec = Record(workspace_id=ws.id, type=type, authors=canonicalize(authors) or None, year=yr,
                  title=title.strip(), abstract=abstract.strip() or None,
                  doi=normalize_doi(doi) or None, url=url.strip() or None, source=source.strip() or None,
                  keywords_json="[]", mesh_json="[]",
@@ -806,7 +826,7 @@ async def edit_record(ws_id: int, rid: int, title: str = Form(...), authors: str
     if type not in ("article", "book", "book_chapter", "grey"):
         type = "article"
     rec.title = title.strip()
-    rec.authors = authors.strip() or None
+    rec.authors = canonicalize(authors) or None
     rec.year = _parse_year(year)
     rec.doi = normalize_doi(doi) or None
     rec.url = url.strip() or None
