@@ -13,6 +13,7 @@
         <tr><td class="muted small" style="padding-left:18px;">{{ src }}</td><td class="ta-right muted small">{{ n }}</td></tr>
         {% endfor %}
         <tr><td>Duplicates removed</td><td class="ta-right">{{ prisma.duplicates_removed }}</td></tr>
+        <tr><td>Records after deduplication</td><td class="ta-right"><strong>{{ prisma.identified - prisma.duplicates_removed }}</strong></td></tr>
         {% if 'screening' in steps_done %}
         <tr><td>Records screened (title + abstract)</td><td class="ta-right"><strong>{{ prisma.screened }}</strong></td></tr>
         <tr><td>Excluded at screening 1</td><td class="ta-right">{{ prisma.excluded_screen1 }}</td></tr>

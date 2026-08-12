@@ -93,6 +93,7 @@ def prisma_svg(prisma: dict, steps_done=None):
     src = p.get("by_source") or {}
     ident = [f"{k}: {v}" for k, v in src.items()]
     ident += [f"Total: {p.get('identified', 0)}"] if ident else [f"Records identified: {p.get('identified', 0)}"]
+    ident.append(f"Without duplicates: {p.get('identified', 0) - p.get('duplicates_removed', 0)}")
     stages = [
         {"g": "Identification", "step": "records", "pending_title": "Records identified",
          "lines": ident, "boldlast": bool(src),
