@@ -38,6 +38,8 @@ expose read-only public links to its dashboard and published synthesis.
 3. **Records** — BibTeX / RIS / Excel imports (Excel with a column-mapping step),
    plus manual entry and editing; incremental **deduplication** (DOI-exact then
    fuzzy title+year, keeping the most complete version and merging provenance).
+   Author strings are normalised to a canonical `; `-separated format on every
+   ingest path, whatever the source database's own convention.
 4. **Screening 1** — title + abstract vs the **exclusion criteria**. The LLM
    pre-screens (include / exclude / **maybe**); reviewers then vote **blind**
    (they see others' votes only after voting). N independent votes settle a
@@ -65,8 +67,11 @@ expose read-only public links to its dashboard and published synthesis.
    fields' distributions (computed, not written by the LLM), then one narrative
    block per free-text criterion. Citations are built **procedurally** from each
    record (author, year, DOI/link): the LLM only places a study token, so a
-   citation can't be hallucinated. PRISMA counts are rendered as a **flow
-   diagram**, on the public page.
+   citation can't be hallucinated.
+
+The **PRISMA flow** is computed live from the current pool and rendered as a
+flow diagram on the Overview and the public page; stages whose pipeline step
+isn't marked done yet are drawn as dashed *pending* boxes, without counts.
 
 The screening and assessment tables (and full text) carry filters; screening and
 assessment export to **Excel** (the assessment sheet is the record × field
@@ -80,11 +85,12 @@ living-review loop.
 
 Each active share link (`/r/{token}`) is a structured dashboard with a clickable
 section index: the review's description and research question, per-step progress,
-the queries, record stats (year histogram, top authors, keyword cloud, type
-counts), a full-text retrieval pie, the screening and full-text decision bars,
-and — once assessment is done — charts over the included papers (study type,
-country, study year, methodology axes). Each section appears only when its step
-is marked done.
+the live PRISMA flow, the queries, record stats (records-per-database pie, year
+histogram, top authors — merged across name formats, keyword cloud, type counts),
+a full-text retrieval pie, the screening and full-text decision bars, and — once
+assessment is done — charts over the included papers (study type, country, study
+year, methodology axes). Apart from the PRISMA flow, which is always shown with
+its pending stages, each section appears only when its step is marked done.
 
 ## Stack
 
