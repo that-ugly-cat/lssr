@@ -61,10 +61,12 @@
 <div class="cards-label">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
-    · <a href="/w/{{ ws.id }}/assessment?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict'] else 'muted' }}">all ({{ counts.total }})</a>
+    · <a href="/w/{{ ws.id }}/assessment?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict','empty'] else 'muted' }}">all ({{ counts.total }})</a>
     {% for d in ['pending','include','maybe','exclude','conflict'] %}
     · <a href="/w/{{ ws.id }}/assessment?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }} ({{ counts[d] }})</a>
     {% endfor %}
+    · <a href="/w/{{ ws.id }}/assessment?decision=empty" class="{{ '' if decision=='empty' else 'muted' }}"
+         title="Included on full text but nothing extracted — in the review, yet contributing to no field of the synthesis">⌀ included, not extracted ({{ counts.empty }})</a>
   </span>
   <a class="btn btn-small" href="/w/{{ ws.id }}/assessment/export.xlsx" style="float:right;">Export to Excel ↓</a>
 </div>

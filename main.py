@@ -1169,6 +1169,11 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         tq = tq.filter(Record.screen1_decision == decision)
     elif decision == "divergent":
         tq = tq.filter(Record.id.in_(divergent_sub))
+    elif decision == "modelonly":
+        # standing on the model's word alone: it voted, no human has yet. Empty
+        # once a corpus is fully screened, and filling again after each refresh,
+        # which is exactly when it is worth looking at.
+        tq = tq.filter(Record.screen1_by == "model")
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
     records = tq.limit(500).all()
 
@@ -1457,10 +1462,24 @@ async def assessment_page(ws_id: int, request: Request, decision: str = "all",
     counts = {d: _c2(d) for d in ("pending", "include", "exclude", "maybe", "conflict")}
     counts["total"] = len(all_recs)
 
+    # Included on full text but with nothing extracted: the record is in the
+    # review and contributes to no field of the synthesis. Counts an existing but
+    # empty extraction as unextracted too — from the reader's side they are the
+    # same hole.
+    from models import Extraction
+    extracted = {e.record_id for e in
+                 db.query(Extraction).filter(Extraction.workspace_id == ws.id).all()
+                 if e.values()}
+    empty_ids = {r.id for r in all_recs
+                 if r.screen2_decision == "include" and r.id not in extracted}
+    counts["empty"] = len(empty_ids)
+
     # the visible table: apply the screen-2 decision filter + shared filters
     tq = base
     if decision in ("pending", "include", "exclude", "maybe", "conflict"):
         tq = tq.filter(Record.screen2_decision == decision)
+    elif decision == "empty":
+        tq = tq.filter(Record.id.in_(empty_ids or [-1]))
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
     records = tq.limit(500).all()
 
