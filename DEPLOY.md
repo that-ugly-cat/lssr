@@ -40,14 +40,35 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 ## 2. Docker (recommended)
 
 ```bash
-cp .env.example .env      # edit JWT_SECRET / FERNET_KEY / PAPER2MD_URL
+cp .env.example .env                              # edit JWT_SECRET / FERNET_KEY / PAPER2MD_URL
+cp docker-compose.yml.example docker-compose.yml  # edit only if paper2md is a sibling container
 docker compose up -d --build
 docker compose exec app python seed_admin.py you@example.com "Your Name" "a-password"
 ```
 
-`docker-compose.yml` maps the app to `127.0.0.1:8013` and mounts `./data` for the
-SQLite DB and fetched PDFs (`data/fulltext/`). `mem_limit: 1000m` caps memory on a
-small box.
+**`docker-compose.yml` is not in the repo** — only `docker-compose.yml.example` is.
+The compose file carries host-specific wiring (whether paper2md happens to run as
+a sibling container, and therefore whether a shared docker network exists), which
+would break a standalone deploy if it were committed, and would be lost on the
+next `git pull` if it were edited in place. Same split as `.env`.
+
+The example maps the app to `127.0.0.1:8013` and mounts `./data` for the SQLite DB
+and fetched PDFs (`data/fulltext/`). `mem_limit: 1000m` caps memory on a small box.
+
+### SQLite in WAL mode
+
+Worth doing once, before the first long job:
+
+```bash
+docker compose down
+docker run --rm -v "$PWD/data:/app/data" lssr-app python -c "import sqlite3; c=sqlite3.connect('/app/data/lssr.db'); print(c.execute('PRAGMA journal_mode=WAL').fetchone())"
+docker compose up -d
+```
+
+The default (`delete`) makes readers and writers block each other, so browsing the
+UI while a harvest or a screening run is writing can fail with *database is
+locked*. WAL lets them coexist. It needs exclusive access for an instant, hence
+the stop.
 
 ## 3. Local / bare-metal
 
@@ -70,12 +91,42 @@ lssr.yourdomain.example {
 
 Reload after editing: `sudo systemctl reload caddy`.
 
-`PAPER2MD_URL` must point at a paper2md the app can actually reach. The simplest
-and most reliable choice is its public URL (`https://paper2md.yourdomain.example`). A
-`http://localhost:8008` only works if paper2md listens on the same host *and*
-network namespace — from inside a container localhost is the container itself, so
-conversions fail with `Connection refused`. Add `PAPER2MD_API_KEY` (issued from
-paper2md's admin page) to lift the upload cap to 50MB.
+`PAPER2MD_URL` must point at a paper2md the app can actually reach. Add
+`PAPER2MD_API_KEY` (issued from paper2md's admin page) to lift the upload cap to
+50MB.
+
+**If paper2md runs as a container on the same host, do not use its public URL.**
+Every conversion would leave the machine, cross the proxy and come back, and an
+edge timeout — Cloudflare's is about 100 seconds — kills precisely the large PDFs
+worth converting, with a 524 the app can do nothing about. Conversion time tracks
+the document's structure, not its size: a 0.4 MB paper took 168s here and a 2.6 MB
+one took 32s, so there is no threshold to stay under.
+
+`http://localhost:8008` is not the answer either: inside a container localhost is
+the container itself. Nor is `host.docker.internal`, if paper2md is bound to
+`127.0.0.1` on the host — traffic from a container arrives on the bridge address,
+which a loopback-bound service refuses.
+
+Share a docker network instead:
+
+```bash
+docker network create paper2md-shared
+```
+
+then on **both** services, in each compose file:
+
+```yaml
+    networks: [default, paper2md-shared]
+
+networks:
+  paper2md-shared:
+    external: true
+```
+
+and set `PAPER2MD_URL=http://paper2md:8000` (paper2md's *internal* port, not the
+published one). Its loopback binding stays, so the proxy and anything on the host
+keep working. Verify from inside the app container: the response should carry
+paper2md's own `server: uvicorn` and no proxy headers.
 
 ## 5. Verify
 

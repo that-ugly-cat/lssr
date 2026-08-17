@@ -43,8 +43,19 @@ expose read-only public links to its dashboard and published synthesis.
 4. **Screening 1** — title + abstract vs the **exclusion criteria**. The LLM
    pre-screens (include / exclude / **maybe**); reviewers then vote **blind**
    (they see others' votes only after voting). N independent votes settle a
-   record (configurable); disagreement becomes a **conflict** the owner
+   record (configurable, and screening 2 can require a different number from
+   screening 1 — a corpus double-screened on title and abstract is often read
+   once on full text); disagreement becomes a **conflict** the owner
    adjudicates. Decisions are sticky across iterations.
+
+   The decision column carries **every voice** — 🤖 model, 👤 reviewer,
+   ⚖️ adjudicator — with a `≠` marker when they disagree, still behind the blind
+   rule. Two filters beyond the decisions: **≠ divergent**, every record where at
+   least one voice differs from another, the model's included and `maybe`
+   counting as a difference — much wider than *conflict*, which only ever means
+   two humans disagreeing; and **🤖 model only**, records standing on the
+   pre-screener's word with no human vote behind them, which reads zero on a
+   fully screened corpus and fills again after every refresh.
 5. **Full text** — a retrieval ladder that stops at the first source yielding
    real full text: **Europe PMC** JATS (clean, no conversion needed) → Unpaywall
    & OpenAlex locations (repository copies first) → landing pages read for
@@ -68,7 +79,22 @@ expose read-only public links to its dashboard and published synthesis.
    include/maybe/exclude decision, and the extraction form. The LLM drafts both
    (a model *draft* that never overrides a human); reviewers confirm or edit,
    AI-assisted. Screen 2 is multi-reviewer with conflict/adjudication like
-   screen 1. Extraction fields are configurable (text / textarea / number /
+   screen 1.
+
+   The modal opens **whether or not the full text is in hand**: a report nobody
+   can obtain still needs a decision — *exclude, not retrievable* is one — and
+   leaving it pending would read as "not looked at yet" rather than "looked for
+   and not found". The owner also sees **what other reviewers extracted**, in a
+   read-only panel: never as a pre-fill, since adopting a colleague's answers
+   with one click would turn a second independent extraction into a copy of the
+   first. The *model's* draft does pre-fill, which is the intended asymmetry —
+   a tool's output is made to be corrected, a colleague's judgement is not.
+   Two more filters: **🤖 model only** (drafted by the model, confirmed by
+   nobody — it matters more here, since the same draft also fills the fields the
+   reviewer is about to read) and **⌀ included, not extracted** (in the review,
+   contributing to no field of the synthesis — a hole the include count hides).
+
+   Extraction fields are configurable (text / textarea / number /
    select / multiselect, with `show_if` conditions); builtin fields cover
    country, study year, study type and the three empirical-methodology axes
    (design / data / timeframe). Each record's authoritative values are the
