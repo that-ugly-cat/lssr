@@ -86,14 +86,12 @@
     {% for d in ['pending','include','maybe','exclude','conflict'] %}
     · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }} ({{ counts[d] }})</a>
     {% endfor %}
-    {% if is_owner %}
     · <a href="/w/{{ ws.id }}/screening?decision=divergent" class="{{ '' if decision=='divergent' else 'muted' }}"
          title="At least one voice differs from another, the model included — wider than 'conflict', which only means two humans disagreeing">≠ divergent ({{ divergent_n }})</a>
-    {% endif %}
   </span>
   <a class="btn btn-small" href="/w/{{ ws.id }}/screening/export.xlsx" style="float:right;">Export to Excel ↓</a>
 </div>
-<p class="muted small" style="margin-top:0;">✅ include · 🤔 maybe · ❌ exclude · ⚠️ conflict · ❓ pending — cast your own vote on the right. <strong>maybe</strong> parks a record: it doesn't go to full text until someone moves it to include/exclude. Screening is blind: you see the other reviewers' votes only after you've voted, or once an adjudicator has closed the record. Conflicts are resolved by the owner.{% if is_owner %} <strong>≠ divergent</strong> lists every record where at least one voice differs from another, the model's included — <strong>conflict</strong> only ever means two humans disagreeing, so a record the model reads differently, or parks as <em>maybe</em>, never appears there.{% endif %}</p>
+<p class="muted small" style="margin-top:0;">✅ include · 🤔 maybe · ❌ exclude · ⚠️ conflict · ❓ pending — cast your own vote on the right. <strong>maybe</strong> parks a record: it doesn't go to full text until someone moves it to include/exclude. Screening is blind: you see the other reviewers' votes only after you've voted, or once an adjudicator has closed the record. Conflicts are resolved by the owner. <strong>≠ divergent</strong> lists every record where at least one voice differs from another, the model's included — <strong>conflict</strong> only ever means two humans disagreeing, so a record the model reads differently, or parks as <em>maybe</em>, never appears there.</p>
 
 <form method="get" class="filter-bar">
   <input type="hidden" name="decision" value="{{ f.decision }}">

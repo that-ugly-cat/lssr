@@ -1134,8 +1134,9 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     # Records where at least one voice differs from another, the model included.
     # Wider than screen1_decision == 'conflict', which only ever means two humans
     # disagreeing: 'maybe' against 'include' counts, and so does the model against
-    # everyone. It reveals where reviewers stand, so it is an adjudication view —
-    # owner only, or blind screening leaks through the filter.
+    # everyone. Open to every member of the workspace; the votes themselves stay
+    # behind the blind rule, so this says that a record is contested, not who said
+    # what.
     from sqlalchemy import distinct, func
     from models import ScreenDecision
     is_owner = ws.owner_id == user.id or user.is_admin
@@ -1148,9 +1149,7 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     divergent_n = (db.query(Record)
                      .filter(Record.workspace_id == ws.id,
                              Record.is_removed == False,          # noqa: E712
-                             Record.id.in_(divergent_sub)).count()) if is_owner else 0
-    if decision == "divergent" and not is_owner:
-        decision = "all"
+                             Record.id.in_(divergent_sub)).count())
 
     tq = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False)  # noqa: E712
     if decision in ("pending", "include", "exclude", "maybe", "conflict"):
