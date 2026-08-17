@@ -1,5 +1,9 @@
 """
-Excel (.xlsx) export for the screening and assessment tabs, via openpyxl.
+Excel (.xlsx) export for the records, screening and assessment tabs, via openpyxl.
+
+Records: one row per record in the (non-removed) pool — the bibliography as
+imported, plus provenance (which databases returned it, which iteration first
+and last saw it). No screening columns: this is the pool before any decision.
 
 Screening: one row per record in the (non-removed) pool — bibliographic fields
 plus the resolved screen-1 decision and a summary of every reviewer's vote.
@@ -16,8 +20,8 @@ from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 
-from models import (Extraction, Record, ScreenDecision, User, authoritative_values,
-                    field_visible, workspace_extraction_fields)
+from models import (Extraction, Iteration, Record, ScreenDecision, User,
+                    authoritative_values, field_visible, workspace_extraction_fields)
 
 
 def _as_list(js) -> list:
@@ -85,6 +89,31 @@ _BIB = ["Record ID", "Type", "Title", "Authors", "Year", "DOI", "URL", "Source",
 def _bib_cells(r: Record) -> list:
     return [r.id, r.type, r.title, r.authors, r.year, r.doi, r.url, r.source,
             "; ".join(_as_list(r.source_dbs_json))]
+
+
+def records_xlsx(db, workspace) -> bytes:
+    recs = (db.query(Record)
+              .filter(Record.workspace_id == workspace.id, Record.is_removed == False)  # noqa: E712
+              .order_by(Record.year.is_(None), Record.year.desc(), Record.id).all())
+    # iteration id → its human-facing number, so provenance reads "1" not "37"
+    iters = {i.id: i.number for i in
+             db.query(Iteration).filter(Iteration.workspace_id == workspace.id).all()}
+
+    wb = Workbook()
+    ws = _new_sheet(wb, "Records",
+                    _BIB + ["Language", "Abstract", "Keywords", "MeSH",
+                            "Added manually", "First seen (iteration)",
+                            "Last seen (iteration)"])
+    for r in recs:
+        ws.append(_bib_cells(r) + [
+            r.language, r.abstract,
+            "; ".join(_as_list(r.keywords_json)),
+            "; ".join(_as_list(r.mesh_json)),
+            "yes" if r.added_manually else "",
+            iters.get(r.first_seen_iter_id, ""),
+            iters.get(r.last_seen_iter_id, ""),
+        ])
+    return _bytes(wb)
 
 
 def screening_xlsx(db, workspace) -> bytes:

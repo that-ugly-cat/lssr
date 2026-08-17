@@ -54,6 +54,7 @@
       <button class="btn btn-small" type="submit">Deduplicate</button>
     </form>
     <button class="btn btn-small" type="button" onclick="document.getElementById('add-rec').classList.add('open')">Add record</button>
+    <a class="btn btn-small" href="/w/{{ ws.id }}/records/export.xlsx">Export to Excel ↓</a>
   </div>
 </div>
 <form method="post" action="/w/{{ ws.id }}/records/remove-batch" id="batch-form">

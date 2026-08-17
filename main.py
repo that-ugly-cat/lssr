@@ -1228,6 +1228,14 @@ async def export_screening(ws_id: int, user: User = Depends(get_current_user),
     return _xlsx_response(screening_xlsx(db, ws), ws, "screening")
 
 
+@app.get("/w/{ws_id}/records/export.xlsx")
+async def export_records(ws_id: int, user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    ws = _load_ws(db, user, ws_id)
+    from export import records_xlsx
+    return _xlsx_response(records_xlsx(db, ws), ws, "records")
+
+
 @app.post("/w/{ws_id}/records/{rid}/screen1/vote")
 async def vote_screen1(ws_id: int, rid: int, decision: str = Form(...), reason: str = Form(""),
                        back: str = Form("pending"),

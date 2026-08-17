@@ -7,8 +7,14 @@ worker threads only call the Anthropic API, all DB writes happen in the job thre
 screen1_decision == 'pending' (and not removed) are processed, so re-runs and
 later iterations never re-screen settled records.
 
-Screening 1 errs toward inclusion: a record is excluded only if the model finds
-it clearly meets an exclusion criterion.
+The model answers include, exclude or maybe. The prompt deliberately does *not*
+lean inclusive: it excludes records meeting an exclusion criterion or clearly
+off-topic, and parks genuine uncertainty (ambiguous scope, missing abstract) as
+'maybe' for a human instead of waving it through as 'include'. Two failure modes
+land in 'maybe' as well — a response that will not parse, and a record whose API
+call raised after its retries (its reason then starts with "screening error:").
+So the 'maybe' bucket is not purely the model's uncertainty; read it alongside
+the reasons before drawing conclusions from its size.
 
 JOBS keyed by workspace_id:
   status: 'running' | 'done' | 'error'
@@ -94,8 +100,10 @@ def _create_with_retry(client, *, tries: int = 3, **kw):
 
 def screen_record(client, system_prompt: str, title: str, abstract: str,
                   model: str) -> tuple[str, str, int, int]:
-    """Returns (decision, reason, tokens_in, tokens_out). Defaults to include on
-    a malformed response (screening 1 errs toward inclusion)."""
+    """Returns (decision, reason, tokens_in, tokens_out). An answer that is not
+    one of include/exclude/maybe becomes 'maybe' — the same bucket the prompt
+    uses for genuine uncertainty, so it reaches a human rather than being
+    decided silently."""
     user = screening_user(title, abstract)
     resp = _create_with_retry(
         client,
