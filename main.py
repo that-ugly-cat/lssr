@@ -1131,14 +1131,36 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     manual_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                        Record.is_removed == False,  # noqa: E712
                                        Record.screen1_by.in_(["human", "adjudicator", "conflict"])).count()
+    # Records where at least one voice differs from another, the model included.
+    # Wider than screen1_decision == 'conflict', which only ever means two humans
+    # disagreeing: 'maybe' against 'include' counts, and so does the model against
+    # everyone. It reveals where reviewers stand, so it is an adjudication view —
+    # owner only, or blind screening leaks through the filter.
+    from sqlalchemy import distinct, func
+    from models import ScreenDecision
+    is_owner = ws.owner_id == user.id or user.is_admin
+    divergent_sub = (db.query(ScreenDecision.record_id)
+                       .filter(ScreenDecision.workspace_id == ws.id,
+                               ScreenDecision.stage == "screen1")
+                       .group_by(ScreenDecision.record_id)
+                       .having(func.count(distinct(ScreenDecision.decision)) > 1)
+                       .scalar_subquery())
+    divergent_n = (db.query(Record)
+                     .filter(Record.workspace_id == ws.id,
+                             Record.is_removed == False,          # noqa: E712
+                             Record.id.in_(divergent_sub)).count()) if is_owner else 0
+    if decision == "divergent" and not is_owner:
+        decision = "all"
+
     tq = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False)  # noqa: E712
     if decision in ("pending", "include", "exclude", "maybe", "conflict"):
         tq = tq.filter(Record.screen1_decision == decision)
+    elif decision == "divergent":
+        tq = tq.filter(Record.id.in_(divergent_sub))
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
     records = tq.limit(500).all()
 
     # per-record screen-1 votes, for the reviewer table (blind) + adjudication.
-    from models import ScreenDecision
     rec_ids = [r.id for r in records]
     all_votes = (db.query(ScreenDecision)
                    .filter(ScreenDecision.stage == "screen1",
@@ -1149,10 +1171,12 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     # records the current reviewer has already voted on → their votes are revealed
     my_voted = {v.record_id for v in all_votes
                 if v.reviewer_kind == "user" and v.reviewer_id == user.id}
+    # same definition as divergent_sub, for the marker on the rows on screen
+    divergent_ids = {rid for rid, vs in votes.items()
+                     if len({v.decision for v in vs}) > 1}
 
     # cost estimate for the screening buttons
     import screening
-    from sqlalchemy import func
     model = ws.screening_model or "claude-haiku-4-5"
     system = screening.build_system(ws.research_question, workspace_criteria(db, ws, "exclusion"))
 
@@ -1177,8 +1201,9 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         "est_pending": est_pending, "est_rerun": est_rerun,
         "records": records, "decision": decision,
         "votes": votes, "my_voted": my_voted,
+        "divergent_n": divergent_n, "divergent_ids": divergent_ids,
         "reviewers_required": ws.screen1_reviewers_required or 1,
-        "is_owner": ws.owner_id == user.id or user.is_admin,
+        "is_owner": is_owner,
         "dbs_present": _dbs_present(db, ws.id),
         "filters": {"decision": decision, "q": q, "source": source, "rtype": rtype,
                     "yf": yf, "yt": yt, "sort": sort, "order": order},

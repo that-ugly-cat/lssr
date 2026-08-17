@@ -82,14 +82,18 @@
 <div class="cards-label">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
-    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict'] else 'muted' }}">all ({{ counts.total }})</a>
+    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict','divergent'] else 'muted' }}">all ({{ counts.total }})</a>
     {% for d in ['pending','include','maybe','exclude','conflict'] %}
     · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }} ({{ counts[d] }})</a>
     {% endfor %}
+    {% if is_owner %}
+    · <a href="/w/{{ ws.id }}/screening?decision=divergent" class="{{ '' if decision=='divergent' else 'muted' }}"
+         title="At least one voice differs from another, the model included — wider than 'conflict', which only means two humans disagreeing">≠ divergent ({{ divergent_n }})</a>
+    {% endif %}
   </span>
   <a class="btn btn-small" href="/w/{{ ws.id }}/screening/export.xlsx" style="float:right;">Export to Excel ↓</a>
 </div>
-<p class="muted small" style="margin-top:0;">✅ include · 🤔 maybe · ❌ exclude · ⚠️ conflict · ❓ pending — cast your own vote on the right. <strong>maybe</strong> parks a record: it doesn't go to full text until someone moves it to include/exclude. Screening is blind: you see the other reviewers' votes only after you've voted. Conflicts are resolved by the owner.</p>
+<p class="muted small" style="margin-top:0;">✅ include · 🤔 maybe · ❌ exclude · ⚠️ conflict · ❓ pending — cast your own vote on the right. <strong>maybe</strong> parks a record: it doesn't go to full text until someone moves it to include/exclude. Screening is blind: you see the other reviewers' votes only after you've voted, or once an adjudicator has closed the record. Conflicts are resolved by the owner.{% if is_owner %} <strong>≠ divergent</strong> lists every record where at least one voice differs from another, the model's included — <strong>conflict</strong> only ever means two humans disagreeing, so a record the model reads differently, or parks as <em>maybe</em>, never appears there.{% endif %}</p>
 
 <form method="get" class="filter-bar">
   <input type="hidden" name="decision" value="{{ f.decision }}">
@@ -136,6 +140,20 @@
         {% elif r.screen1_by == 'model' %}<span class="badge badge-muted">model</span>{% endif %}
         {% set humanrows = votes.get(r.id, []) | selectattr('reviewer_kind','equalto','user') | list %}
         {% if humanrows %}<div class="muted small">{{ humanrows|length }}/{{ reviewers_required }} reviewed</div>{% endif %}
+        {#- every voice on this record. Gated the same way as the reviewer panel,
+            so blind screening survives: you see them once you have voted, once an
+            adjudicator has closed the record, or if you are the adjudicator. -#}
+        {% set seen = (r.id in my_voted) or (r.screen1_by == 'adjudicator') or is_owner %}
+        {% if seen and votes.get(r.id) %}
+        {% if r.id in divergent_ids %}<div><span class="badge badge-warn" title="Opinions differ">≠</span></div>{% endif %}
+        <div class="muted small nowrap" style="margin-top:2px;">
+          {%- for v in votes.get(r.id, [])|sort(attribute='reviewer_kind') -%}
+          {%- set who = {'model':'🤖','adjudicator':'⚖️'}.get(v.reviewer_kind, '👤') -%}
+          {%- set em = {'include':'✅','exclude':'❌','maybe':'🤔'}.get(v.decision, '·') -%}
+          <span title="{{ v.reviewer_kind }}: {{ v.decision }}">{{ who }}{{ em }}</span>{% if not loop.last %} {% endif %}
+          {%- endfor -%}
+        </div>
+        {% endif %}
       </td>
       <td class="ta-right small" style="min-width:190px;">
         {% set myrows = votes.get(r.id, []) | selectattr('reviewer_kind','equalto','user') | selectattr('reviewer_id','equalto', user.id) | list %}
