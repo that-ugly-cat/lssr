@@ -1577,13 +1577,42 @@ async def review_fragment(ws_id: int, rid: int, request: Request,
     other_votes = (db.query(ScreenDecision)
                      .filter(ScreenDecision.record_id == rec.id, ScreenDecision.stage == "screen2")
                      .all())
+
+    # What the other reviewers extracted, read-only. Deliberately NOT used to
+    # pre-fill the form: adopting someone else's answers with one click would
+    # turn a second independent extraction into a copy of the first.
+    from models import field_visible
+    is_owner = ws.owner_id == user.id or user.is_admin
+    other_extractions = []
+    if is_owner:
+        rows = (db.query(Extraction)
+                  .filter(Extraction.record_id == rec.id,
+                          Extraction.reviewer_kind.in_(["user", "final"]))
+                  .all())
+        # final first, then oldest reviewer row first; id is monotonic so it
+        # orders them without needing the timestamps to be populated
+        for row in sorted(rows, key=lambda r: (r.reviewer_kind != "final", r.id)):
+            if row.reviewer_kind == "user" and row.reviewer_id == user.id:
+                continue
+            vals = row.values()
+            pairs = [(f.label, "; ".join(vals[f.key]) if isinstance(vals[f.key], list)
+                      else str(vals[f.key]))
+                     for f in fields
+                     if vals.get(f.key) and field_visible(f, vals)]
+            if pairs:
+                who = ("final version" if row.reviewer_kind == "final"
+                       else (row.reviewer.name if row.reviewer else "a reviewer"))
+                other_extractions.append({"who": who, "pairs": pairs,
+                                          "when": row.updated_at})
+
     return render(request, "_review_form.html", {
         "user": user, "ws": ws, "rec": rec, "fields": fields,
         "inclusion": workspace_criteria(db, ws, "inclusion"),
         "values": values, "my_vote": my_vote, "other_votes": other_votes,
         "from_draft": from_draft, "model_vote": next(
             (v for v in other_votes if v.reviewer_kind == "model"), None),
-        "is_owner": ws.owner_id == user.id or user.is_admin,
+        "is_owner": is_owner,
+        "other_extractions": other_extractions,
         "has_final": _vals("final", None) is not None,
     })
 
@@ -1611,7 +1640,18 @@ async def save_review(ws_id: int, rid: int, request: Request,
             if v:
                 raw[f.key] = v
     values = {f.key: raw[f.key] for f in fields if f.key in raw and field_visible(f, raw)}
-    upsert_extraction(db, ws, rec, "user", user.id, values)
+    # Saving an empty form must not blank a record someone else has extracted:
+    # authoritative_values takes the most recently saved reviewer row, so a blank
+    # new row would quietly empty the record in exports and synthesis. Clearing
+    # your OWN existing row stays possible — that is a deliberate act.
+    from models import Extraction
+    existing = (db.query(Extraction)
+                  .filter(Extraction.record_id == rec.id,
+                          Extraction.reviewer_kind == "user").all())
+    mine_exists = any(r.reviewer_id == user.id for r in existing)
+    others_have = any(r.reviewer_id != user.id and r.values() for r in existing)
+    if values or mine_exists or not others_have:
+        upsert_extraction(db, ws, rec, "user", user.id, values)
     if form.get("set_final") and (ws.owner_id == user.id or user.is_admin):
         upsert_extraction(db, ws, rec, "final", None, values)
     decision = form.get("screen2_decision") or ""

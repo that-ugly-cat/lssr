@@ -49,6 +49,21 @@
     </div>
     {% endif %}
 
+    {% for oe in other_extractions %}
+    <div class="rev-section-label">Extracted by {{ oe.who }}
+      {% if oe.when %}<span class="muted small" style="font-weight:400; text-transform:none; letter-spacing:0;">· {{ oe.when.strftime('%Y-%m-%d') }}</span>{% endif %}
+    </div>
+    <details class="muted small" style="margin-bottom:8px;" {{ 'open' if loop.first else '' }}>
+      <summary>{{ oe.pairs | length }} field{{ '' if oe.pairs | length == 1 else 's' }} — read only, your own form stays blank on purpose</summary>
+      <table class="table" style="margin-top:6px;">
+        {% for label, value in oe.pairs %}
+        <tr><td style="width:34%; vertical-align:top;"><strong>{{ label }}</strong></td>
+            <td style="max-width:60ch;">{{ value }}</td></tr>
+        {% endfor %}
+      </table>
+    </details>
+    {% endfor %}
+
     <div class="rev-section-label">Data extraction
       {% if from_draft %}<span class="badge badge-muted">🤖 pre-filled from AI draft — check it</span>{% endif %}
     </div>
