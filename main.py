@@ -27,8 +27,9 @@ from models import (
     DATABASES, DB_LABELS, HARVEST_DBS, PIPELINE_STEPS, PRICING, SOURCE_DBS, Criterion,
     Import, PublicShare, Record, User, Workspace, WorkspaceMember, can_access,
     current_iteration, db_label, db_search_url, get_db, get_query, init_db,
-    new_share_token, set_step_done, set_workspace_targets, upsert_query, user_workspaces,
-    workspace_criteria, workspace_steps_done, workspace_target_dbs, workspace_years,
+    new_share_token, screen2_required, set_step_done, set_workspace_targets,
+    upsert_query, user_workspaces, workspace_criteria, workspace_steps_done,
+    workspace_target_dbs, workspace_years,
 )
 
 BASE = Path(__file__).parent
@@ -1041,11 +1042,23 @@ async def set_details(ws_id: int, description: str = Form(""), research_question
 
 @app.post("/w/{ws_id}/settings/screening")
 async def set_screening_config(ws_id: int, reviewers_required: int = Form(...),
+                               reviewers_required_2: str = Form(""),
                                user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     if not (ws.owner_id == user.id or user.is_admin):
         raise HTTPException(403, "Owner required")
     ws.screen1_reviewers_required = max(1, min(10, reviewers_required))
+    # empty means "same as screening 1", the behaviour before the two stages
+    # could be set apart. Changing it re-resolves stage 2 for every record, since
+    # the cached decision was computed against the old number.
+    raw = (reviewers_required_2 or "").strip()
+    before = ws.screen2_reviewers_required
+    ws.screen2_reviewers_required = max(1, min(10, int(raw))) if raw.isdigit() else None
+    if ws.screen2_reviewers_required != before:
+        from models import recompute_record_screen2
+        for rec in db.query(Record).filter(Record.workspace_id == ws.id,
+                                           Record.is_removed == False).all():  # noqa: E712
+            recompute_record_screen2(db, ws, rec)
     db.commit()
     return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
 
@@ -1494,7 +1507,7 @@ async def assessment_page(ws_id: int, request: Request, decision: str = "all",
         "model": model,
         "has_key": bool(_user_api_key(user)),
         "n_inclusion": len(workspace_criteria(db, ws, "inclusion")),
-        "reviewers_required": ws.screen1_reviewers_required or 1,
+        "reviewers_required": screen2_required(ws),
         "is_owner": ws.owner_id == user.id or user.is_admin,
     })
 

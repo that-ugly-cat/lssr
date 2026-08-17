@@ -74,6 +74,11 @@ class Workspace(Base):
     # screening; 2 = classic blind double screening). The LLM pre-screens either
     # way; with 0 human votes its decision stands (sole-screener mode).
     screen1_reviewers_required = Column(Integer, default=1)
+    # Screening 2 can legitimately have a different reviewer count from screening
+    # 1 — a corpus double-screened on title/abstract may be read once on full
+    # text. NULL means "same as screening 1", which is how every workspace
+    # behaved before this column existed.
+    screen2_reviewers_required = Column(Integer, nullable=True)
     steps_done_json   = Column(Text, nullable=True)   # JSON list of completed pipeline steps
     # Search strategy: the primary database the canonical query is authored in
     # (translated from), the shared publication-year window applied to *every*
@@ -562,13 +567,21 @@ def recompute_record_screen1(db, workspace, record):
     record.screen1_at = datetime.utcnow()
 
 
+def screen2_required(workspace) -> int:
+    """Human votes needed to settle a screen-2 record. Falls back to screening 1's
+    number when unset, which is what the single shared setting used to mean."""
+    return (workspace.screen2_reviewers_required
+            or workspace.screen1_reviewers_required or 1)
+
+
 def recompute_record_screen2(db, workspace, record):
     """Recache Record.screen2_* from the stage='screen2' ScreenDecision rows.
-    Same resolution as screen 1 (adjudicator > human consensus > model). No commit."""
+    Same resolution as screen 1 (adjudicator > human consensus > model), but with
+    screening 2's own reviewer count. No commit."""
     rows = (db.query(ScreenDecision)
               .filter(ScreenDecision.record_id == record.id,
                       ScreenDecision.stage == "screen2").all())
-    dec, by, reason = resolve_screen1(rows, workspace.screen1_reviewers_required or 1)
+    dec, by, reason = resolve_screen1(rows, screen2_required(workspace))
     record.screen2_decision = dec
     record.screen2_by = by
     record.screen2_reason = reason
@@ -643,6 +656,7 @@ def init_db():
         for stmt in [
             "ALTER TABLE workspaces ADD COLUMN screening_model VARCHAR DEFAULT 'claude-haiku-4-5'",
             "ALTER TABLE workspaces ADD COLUMN screen1_reviewers_required INTEGER DEFAULT 1",
+            "ALTER TABLE workspaces ADD COLUMN screen2_reviewers_required INTEGER",
             "ALTER TABLE workspaces ADD COLUMN steps_done_json VARCHAR",
             "ALTER TABLE users ADD COLUMN elsevier_key_encrypted VARCHAR",
             "ALTER TABLE users ADD COLUMN elsevier_insttoken_encrypted VARCHAR",

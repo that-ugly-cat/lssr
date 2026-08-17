@@ -26,13 +26,18 @@
   <p class="muted small">Haiku is cheapest and fine for title/abstract screening; Sonnet/Opus for harder judgment.</p>
 </div>
 
-<div class="cards-label">Screening 1 — reviewers</div>
+<div class="cards-label">Reviewers per stage</div>
 <div class="card">
   <form method="post" action="/w/{{ ws.id }}/settings/screening" class="inline-form">
-    <label>Independent human votes required to settle a record
+    <label>Screening 1 — independent human votes to settle a record
       <input type="number" name="reviewers_required" min="1" max="10"
              value="{{ ws.screen1_reviewers_required or 1 }}" style="max-width:80px;"
              {{ '' if is_owner else 'disabled' }}>
+    </label>
+    <label style="margin-left:14px;">Screening 2 — same, on full text
+      <input type="number" name="reviewers_required_2" min="1" max="10"
+             value="{{ ws.screen2_reviewers_required or '' }}" placeholder="same"
+             style="max-width:80px;" {{ '' if is_owner else 'disabled' }}>
     </label>
     {% if is_owner %}<button class="btn btn-small" type="submit">Save</button>{% endif %}
   </form>
@@ -41,6 +46,13 @@
     two members must agree; if they disagree the record is flagged <strong>conflict</strong>
     for the owner to resolve. The model always pre-screens; with no human votes its
     decision stands.
+  </p>
+  <p class="muted small">
+    Leave screening 2 empty to reuse screening 1's number. Set it when the two
+    stages really differ — a corpus double-screened on title and abstract is often
+    read once on full text, and requiring two votes there would leave every record
+    <strong>pending</strong> however many reviewers had actually assessed it.
+    Changing this number re-resolves stage 2 for every record.
   </p>
 </div>
 
