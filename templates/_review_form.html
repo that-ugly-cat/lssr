@@ -15,7 +15,18 @@
 <div class="review-body" id="review-cond-root">
   <div class="review-text">
     {% if rec.full_text_md %}{{ rec.full_text_md | markdown }}
-    {% else %}<p class="muted">No converted full text for this record.</p>{% endif %}
+    {% else %}
+    <p class="muted">No converted full text for this record.</p>
+    <p class="muted small">
+      You can still decide. If you have the paper elsewhere, judge it from that and
+      record your decision here. If it cannot be obtained at all, <strong>exclude</strong>
+      it and say so in the reason — an unreachable report is a decided record, not a
+      pending one, and leaving it pending hides it from every count.
+      {% if rec.full_text_url %}<br>Open-access link on file:
+      <a href="{{ rec.full_text_url }}" target="_blank" rel="noopener">{{ rec.full_text_url | truncate(70) }}</a>{% endif %}
+      {% if rec.doi %}<br>DOI: <a href="https://doi.org/{{ rec.doi }}" target="_blank" rel="noopener">{{ rec.doi }}</a>{% endif %}
+    </p>
+    {% endif %}
   </div>
 
   <form class="review-form" method="post" action="/w/{{ ws.id }}/assessment/{{ rec.id }}/review">

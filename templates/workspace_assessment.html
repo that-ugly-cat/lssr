@@ -128,10 +128,13 @@
         {% endif %}
       </td>
       <td class="ta-right nowrap">
-        {% if r.full_text_status == 'converted' %}
-        <button class="btn btn-small {{ 'btn-primary' if r.id not in my_reviewed else '' }}" type="button"
+        {# Open the modal whatever the full-text status: a record whose text
+           cannot be obtained still needs a decision, and 'exclude — not
+           retrievable' is one. Gating the button left those records unresolvable
+           without ever saying so. #}
+        <button class="btn btn-small {{ 'btn-primary' if r.id not in my_reviewed and r.full_text_status == 'converted' else '' }}" type="button"
                 onclick="openReview({{ r.id }})">{{ 'Review' if r.id not in my_reviewed else 'Edit' }}</button>
-        {% else %}<span class="muted small">retrieve first</span>{% endif %}
+        {% if r.full_text_status != 'converted' %}<div class="muted small">no text — decide anyway</div>{% endif %}
       </td>
     </tr>
     {% else %}
