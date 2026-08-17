@@ -364,9 +364,29 @@ def excel_to_refs(file_bytes: bytes, mapping: dict, type_col: str | None,
     return refs
 
 
+def parse_medline_file(text: str) -> list[dict]:
+    """Split a MEDLINE export (.nbib, or PubMed's 'Save → PubMed' .txt) into its
+    records and normalize each one. Records are separated by a blank line and
+    begin with 'PMID- '. Not RIS: rispy parses none of it."""
+    from pubmed import parse_medline
+    refs = []
+    for chunk in re.split(r"\n\s*\n", text):
+        if not chunk.strip():
+            continue
+        ref = parse_medline(chunk)
+        # parse_medline hardcodes database='pubmed' for the harvest path; on a
+        # file import the database the user picked in the form should win.
+        ref.pop("database", None)
+        if ref.get("title") or ref.get("doi"):
+            refs.append(ref)
+    return refs
+
+
 def parse_file(filename: str, text: str) -> list[dict]:
     name = filename.lower()
-    if name.endswith((".ris", ".nbib")) or text.lstrip().startswith("TY  -"):
+    if name.endswith(".nbib") or text.lstrip().startswith("PMID- "):
+        return parse_medline_file(text)
+    if name.endswith(".ris") or text.lstrip().startswith("TY  -"):
         return parse_ris(text)
     if name.endswith((".bib", ".bibtex")) or text.lstrip().startswith("@"):
         return parse_bibtex(text)

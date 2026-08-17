@@ -705,14 +705,22 @@ async def import_file(ws_id: int, file: UploadFile = File(...), database: str = 
                       other_name: str = Form(""),
                       user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
-    raw = (await file.read()).decode("utf-8", errors="replace")
+    # utf-8-sig, not utf-8: Web of Science exports carry a BOM, and a leading
+    # U+FEFF makes rispy miss the first record's "TY  - " and drop it silently.
+    raw = (await file.read()).decode("utf-8-sig", errors="replace")
     from ingest import ingest_references, parse_file
     try:
         refs = parse_file(file.filename or "upload", raw)
     except Exception as exc:
         raise HTTPException(400, f"Could not parse file: {exc}")
     it = current_iteration(db, ws)
-    fmt = "ris" if (file.filename or "").lower().endswith((".ris", ".nbib")) or raw.lstrip().startswith("TY  -") else "bibtex"
+    name = (file.filename or "").lower()
+    if name.endswith(".nbib") or raw.lstrip().startswith("PMID- "):
+        fmt = "medline"
+    elif name.endswith(".ris") or raw.lstrip().startswith("TY  -"):
+        fmt = "ris"
+    else:
+        fmt = "bibtex"
     ingest_references(db, ws, it, refs, database=_db_label(database, other_name), fmt=fmt,
                       source_name=file.filename, user_id=user.id)
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
