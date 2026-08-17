@@ -49,10 +49,20 @@ expose read-only public links to its dashboard and published synthesis.
    real full text: **Europe PMC** JATS (clean, no conversion needed) → Unpaywall
    & OpenAlex locations (repository copies first) → landing pages read for
    `citation_pdf_url` → **publisher TDM APIs** (Elsevier / Springer / Wiley, per
-   the reviewer's own keys). PDFs are converted to markdown by the
-   [paper2md](https://github.com/that-ugly-cat/paper2md) service. Manual upload
-   accepts **PDF / DOCX / Markdown / TXT**. The reader keeps the whole text;
-   references and back matter are stripped only when the LLM reads it.
+   the reviewer's own keys) → **OA siblings**, same-titled OpenAlex works under a
+   different DOI, which is where the preprint copy of a paywalled article lives.
+   PDFs are converted to markdown by the
+   [paper2md](https://github.com/that-ugly-cat/paper2md) service.
+
+   Conversion happens **inline**, because a candidate can only be checked once it
+   is text: every converted candidate is verified against the record's own title,
+   and one that turns out to be a different paper is discarded and the ladder
+   continues. Retrieval warnings (a discarded candidate, the sibling DOI a text
+   actually came from) are kept on the record and shown in the full-text table.
+   Manual upload accepts **PDF / DOCX / Markdown / TXT**, and a reviewer's own
+   file is never discarded — a title mismatch there is only flagged. The reader
+   keeps the whole text; references and back matter are stripped only when the
+   LLM reads it.
 6. **Assessment** — screening 2 **and** structured extraction in one pass, in a
    large review modal: the full text beside the **inclusion criteria**, the
    include/maybe/exclude decision, and the extraction form. The LLM drafts both

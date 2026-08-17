@@ -1322,7 +1322,7 @@ async def run_fulltext_fetch(ws_id: int, user: User = Depends(get_current_user),
     if job and job.get("status") == "running":
         raise HTTPException(409, "Full-text fetch already in progress")
     email = os.environ.get("UNPAYWALL_EMAIL") or ws.owner.email
-    fulltext.start_fetch(ws.id, email, _user_publisher_keys(user))
+    fulltext.start_fetch(ws.id, email, _user_publisher_keys(user), fulltext.paper2md_url())
     return RedirectResponse(f"/w/{ws_id}/fulltext", status_code=302)
 
 

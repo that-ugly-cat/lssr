@@ -1,21 +1,34 @@
 """
-Full-text acquisition (step 6) + paper2md conversion (step 7), as two separate
-on-demand passes so the human can slot manual PDFs in between.
+Full-text acquisition (step 6) + paper2md conversion (step 7).
 
-Pass 1 — FETCH (Unpaywall, adapted from RevMaster's pdf_fetch): for every
-included record without a PDF yet, ask Unpaywall for an OA PDF. If it downloads,
-store it (status "fetched"); if only a URL is available, keep it as a fallback
-for manual retrieval (status "url"); otherwise "failed". No paper2md here.
+Pass 1 — FETCH walks a ladder of candidate locations for each included record
+and **converts inline**, because a candidate can only be checked once it is
+text: every converted candidate is verified against the record's own title, and
+one that turns out to be a different paper is discarded and the ladder
+continues. Deferring conversion would mean accepting the first PDF that
+downloads, whatever it contains. Outcome per record: "converted" (markdown in
+hand), "fetched" (PDF stored but paper2md was unavailable — pass 2 will finish
+it), "url" (only an OA link, for manual retrieval), or "failed".
 
-Between the passes the human uploads the PDFs Unpaywall couldn't reach — each
+The ladder, in order: Europe PMC full-text XML → OA PDFs → OA landing pages read
+for citation_pdf_url → publisher TDM APIs → OA siblings, i.e. same-titled
+OpenAlex works under a different DOI, which is where the preprint copy of a
+paywalled article lives (OpenAlex indexes the two versions as separate works, so
+nothing earlier in the ladder can see them).
+
+Between the passes the human uploads what the ladder could not reach — each
 upload just stores the file (status "fetched"), no conversion yet.
 
 Pass 2 — CONVERT (paper2md): send every stored-but-unconverted PDF to the
 paper2md service (POST /convert) and store the clean markdown. No reimplementation
-— paper2md already does the hard part.
+— paper2md already does the hard part. A title mismatch here is recorded as a
+warning rather than discarded: this path also carries the human's own uploads.
 
 Both passes run as background threads. JOBS are keyed by (workspace_id, kind)
 where kind is "fetch" or "convert", so their progress bars poll independently.
+
+Title verification and the sibling rung are backported from Contrarian, where a
+Zenodo deposit was accepted for a different paper of a similar name.
 """
 import os
 import re
@@ -29,6 +42,18 @@ DATA_ROOT = Path("data/fulltext")
 UA = {"User-Agent": "Mozilla/5.0 (compatible; LSSR/1.0)"}
 TIMEOUT = 20
 MAX_CANDIDATES = 8   # bound the work per record
+MAX_SIBLINGS = 4     # …and the same for the sibling rung
+
+_WORD = re.compile(r"[a-z0-9]+")
+LINE_THRESHOLD = 0.65   # sequence similarity: title vs a head line (or 2–3 joined)
+BAG_THRESHOLD = 0.90    # fallback: near-total word coverage across the head
+SIBLING_THRESHOLD = 0.90  # title similarity for a work to count as the same paper
+
+
+class Paper2mdUnavailable(RuntimeError):
+    """paper2md itself is unreachable or timing out, as opposed to refusing this
+    particular PDF. Worth distinguishing: when the service is down, walking the
+    rest of the ladder converting candidates would burn one long timeout each."""
 
 JOBS: dict[tuple[int, str], dict] = {}
 _lock = threading.Lock()
@@ -140,6 +165,69 @@ def candidates(doi: str, email: str) -> list[tuple[str, str]]:
                 out.append((kind, url))
     out.sort(key=lambda c: _KIND_ORDER[c[0]])   # stable — provider order kept within a kind
     return out[:MAX_CANDIDATES]
+
+
+def sibling_candidates(doi: str, title: str, email: str) -> list[tuple[str, str, str]]:
+    """(kind, url, sibling_doi) for OA copies of *other* OpenAlex works with the
+    same title — usually the preprint sibling of a paywalled publisher record (an
+    arXiv copy, a repository deposit). OpenAlex indexes preprint and publisher
+    versions as separate works, so the main ladder never sees them. Title
+    verification downstream still guards against a same-titled different paper."""
+    from difflib import SequenceMatcher
+    tnorm = " ".join(_WORD.findall((title or "").lower()))
+    if len(tnorm) < 12:
+        return []
+    try:
+        r = _get("https://api.openalex.org/works",
+                 params={"filter": f"title.search:{tnorm}", "per-page": 8, "mailto": email})
+        works = r.json().get("results", []) if r.status_code == 200 else []
+    except Exception:
+        works = []
+    out = []
+    for w in works:
+        wdoi = (w.get("doi") or "").replace("https://doi.org/", "").lower()
+        if not wdoi or wdoi == doi.lower():
+            continue
+        wnorm = " ".join(_WORD.findall((w.get("title") or "").lower()))
+        if SequenceMatcher(None, tnorm, wnorm).ratio() < SIBLING_THRESHOLD:
+            continue
+        best = w.get("best_oa_location") or {}
+        if best.get("pdf_url"):
+            out.append(("pdf", best["pdf_url"], wdoi))
+        elif best.get("landing_page_url"):
+            out.append(("landing", best["landing_page_url"], wdoi))
+    return out[:MAX_SIBLINGS]
+
+
+def title_matches(md: str, title: str) -> bool:
+    """Does this text plausibly belong to a record with this title?
+
+    Bag-of-words overlap is NOT enough: within one literature the generic domain
+    words (organ, donation, consent…) appear in every paper, so a short title can
+    'match' a different paper entirely. So the primary test demands the title as a
+    contiguous thing — some line of the document head, or 2–3 adjacent lines for a
+    wrapped title, must contain the normalized title verbatim or resemble it by
+    sequence similarity. Near-total word coverage stays as a fallback for heavily
+    mangled front matter."""
+    from difflib import SequenceMatcher
+    tnorm = " ".join(_WORD.findall((title or "").lower()))
+    if len(tnorm) < 12:
+        return True                      # too short to verify meaningfully
+    head = (md or "")[:3000].lower()
+    lines = [" ".join(_WORD.findall(l)) for l in head.splitlines()]
+    lines = [l for l in lines if l]
+    for i in range(len(lines)):
+        for j in (1, 2, 3):
+            cand = " ".join(lines[i:i + j])
+            if tnorm in cand:
+                return True
+            if SequenceMatcher(None, tnorm, cand).ratio() >= LINE_THRESHOLD:
+                return True
+    words = [w for w in tnorm.split() if len(w) > 3]
+    if not words:
+        return True
+    headwords = " ".join(_WORD.findall(head))
+    return sum(1 for w in words if w in headwords) / len(words) >= BAG_THRESHOLD
 
 
 # ── JATS full text → markdown ──────────────────────────────────────────────────
@@ -270,12 +358,12 @@ def pdf_to_markdown(pdf_bytes: bytes, paper2md_url: str) -> str:
         body = (resp.text or "").strip()
         # A Cloudflare/edge error page, not paper2md itself.
         if code == 524 or (code >= 520 and "<html" in body[:400].lower()):
-            raise RuntimeError(
+            raise Paper2mdUnavailable(
                 f"paper2md timed out at the proxy ({code}, Cloudflare's ~100s limit) — the "
                 "PDF is large/slow to convert. Point PAPER2MD_URL at paper2md's internal "
                 "address so the call skips the proxy.")
         if code in (502, 503, 504):
-            raise RuntimeError(f"paper2md unreachable ({code})")
+            raise Paper2mdUnavailable(f"paper2md unreachable ({code})")
         # surface paper2md's own complaint (bad key, too large, queue full…)
         raise RuntimeError(f"paper2md {code}: {body[:200]}")
     data = resp.json()
@@ -293,7 +381,11 @@ def _store_pdf(workspace_id: int, record_id: int, pdf_bytes: bytes) -> Path:
 
 
 def convert_stored_pdf(db, rec, paper2md_url: str) -> str:
-    """Convert an already-stored PDF to markdown and persist it. Returns status."""
+    """Convert an already-stored PDF to markdown and persist it. Returns status.
+
+    The title check here *warns* instead of discarding: this path also carries the
+    human's own uploads, and a reviewer who deliberately attached a file outranks
+    a heuristic. The warning still surfaces, so a wrong attachment is visible."""
     pdf_bytes = Path(rec.full_text_path).read_bytes()
     try:
         md = pdf_to_markdown(pdf_bytes, paper2md_url)
@@ -303,6 +395,9 @@ def convert_stored_pdf(db, rec, paper2md_url: str) -> str:
         raise RuntimeError(f"paper2md conversion failed: {exc}") from exc
     rec.full_text_md = md
     rec.full_text_status = "converted"
+    if (rec.title or "").strip() and not title_matches(md, rec.title):
+        rec.full_text_note = ("check this PDF: its text does not match this "
+                              "record's title")
     db.commit()
     return "converted"
 
@@ -313,6 +408,7 @@ def store_uploaded_pdf(db, workspace_id: int, rec, pdf_bytes: bytes):
     path = _store_pdf(workspace_id, rec.id, pdf_bytes)
     rec.full_text_path = str(path)
     rec.full_text_status = "fetched"
+    rec.full_text_note = None      # the human chose this file; drop earlier notes
     db.commit()
 
 
@@ -355,6 +451,7 @@ def ingest_upload(db, workspace_id: int, rec, filename: str, data: bytes) -> str
     rec.full_text_md = md
     rec.full_text_path = None
     rec.full_text_status = "converted"
+    rec.full_text_note = None      # the human chose this file
     db.commit()
     return "converted"
 
@@ -497,9 +594,13 @@ def _fetch_jats(url: str) -> str | None:
         return None
 
 
-def _fetch_record(db, workspace_id: int, rec, email: str, keys: dict, notes=None) -> str:
-    """Walk the candidate ladder until a real PDF comes back. If every candidate
-    is unreachable (publisher bot walls, mostly) keep the best URL we saw so the
+def _fetch_record(db, workspace_id: int, rec, email: str, keys: dict,
+                  paper2md_url: str, notes=None) -> str:
+    """Walk the candidate ladder, converting each candidate as it arrives and
+    keeping only one that verifies against this record's own title. A candidate
+    that converts to a different paper is discarded and the walk continues — the
+    check is the whole point of converting inline. If every candidate is
+    unreachable (publisher bot walls, mostly) keep the best URL we saw, so the
     record lands in the manual-upload queue with a link instead of a dead end."""
     doi = (rec.doi or "").strip()
     if not doi:
@@ -507,49 +608,107 @@ def _fetch_record(db, workspace_id: int, rec, email: str, keys: dict, notes=None
         db.commit()
         return "failed"
 
-    fallback = None
-    for kind, url in candidates(doi, email):
-        pdf = None
-        if kind == "xml":
-            # Full text straight from Europe PMC: no PDF to store, no paper2md
-            # round trip — this record is already done.
-            md = _fetch_jats(url)
-            if md:
-                rec.full_text_md = md
-                rec.full_text_url = url
-                rec.full_text_status = "converted"
-                db.commit()
-                return "converted"
-            continue
-        if kind == "pdf":
-            fallback = fallback or url
-            pdf = _download_pdf(url)
-        else:
-            pdf, pdf_url = pdf_from_landing(url)
-            fallback = fallback or pdf_url or url
-            if pdf is None and pdf_url:
-                pdf = _download_pdf(pdf_url)
-        if pdf:
-            path = _store_pdf(workspace_id, rec.id, pdf)
-            rec.full_text_path = str(path)
-            rec.full_text_status = "fetched"
-            db.commit()
-            return "fetched"
+    expected = (rec.title or "").strip()
+    own: set = set()          # notes about this record, kept on the record itself
+    if not expected:
+        own.add("no title on this record — retrieved content could not be verified")
 
-    # Last layer: the publisher's own TDM API, for what OA channels can't reach.
-    md, pdf = publisher_fulltext(doi, keys, notes)
-    if md:
+    fallback = None           # best OA URL seen, for the manual queue
+    held_pdf = None           # a PDF we have but could not convert (paper2md down)
+    p2m_down = False
+
+    def _accept(md: str, provider: str, url: str, pdf: bytes | None) -> bool:
+        """Persist this candidate if it really is this record's paper."""
+        if expected and not title_matches(md, expected):
+            own.add(f"discarded {provider}: the text retrieved is a different "
+                    f"paper from this record's title ({url})")
+            return False
+        if pdf is not None:
+            rec.full_text_path = str(_store_pdf(workspace_id, rec.id, pdf))
         rec.full_text_md = md
+        rec.full_text_url = url
         rec.full_text_status = "converted"
+        rec.full_text_note = "; ".join(sorted(own)) or None
         db.commit()
+        return True
+
+    def _convert(pdf: bytes) -> str | None:
+        """Convert, distinguishing 'paper2md is down' from 'this PDF failed'. A
+        PDF is held for pass 2 only when *conversion* failed: one that converted
+        to the wrong paper must not be kept, or pass 2 would accept it later and
+        undo the check we just made."""
+        nonlocal p2m_down, held_pdf
+        try:
+            return pdf_to_markdown(pdf, paper2md_url)
+        except Paper2mdUnavailable as exc:
+            p2m_down = True
+            held_pdf = held_pdf or pdf
+            _note(notes, str(exc))
+            own.add(str(exc))
+            return None
+        except RuntimeError as exc:
+            _note(notes, str(exc))
+            own.add(str(exc))
+            return None
+
+    def _walk(rungs, provider: str = "oa_pdf") -> bool:
+        nonlocal fallback
+        for kind, url in rungs:
+            if kind == "xml":
+                # Full text straight from Europe PMC: no PDF, no paper2md round trip.
+                md = _fetch_jats(url)
+                if md and _accept(md, "europepmc_xml", url, None):
+                    return True
+                continue
+            if p2m_down:
+                continue          # nothing downstream can be converted right now
+            if kind == "pdf":
+                fallback = fallback or url
+                pdf = _download_pdf(url)
+            else:
+                pdf, pdf_url = pdf_from_landing(url)
+                fallback = fallback or pdf_url or url
+                if pdf is None and pdf_url:
+                    pdf = _download_pdf(pdf_url)
+            if not pdf:
+                continue
+            md = _convert(pdf)
+            if md and _accept(md, provider, url, pdf):
+                return True
+        return False
+
+    if _walk(candidates(doi, email)):
         return "converted"
-    if pdf:
-        path = _store_pdf(workspace_id, rec.id, pdf)
-        rec.full_text_path = str(path)
+
+    # Next rung: the publisher's own TDM API, for what OA channels can't reach.
+    if not p2m_down:
+        md, pdf = publisher_fulltext(doi, keys, notes)
+        doi_url = f"https://doi.org/{doi}"
+        if md and _accept(md, "publisher_tdm", doi_url, None):
+            return "converted"
+        if pdf:
+            md = _convert(pdf)
+            if md and _accept(md, "publisher_tdm", doi_url, pdf):
+                return "converted"
+
+    # Last rung: OA siblings — same-titled OpenAlex works under another DOI, where
+    # the preprint copy of a paywalled article lives. Needs a title to match on.
+    if expected and not p2m_down:
+        for kind, url, wdoi in sibling_candidates(doi, expected, email):
+            own.add(f"OA sibling tried: {wdoi} (same title, different DOI)")
+            if _walk([(kind, url)], provider=f"oa_sibling {wdoi}"):
+                return "converted"
+
+    # Nothing verified. If we hold a PDF, keep it: pass 2 converts it once
+    # paper2md is back, rather than throwing away a download we already paid for.
+    if held_pdf is not None:
+        rec.full_text_path = str(_store_pdf(workspace_id, rec.id, held_pdf))
         rec.full_text_status = "fetched"
+        rec.full_text_note = "; ".join(sorted(own)) or None
         db.commit()
         return "fetched"
 
+    rec.full_text_note = "; ".join(sorted(own)) or None
     if fallback:
         rec.full_text_url = fallback      # keep the OA URL for manual retrieval
         rec.full_text_status = "url"
@@ -560,9 +719,11 @@ def _fetch_record(db, workspace_id: int, rec, email: str, keys: dict, notes=None
     return "failed"
 
 
-def _run_fetch(workspace_id: int, email: str, keys: dict | None = None):
+def _run_fetch(workspace_id: int, email: str, keys: dict | None = None,
+               p2m_url: str | None = None):
     from models import Record, SessionLocal
     db = SessionLocal()
+    p2m_url = p2m_url or paper2md_url()
     try:
         targets = (db.query(Record)
                      .filter(Record.workspace_id == workspace_id,
@@ -572,11 +733,11 @@ def _run_fetch(workspace_id: int, email: str, keys: dict | None = None):
         total = len(targets)
         _set(workspace_id, "fetch", {"status": "running", "message": f"Fetching {total} full texts…",
                                      "total": total, "done": 0, "fetched": 0, "converted": 0,
-                                     "url_only": 0, "failed": 0})
-        fetched = converted = url_only = failed = 0
+                                     "url_only": 0, "failed": 0, "mismatched": 0})
+        fetched = converted = url_only = failed = mismatched = 0
         notes = set()
         for i, rec in enumerate(targets):
-            outcome = _fetch_record(db, workspace_id, rec, email, keys or {}, notes)
+            outcome = _fetch_record(db, workspace_id, rec, email, keys or {}, p2m_url, notes)
             if outcome == "fetched":
                 fetched += 1
             elif outcome == "converted":
@@ -585,26 +746,34 @@ def _run_fetch(workspace_id: int, email: str, keys: dict | None = None):
                 url_only += 1
             else:
                 failed += 1
+            if "different paper" in (rec.full_text_note or ""):
+                mismatched += 1
             _update(workspace_id, "fetch", done=i + 1, fetched=fetched, converted=converted,
-                    url_only=url_only, failed=failed)
-        msg = (f"Done. {converted} full texts straight from Europe PMC, {fetched} PDFs fetched, "
-               f"{url_only} OA link only, {failed} not found.")
+                    url_only=url_only, failed=failed, mismatched=mismatched)
+        msg = (f"Done. {converted} full texts retrieved and verified, {fetched} PDFs stored "
+               f"but not converted, {url_only} OA link only, {failed} not found.")
+        if mismatched:
+            msg += (f" {mismatched} record(s) had a candidate discarded for belonging to a "
+                    f"different paper — see the note on the record.")
         if fetched:
-            msg += " Convert the PDFs next."
+            msg += " Convert the stored PDFs next."
         if notes:
             msg += " ⚠ " + " ".join(sorted(notes))
         _set(workspace_id, "fetch", {"status": "done", "message": msg,
                                      "total": total, "done": total, "fetched": fetched,
-                                     "converted": converted, "url_only": url_only, "failed": failed})
+                                     "converted": converted, "url_only": url_only,
+                                     "failed": failed, "mismatched": mismatched})
     except Exception as exc:
         _set(workspace_id, "fetch", {"status": "error", "message": str(exc), "error": str(exc)})
     finally:
         db.close()
 
 
-def start_fetch(workspace_id: int, email: str, keys: dict | None = None):
+def start_fetch(workspace_id: int, email: str, keys: dict | None = None,
+                p2m_url: str | None = None):
     _set(workspace_id, "fetch", {"status": "running", "message": "Starting…", "total": 0, "done": 0})
-    threading.Thread(target=_run_fetch, args=(workspace_id, email, keys or {}),
+    threading.Thread(target=_run_fetch,
+                     args=(workspace_id, email, keys or {}, p2m_url or paper2md_url()),
                      daemon=True).start()
 
 

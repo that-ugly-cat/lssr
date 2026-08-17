@@ -94,6 +94,9 @@
         {% elif r.full_text_status == 'url' %}<a href="{{ r.full_text_url }}" target="_blank" rel="noopener" class="badge badge-warn">OA link</a>
         {% elif r.full_text_status == 'failed' %}<span class="badge badge-muted">not found</span>
         {% else %}<span class="muted">—</span>{% endif %}
+        {% if r.full_text_note %}
+        <div class="muted" style="font-size:10px; white-space:normal; max-width:22rem; margin-top:3px;">⚠ {{ r.full_text_note }}</div>
+        {% endif %}
         {% if r.full_text_status != 'converted' %}
         <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/fulltext/upload" enctype="multipart/form-data" style="margin-top:4px;">
           <input type="file" name="file" accept=".pdf,.docx,.md,.markdown,.txt" required style="font-size:11px;">

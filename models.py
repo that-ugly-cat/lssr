@@ -299,6 +299,7 @@ class Record(Base):
     full_text_url    = Column(String, nullable=True)   # OA URL fallback when direct download is blocked
     full_text_path   = Column(String, nullable=True)
     full_text_md     = Column(Text, nullable=True)
+    full_text_note   = Column(Text, nullable=True)     # retrieval warnings: discarded candidates, title mismatch
     # sticky screening decisions (steps 5, 8) — unused in Fase 1, schema-ready
     screen1_decision = Column(String, default="pending")  # include | exclude | pending
     screen1_reason   = Column(Text, nullable=True)
@@ -649,6 +650,7 @@ def init_db():
             "ALTER TABLE users ADD COLUMN wiley_token_encrypted VARCHAR",
             "ALTER TABLE records ADD COLUMN full_text_status VARCHAR DEFAULT 'none'",
             "ALTER TABLE records ADD COLUMN full_text_url VARCHAR",
+            "ALTER TABLE records ADD COLUMN full_text_note TEXT",
             "ALTER TABLE workspaces ADD COLUMN primary_db VARCHAR DEFAULT 'pubmed'",
             "ALTER TABLE workspaces ADD COLUMN year_from INTEGER",
             "ALTER TABLE workspaces ADD COLUMN year_to INTEGER",
