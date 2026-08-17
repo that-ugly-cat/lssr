@@ -1480,6 +1480,11 @@ async def assessment_page(ws_id: int, request: Request, decision: str = "all",
         tq = tq.filter(Record.screen2_decision == decision)
     elif decision == "empty":
         tq = tq.filter(Record.id.in_(empty_ids or [-1]))
+    elif decision == "modelonly":
+        # the model drafted a full-text decision and nobody has confirmed it: the
+        # same idea as on screening 1, and it matters more here, since the draft
+        # also pre-fills the extraction the reviewer will be looking at.
+        tq = tq.filter(Record.screen2_by == "model")
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
     records = tq.limit(500).all()
 
