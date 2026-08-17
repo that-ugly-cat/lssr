@@ -1,0 +1,32 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lssr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8013:8013"
+    env_file:
+      - .env
+    # Guardrail on the shared 4 GB / 2-CPU box: cap RAM so an LLM burst can't
+    # starve the other containers.
+    mem_limit: 1000m
+    volumes:
+      - ./data:/app/data
+
+# ── paper2md on the same host (optional, deployment-specific) ─────────────────
+# If paper2md runs as a container beside this one, do not point PAPER2MD_URL at
+# its public URL: every conversion would traverse the proxy, and a ~100s edge
+# timeout kills precisely the large PDFs worth converting. Share a network:
+#
+#   docker network create paper2md-shared     # once, on the host
+#
+# uncomment on the service above:
+#   networks: [default, paper2md-shared]
+# and at the end of the file:
+#   networks:
+#     paper2md-shared:
+#       external: true
+#
+# then set PAPER2MD_URL=http://paper2md:8000 in .env.
