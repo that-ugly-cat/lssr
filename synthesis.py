@@ -50,8 +50,13 @@ def compute_prisma(db, workspace_id: int) -> dict:
                        .group_by(RawReference.database).all()):
         by_source[DB_LABELS.get(dbkey, dbkey or "other")] = n
     identified = db.query(RawReference).filter(RawReference.workspace_id == workspace_id).count()
-    records_total = rc()
-    screened = rc(R.is_removed == False)                                   # noqa: E712
+    # Both the automatic dedup at ingest and the manual merge pass produce
+    # duplicates; the manual one soft-deletes its loser instead of dropping the
+    # row. Counting rows without filtering is_removed therefore reports merged
+    # duplicates as survivors, and they then vanish between 'without duplicates'
+    # and 'screened' with no arrow accounting for them.
+    records_total = rc(R.is_removed == False)                              # noqa: E712
+    screened = records_total
     included_s1 = rc(R.is_removed == False, R.screen1_decision == "include")  # noqa: E712
     retrieved = rc(R.is_removed == False, R.screen1_decision == "include",   # noqa: E712
                    R.full_text_status == "converted")
