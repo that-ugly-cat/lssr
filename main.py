@@ -423,10 +423,21 @@ async def public_review(token: str, request: Request, db: Session = Depends(get_
                    sorted(ws.queries, key=lambda q: (q.database != "pubmed", q.database))
                    if q.query_string]
     stats = _public_stats(db, ws.id)
+    # The two criterion sets are protocol, not results: they are shown from the
+    # start, like the research question, rather than gated on a step being done.
+    crits = sorted(ws.criteria, key=lambda c: (c.position or 0, c.id))
+    criteria = {k: [c for c in crits if c.kind == k] for k in ("exclusion", "inclusion")}
+    # Read-only, and deliberately not ensure_extraction_fields(): seeding is a
+    # write, and this route is unauthenticated. A workspace whose Settings page
+    # has never been opened simply shows no extraction box.
+    from models import workspace_extraction_fields
+    fields = workspace_extraction_fields(db, ws)
+    field_labels = {f.key: f.label for f in fields}
     return render(request, "public_review.html", {
         "user": None, "ws": ws, "syn": syn, "prisma": prisma, "blocks": blocks,
         "steps": PIPELINE_STEPS, "steps_done": steps_done,
-        "queries": queries, "stats": stats,
+        "queries": queries, "stats": stats, "criteria": criteria,
+        "fields": fields, "field_labels": field_labels,
     })
 
 
@@ -1347,9 +1358,12 @@ async def fulltext_page(ws_id: int, request: Request, status: str = "all",
     base = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False,  # noqa: E712
                                    Record.screen1_decision == "include")
     all_included = base.all()  # the whole included pool, for counts + the action buttons
+    # Records excluded at screening 2 are skipped by both passes (see fulltext.py),
+    # so they must not be counted as work left to do either.
+    pending = [r for r in all_included if r.screen2_decision != "exclude"]
     ft = {"included": len(all_included),
-          "to_fetch": sum(1 for r in all_included if r.full_text_status in ("none", "failed", "url")),
-          "fetched": sum(1 for r in all_included if r.full_text_status == "fetched"),
+          "to_fetch": sum(1 for r in pending if r.full_text_status in ("none", "failed", "url")),
+          "fetched": sum(1 for r in pending if r.full_text_status == "fetched"),
           "converted": sum(1 for r in all_included if r.full_text_status == "converted")}
     # full-text status nav (counts over the whole pool, like screening's decision nav)
     status_nav = [("all", "all", len(all_included))] + [

@@ -3,6 +3,10 @@
 {% block body %}
 {% include "_ws_tabs.html" %}
 {% set f = filters %}
+{% macro sorth(field, label) %}
+  {%- set no = 'asc' if (f.sort == field and f.order == 'desc') else 'desc' -%}
+  <a class="th-sort" href="?status={{ f.status }}&q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f.rtype }}&yf={{ f.yf }}&yt={{ f.yt }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
+{%- endmacro %}
 
 <div class="cards-label">Full-text retrieval (screening-1 included)</div>
 <div class="card">
@@ -57,7 +61,7 @@
     {% endfor %}
   </span>
 </div>
-<p class="muted small" style="margin-top:0;">Filter the included pool by full-text status: <strong>converted</strong> (ready for assessment) · <strong>PDF only</strong> (needs converting) · <strong>OA link</strong> / <strong>not found</strong> / <strong>—</strong> (no full text yet). The Fetch/Convert buttons above always act on the whole pool.</p>
+<p class="muted small" style="margin-top:0;">Filter the included pool by full-text status: <strong>converted</strong> (ready for assessment) · <strong>PDF only</strong> (needs converting) · <strong>OA link</strong> / <strong>not found</strong> / <strong>—</strong> (no full text yet). The Fetch/Convert buttons above act on the whole pool, minus the records you have already excluded at screening 2.</p>
 
 <form method="get" class="filter-bar">
   <input type="hidden" name="status" value="{{ f.status }}">
@@ -80,13 +84,15 @@
 </form>
 
 <table class="table">
-  <thead><tr><th>Title</th><th>Full text</th></tr></thead>
+  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Full text</th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr>
+      <td class="nowrap">{{ r.year or '—' }}</td>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
-        <div class="muted small">{{ r.year or '' }}{% if r.authors %} · {{ r.authors }}{% endif %}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% elif r.url %} · <a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.url|truncate(50) }}</a>{% endif %}</div>
+        {% if r.screen2_decision == 'exclude' %}<span class="badge badge-danger" title="Excluded at screening 2 — no full text needed">excluded</span>{% elif r.screen2_decision == 'maybe' %}<span class="badge badge-warn" title="Parked at screening 2">maybe</span>{% endif %}
+        <div class="muted small">{{ r.authors or '' }}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% elif r.url %} · <a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.url|truncate(50) }}</a>{% endif %}</div>
       </td>
       <td class="nowrap small">
         {% if r.full_text_status == 'converted' %}<span class="badge badge-ok">converted</span>
@@ -107,7 +113,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="2" class="muted">{% if status != 'all' or f.q or f.source or f.rtype or f.yf or f.yt %}No records match this filter.{% else %}No records included at screening 1 yet.{% endif %}</td></tr>
+    <tr><td colspan="3" class="muted">{% if status != 'all' or f.q or f.source or f.rtype or f.yf or f.yt %}No records match this filter.{% else %}No records included at screening 1 yet.{% endif %}</td></tr>
     {% endfor %}
   </tbody>
 </table>
@@ -119,7 +125,9 @@
       <button class="modal-close" type="button" onclick="document.getElementById('help-fetch').classList.remove('open')">&times;</button>
     </div>
     <p class="small">For every screening-1 <strong>included</strong> record with a DOI, LSSR walks a
-      ladder of open-access sources and stops at the first that yields real full text:</p>
+      ladder of open-access sources and stops at the first that yields real full text.
+      Records you have already <strong>excluded at screening 2</strong> are skipped: they are
+      decided, and chasing their full text costs time for nothing.</p>
     <ol class="small" style="padding-left:18px; line-height:1.5;">
       <li><strong>Europe PMC</strong> — if the article is in PMC, its clean full-text XML is taken directly. No PDF, no conversion needed: these go straight to <em>converted</em>.</li>
       <li><strong>Unpaywall &amp; OpenAlex</strong> — every open-access location, repository copies before publisher ones, direct PDFs before landing pages.</li>
@@ -140,7 +148,7 @@
     <p class="small">Every stored PDF is sent to the <strong>paper2md</strong> service, which returns
       clean markdown with references, figures and tables stripped — the shape the
       assessment step reads. Records fetched as XML from Europe PMC are already
-      converted and skip this step.</p>
+      converted and skip this step, as do records excluded at screening 2.</p>
     <p class="small">If paper2md is unreachable or rejects a file, the PDF is kept and the record
       stays fetchable for a retry — the run reports why. Manual uploads of
       Markdown, TXT or DOCX are already text, so they don't pass through here.</p>

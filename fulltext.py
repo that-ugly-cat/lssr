@@ -719,6 +719,19 @@ def _fetch_record(db, workspace_id: int, rec, email: str, keys: dict,
     return "failed"
 
 
+# A record excluded at screening 2 is decided: its full text is no longer needed,
+# so both passes skip it. Without this a re-run keeps walking the OA ladder for
+# papers the reviewer has already dropped — and keeps them in the "to fetch" count.
+def _not_dropped_at_screen2():
+    """SQLAlchemy clause for "not excluded at screening 2", NULL-safe: a plain
+    `!= "exclude"` drops rows whose decision is NULL, which would quietly shrink
+    the pool instead of failing."""
+    from sqlalchemy import or_
+    from models import Record
+    return or_(Record.screen2_decision.is_(None),
+               Record.screen2_decision != "exclude")
+
+
 def _run_fetch(workspace_id: int, email: str, keys: dict | None = None,
                p2m_url: str | None = None):
     from models import Record, SessionLocal
@@ -729,6 +742,7 @@ def _run_fetch(workspace_id: int, email: str, keys: dict | None = None,
                      .filter(Record.workspace_id == workspace_id,
                              Record.is_removed == False,            # noqa: E712
                              Record.screen1_decision == "include",
+                             _not_dropped_at_screen2(),
                              Record.full_text_status.in_(["none", "failed", "url"])).all())
         total = len(targets)
         _set(workspace_id, "fetch", {"status": "running", "message": f"Fetching {total} full texts…",
@@ -787,6 +801,7 @@ def _run_convert(workspace_id: int, paper2md_url: str):
                      .filter(Record.workspace_id == workspace_id,
                              Record.is_removed == False,            # noqa: E712
                              Record.screen1_decision == "include",
+                             _not_dropped_at_screen2(),
                              Record.full_text_status == "fetched").all())
         total = len(targets)
         _set(workspace_id, "convert", {"status": "running", "message": f"Converting {total} PDFs…",

@@ -58,6 +58,11 @@
 </div>
 
 {% set f = filters %}
+{% macro sorth(field, label) %}
+  {%- set no = 'asc' if (f.sort == field and f.order == 'desc') else 'desc' -%}
+  <a class="th-sort" href="?decision={{ f.decision }}&q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f.rtype }}&yf={{ f.yf }}&yt={{ f.yt }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
+{%- endmacro %}
+
 <div class="cards-label">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
@@ -75,6 +80,8 @@
 
 <form method="get" class="filter-bar">
   <input type="hidden" name="decision" value="{{ f.decision }}">
+  <input type="hidden" name="sort" value="{{ f.sort }}">
+  <input type="hidden" name="order" value="{{ f.order }}">
   <input type="text" name="q" value="{{ f.q }}" placeholder="Search title / author / abstract" style="max-width:260px;">
   <select name="source">
     <option value="">any DB</option>
@@ -92,13 +99,14 @@
 </form>
 
 <table class="table">
-  <thead><tr><th>Title</th><th>Full text</th><th>Screen 2</th><th class="ta-right">Review</th></tr></thead>
+  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Full text</th><th>Screen 2</th><th class="ta-right">Review</th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr>
+      <td class="nowrap">{{ r.year or '—' }}</td>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
-        <div class="muted small">{{ r.year or '' }}{% if r.authors %} · {{ r.authors }}{% endif %}</div>
+        <div class="muted small">{{ r.authors or '' }}</div>
       </td>
       <td class="nowrap small">
         {% if r.full_text_status == 'converted' %}<span class="badge badge-ok">converted</span>
@@ -138,7 +146,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="4" class="muted">No records match this filter.</td></tr>
+    <tr><td colspan="5" class="muted">No records match this filter.</td></tr>
     {% endfor %}
   </tbody>
 </table>

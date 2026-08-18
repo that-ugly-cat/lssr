@@ -64,6 +64,51 @@
       {% if ws.research_question %}
       <div class="pub-rq"><div class="pub-rq-label">Research question</div>{{ ws.research_question | markdown }}</div>
       {% endif %}
+      {% if criteria.exclusion or criteria.inclusion %}
+      <div class="pub-crit-grid">
+        {% for kind, title, applies, foot in [
+             ('exclusion', 'Exclusion criteria', 'Applied to title and abstract, at screening 1',
+              'A record is excluded when one of these clearly applies.'),
+             ('inclusion', 'Inclusion criteria', 'Applied to the full text, at screening 2',
+              'A record is kept when it meets these on the full text.')] %}
+        {% if criteria[kind] %}
+        <div class="pub-rq pub-crit pub-crit-{{ kind }}">
+          <div class="pub-rq-label">{{ title }}</div>
+          <div class="pub-crit-applies">{{ applies }}</div>
+          {% for c in criteria[kind] %}
+          <div class="crit-item">
+            <div class="crit-item-label">{{ loop.index }}. {{ c.label }}</div>
+            {% if c.description %}<div class="crit-item-desc">{{ c.description }}</div>{% endif %}
+          </div>
+          {% endfor %}
+          <div class="crit-panel-foot muted">{{ foot }}</div>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if fields %}
+      <div class="pub-rq pub-crit pub-crit-fields">
+        <div class="pub-rq-label">Data extraction fields</div>
+        <div class="pub-crit-applies">Recorded from the full text of every record kept at screening 2</div>
+        <div class="pub-field-grid">
+          {% for f in fields %}
+          {% set opts = f.options() %}
+          <div class="crit-item">
+            <div class="crit-item-label">{{ loop.index }}. {{ f.label }}
+              <span class="badge badge-muted">{{ f.field_type }}</span></div>
+            {% if f.help %}<div class="crit-item-desc">{{ f.help }}</div>{% endif %}
+            {% if opts %}
+            <div class="crit-item-desc">{% if opts|length > 8 %}{{ opts|length }} options{% else %}{{ opts|join(' · ') }}{% endif %}</div>
+            {% endif %}
+            {% if f.show_if_key %}
+            <div class="crit-item-desc">Only when <em>{{ field_labels.get(f.show_if_key, f.show_if_key) }}</em> is {{ f.show_if_values()|join(' or ') }}</div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
       <div class="pub-steps">
         {% for s in steps %}
         <span class="pub-step {{ 'done' if s in steps_done else 'pending' }}">
