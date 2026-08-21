@@ -149,3 +149,17 @@ institutional token from a server).
 ## License
 
 [AGPL-3.0](LICENSE).
+
+## Optional: behind an SSO gate
+
+`AUTH_MODE=gateway` hands reviewer identity to an upstream `forward_auth` gate
+instead of the local password. Reviewers are matched by an immutable subject and
+not by email address, because a reviewer's id is the `reviewer_id` on every
+screening decision and extraction they have made: an address that changes with
+an institution is the wrong thing to re-find someone by.
+
+**Public share pages are untouched.** `/r/{token}` is how someone outside the
+project reads a review, and it needs no account in either mode.
+
+`local` is the default and stays fully supported. Details, and the one-off
+linking script to run before switching, in `DEPLOY.md`.
