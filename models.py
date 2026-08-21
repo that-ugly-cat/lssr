@@ -55,9 +55,6 @@ class User(Base):
     elsevier_insttoken_encrypted = Column(String, nullable=True)
     springer_key_encrypted       = Column(String, nullable=True)
     wiley_token_encrypted        = Column(String, nullable=True)
-    totp_secret_encrypted = Column(String, nullable=True)   # TOTP secret, Fernet-encrypted
-    totp_enabled          = Column(Boolean, default=False)
-    backup_codes_json     = Column(Text, nullable=True)     # sha256 hashes of unused backup codes
     is_admin              = Column(Boolean, default=False)
     is_active             = Column(Boolean, default=True)
     created_at            = Column(DateTime, default=datetime.utcnow)
@@ -680,6 +677,14 @@ def init_db():
             # migliaia di decisioni di screening attaccate a un reviewer_id.
             "ALTER TABLE users ADD COLUMN borant_sub VARCHAR",
             "CREATE UNIQUE INDEX ix_users_borant_sub ON users (borant_sub)",
+            # Second factor removed rather than left half-built: the columns had
+            # been carried since the first schema and never wired to a route, so
+            # they promised something the app did not do. Where a second factor
+            # is wanted it belongs to the SSO gate in front, which has one that
+            # works. Dropping is safe because these were empty on every row.
+            "ALTER TABLE users DROP COLUMN totp_secret_encrypted",
+            "ALTER TABLE users DROP COLUMN totp_enabled",
+            "ALTER TABLE users DROP COLUMN backup_codes_json",
         ]:
             try:
                 conn.execute(text(stmt))

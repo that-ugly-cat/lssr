@@ -6,7 +6,11 @@ Strategy (borant house pattern): JWT stored in an httpOnly cookie named 'session
 - Secret key via JWT_SECRET env var; startup crashes if missing.
 - is_admin flag on User for admin-only routes.
 
-TOTP is specified for a later phase (pattern AutoCode) and not wired here yet.
+There is deliberately no second factor here. One was sketched in the schema for
+a long time and never wired to a route, which is worse than not having it: the
+tool advertised a protection it did not apply. Where a second factor is wanted,
+it belongs to the SSO gate in front (`AUTH_MODE=gateway`), which has one that
+works and can be turned on per app without touching this code.
 """
 import ipaddress
 import logging
