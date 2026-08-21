@@ -19,6 +19,9 @@ synthesis). It calls the Claude API (per-user key) and the
 | `ELSEVIER_INSTTOKEN` | no | _(none)_ | institutional token the library obtains from Elsevier. Required for *any* Elsevier full text off the institution's network, including from the server |
 | `SPRINGER_API_KEY` | no | _(none)_ | Springer Nature **Open Access** API key, free from [dev.springernature.com](https://dev.springernature.com). Not the Meta API key — that returns metadata only |
 | `WILEY_TDM_TOKEN` | no | _(none)_ | Wiley TDM client token, issued from a Wiley Online Library account with the institution's entitlement |
+| `AUTH_MODE` | no | `local` | `local` = own login. `gateway` = trust an SSO gate in front (see the last section) |
+| `BORANT_TRUSTED_PROXY` | in `gateway` | `127.0.0.1` | the address the proxy connects from; headers from anywhere else are ignored |
+| `BORANT_LOGOUT_URL` | no | `https://id.borant.eu/logout` | where "log out" goes in `gateway` mode |
 
 The publisher credentials are normally set **per user**, in Profile → *Publisher
 full-text access*: the entitlement follows the person and their institution, not
@@ -149,4 +152,76 @@ docker compose up -d --build
 ```bash
 cp data/lssr.db backup-$(date +%F).db
 tar czf backup-fulltext-$(date +%F).tar.gz data/fulltext
+```
+
+## Behind an SSO gate (`AUTH_MODE=gateway`)
+
+Optional, and off unless you switch it on. In `gateway` LSSR stops checking
+passwords and reads the identity headers set by a `forward_auth` gate in front
+of it. `/login` redirects home, and "log out" goes to `BORANT_LOGOUT_URL` so the
+central session dies with the local cookie.
+
+**The public share pages are untouched.** `/r/{token}` is how someone outside
+the project reads a review, and it needs no account in either mode. That is also
+what makes this app comfortable to gate: the people who would be annoyed by a
+sign-in wall never meet it.
+
+**`local` stays the default.** An app that believes `X-Borant-Sub` with nothing
+in front of it lets in anyone who sends that header.
+
+```
+lssr.borant.eu {
+    @pubbliche path /r/* /health /static/* /login /logout
+    handle @pubbliche {
+        import noforge
+        import nocookie
+        reverse_proxy localhost:8013
+    }
+    handle {
+        import borantid
+        reverse_proxy localhost:8013
+    }
+}
+```
+
+`/login` and `/logout` stay outside because the app already handles them itself
+in this mode; gating them would answer a sign-in attempt with a redirect to a
+different sign-in.
+
+**Link the existing reviewers before switching on, and read the report.**
+
+```bash
+docker exec lssr python map_borant.py --map you@example.org=01ABC…
+docker exec lssr python map_borant.py --report
+```
+
+This matters more here than in most apps. A reviewer's id is the `reviewer_id`
+on every screening decision and extraction they have made, so an unlinked person
+does not merely land on an empty screen — they land on a *different id*, their
+decisions stay attached to a row nobody reaches, and blind double-screening
+starts treating the two rows as two reviewers. The report prints the work
+attached to each account for exactly that reason.
+
+**Long forms and session expiry.** This is the app with the most page-level form
+POSTs in the estate, so it is the one where a session expiring mid-form costs
+the most: a browser turns a `302` on a `POST` into a `GET` and drops the body.
+The gate's sliding session (renewed on every pass, so a session in active use
+does not expire) is the mitigation that matters; a heartbeat from the longest
+forms is the cheap next one if it ever bites in practice. Worth knowing that
+this is not a problem the gate introduces — a 7-day JWT with a fixed expiry, as
+used in `local` mode, fails exactly the same way and cannot be renewed at all.
+
+`BORANT_TRUSTED_PROXY` is the second lock and the setting people get wrong.
+Under Docker the proxy runs on the host, so the container sees a bridge gateway
+and not `127.0.0.1`. Read it off reality:
+
+```bash
+curl -s -o /dev/null http://127.0.0.1:8013/health && docker logs lssr 2>&1 | tail -1
+```
+
+Rollback, two lines and no data migration:
+
+```bash
+sed -i 's/^AUTH_MODE=gateway/AUTH_MODE=local/' .env
+docker compose up -d
 ```

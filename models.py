@@ -43,6 +43,11 @@ class User(Base):
     email                 = Column(String, unique=True, nullable=False)
     name                  = Column(String, nullable=False)
     hashed_password       = Column(String, nullable=False)
+    # Immutable subject an upstream SSO gate knows this person by, when there is
+    # one. Null until map_borant.py links them. Never the email: thousands of
+    # screening decisions hang off this row's id, and an address that changes
+    # with an institution must not be what re-finds it.
+    borant_sub            = Column(String, unique=True, nullable=True, index=True)
     api_key_encrypted     = Column(String, nullable=True)   # Anthropic key, Fernet-encrypted
     # Publisher TDM credentials (step 6, last layer) — per user, because the
     # entitlement follows the person and their institution, not the server.
@@ -669,6 +674,12 @@ def init_db():
             "ALTER TABLE workspaces ADD COLUMN year_from INTEGER",
             "ALTER TABLE workspaces ADD COLUMN year_to INTEGER",
             "ALTER TABLE workspaces ADD COLUMN target_dbs_json VARCHAR",
+            # Il subject immutabile con cui un gate SSO a monte conosce questa
+            # persona. NULL per chi ha sempre fatto login qui. Non e' l'email di
+            # proposito: l'indirizzo cambia con l'istituzione, e qui ci sono
+            # migliaia di decisioni di screening attaccate a un reviewer_id.
+            "ALTER TABLE users ADD COLUMN borant_sub VARCHAR",
+            "CREATE UNIQUE INDEX ix_users_borant_sub ON users (borant_sub)",
         ]:
             try:
                 conn.execute(text(stmt))

@@ -19,8 +19,8 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from auth import (
-    create_token, get_current_user, get_user_or_none, hash_password, require_admin,
-    verify_password,
+    create_token, gateway_mode as auth_gateway_mode, get_current_user,
+    get_user_or_none, hash_password, require_admin, verify_password,
 )
 from authors import author_key, canonicalize, split_authors
 from models import (
@@ -152,11 +152,18 @@ def _dbs_present(db, ws_id: int) -> list:
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: int = 0):
+    # In gateway mode the app switches its own login off rather than relying on
+    # the proxy to hide it: two sets of credentials for one review platform is
+    # exactly what the SSO is there to remove.
+    if auth_gateway_mode():
+        return RedirectResponse("/", status_code=302)
     return render(request, "login.html", {"user": None, "error": bool(error)})
 
 
 @app.post("/login")
 async def login(email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+    if auth_gateway_mode():
+        return RedirectResponse("/", status_code=302)
     user = db.query(User).filter(User.email == email.strip().lower(),
                                  User.is_active == True).first()  # noqa: E712
     if not user or not verify_password(password, user.hashed_password):
@@ -167,9 +174,15 @@ async def login(email: str = Form(...), password: str = Form(...), db: Session =
     return resp
 
 
+BORANT_LOGOUT_URL = os.environ.get("BORANT_LOGOUT_URL", "https://id.borant.eu/logout")
+
+
 @app.get("/logout")
 async def logout():
-    resp = RedirectResponse("/login", status_code=302)
+    # In gateway mode dropping the local cookie is not signing out: the gate
+    # still holds the session, and the next click walks straight back in.
+    target = BORANT_LOGOUT_URL if auth_gateway_mode() else "/login"
+    resp = RedirectResponse(target, status_code=302)
     resp.delete_cookie("session")
     return resp
 
