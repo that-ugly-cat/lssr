@@ -11,3 +11,6 @@ SPEC.md
 
 # deployment-local: the shared-network wiring differs per host
 docker-compose.yml
+
+# ambiente di prova locale, mai nel repo
+.venv/
