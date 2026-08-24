@@ -108,13 +108,34 @@ def user_from_gateway(request: Request, db: Session) -> User | None:
     email = (request.headers.get("x-borant-email", "") or f"{sub}@borant.invalid").strip().lower()
     # A local password nobody knows, rather than none: `AUTH_MODE=local` has to
     # stay a working way back, and a row with no password is not a way back.
+    # L'hint del gate puo' proporre `admin`, e da oggi viene onorato.
+    #
+    # Qui `is_admin` apre la gestione degli utenti — disattivare, resettare
+    # password e secondo fattore, promuovere — e non le funzioni del prodotto,
+    # che sono aperte a chiunque abbia un grant. La deroga alla regola «mai
+    # provisionare privilegio da un header» regge sul solito presupposto: la
+    # registrazione aperta su Borant ID e' spenta, e anche una richiesta
+    # d'accesso fa scegliere il ruolo all'amministratore approvando, quindi
+    # `admin` in quell'header c'e' solo perche' un umano l'ha digitato.
+    #
+    # Quello che il codice deve comunque e' **rumore**. Un hint non conosciuto
+    # e' un refuso, non un ruolo, e non concede niente.
+    hint = (request.headers.get("x-borant-hint", "") or "").strip().lower()
+    fa_admin = hint == "admin"
+    if hint and not fa_admin:
+        log.warning("gateway: hint %r non e' un ruolo di questa app, ignorato", hint)
+    if fa_admin:
+        log.warning("gateway: %s (%s) creato come ADMIN su suggerimento del gate. "
+                    "Quel ruolo gestisce gli utenti di questa app: disattivarli, "
+                    "resettarne password e secondo fattore. Revocare da /admin se "
+                    "non era voluto.", email, sub)
     user = User(email=email, name=request.headers.get("x-borant-name", "") or email,
                 hashed_password=hash_password(secrets.token_urlsafe(32)),
-                borant_sub=sub, is_active=True, is_admin=False)
+                borant_sub=sub, is_active=True, is_admin=fa_admin)
     db.add(user)
     db.commit()
     db.refresh(user)
-    log.info("gateway: new profile for %s (%s)", email, sub)
+    log.info("gateway: new profile for %s (%s), admin=%s", email, sub, fa_admin)
     return user
 
 
