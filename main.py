@@ -128,6 +128,15 @@ async def api_key_gate(request: Request, call_next):
     else:
         key = request.headers.get("X-API-Key", "")
 
+    # A client configured without the trailing slash would get a 307 from the
+    # mount, and MCP clients do not follow redirects on POST. Worse, behind the
+    # proxy the redirect comes back as `http`, because uvicorn does not know the
+    # original scheme. Normalising here means both spellings of the endpoint
+    # work. Same fix as Grant Radar's.
+    if request.scope["path"] == "/mcp":
+        request.scope["path"] = "/mcp/"
+        request.scope["raw_path"] = b"/mcp/"
+
     db = SessionLocal()
     try:
         row = check_api_key(db, key)
