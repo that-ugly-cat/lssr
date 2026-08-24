@@ -16,3 +16,4 @@ bibtexparser
 rispy
 rapidfuzz
 markdown
+mcp>=2.0,<3

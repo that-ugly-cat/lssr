@@ -1,10 +1,17 @@
 """
 LSSR — Living Systematic Scoping Review.
 
-Fase 0 (fondazione): auth + multiuser + multiworkspace + public read-only share.
-The 10-step pipeline (SPEC.md §5) is added in later phases; the workspace page
-shows the step scaffold with everything past the foundation marked "coming".
+Three surfaces, three credentials:
+- the web app, where the pipeline is run and every human decision is made
+  (session cookie, or an SSO gate in front — see auth.py);
+- `/r/{token}`, the public read-only dashboard of one review, which asks nobody
+  who they are;
+- `/mcp`, the model-facing read-only surface, gated by a per-user API key, with
+  the `/mcp/k/{key}` capability-URL variant for clients that cannot send custom
+  headers (see mcp_app.py). It reads exactly what its owner reads, and writes
+  nothing.
 """
+import contextlib
 import json
 import os
 import re
@@ -19,21 +26,33 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from auth import (
-    create_token, gateway_mode as auth_gateway_mode, get_current_user,
-    get_user_or_none, hash_password, require_admin, verify_password,
+    check_api_key, create_token, gateway_mode as auth_gateway_mode, get_current_user,
+    get_user_or_none, hash_password, require_admin, set_caller, verify_password,
 )
 from authors import author_key, canonicalize, split_authors
 from models import (
+    ApiKey,
     DATABASES, DB_LABELS, HARVEST_DBS, PIPELINE_STEPS, PRICING, SOURCE_DBS, Criterion,
-    Import, PublicShare, Record, User, Workspace, WorkspaceMember, can_access,
+    Import, PublicShare, Record, SessionLocal, User, Workspace, WorkspaceMember,
+    can_access,
     current_iteration, db_label, db_search_url, get_db, get_query, init_db,
     new_share_token, screen2_required, set_step_done, set_workspace_targets,
     upsert_query, user_workspaces, workspace_criteria, workspace_steps_done,
     workspace_target_dbs, workspace_years,
 )
 
+from mcp_app import mcp  # noqa: E402
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    """The MCP session manager has to be running for /mcp to answer at all."""
+    async with mcp.session_manager.run():
+        yield
+
+
 BASE = Path(__file__).parent
-app = FastAPI(title="LSSR")
+app = FastAPI(title="LSSR", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
 
@@ -61,6 +80,63 @@ from synthesis import prisma_svg as _prisma_svg  # noqa: E402
 templates.env.globals["prisma_svg"] = _prisma_svg
 
 init_db()
+
+
+# ── The MCP surface ─────────────────────────────────────────────────────────
+
+# The MCP transport checks the Host header against DNS rebinding, so the public
+# domain has to be allowed or every proxied request is refused.
+def _allowed_hosts() -> list[str]:
+    from urllib.parse import urlparse
+    hosts = ["localhost:8013", "127.0.0.1:8013", "localhost", "127.0.0.1"]
+    public = urlparse(os.environ.get("PUBLIC_URL", "")).netloc
+    if public:
+        hosts.append(public)
+    return hosts
+
+
+from mcp.server.transport_security import TransportSecuritySettings  # noqa: E402
+
+app.mount("/mcp", mcp.streamable_http_app(
+    streamable_http_path="/", json_response=True, stateless_http=True,
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=_allowed_hosts(),
+        allowed_origins=[os.environ.get("PUBLIC_URL", "http://localhost:8013")])))
+
+
+@app.middleware("http")
+async def api_key_gate(request: Request, call_next):
+    """
+    Resolve the MCP caller, or refuse.
+
+    Two ways in, one table. The header is the normal path; `/mcp/k/{key}`
+    carries the same key as a path segment for clients that cannot set custom
+    headers, and it is stripped before the mounted app sees it — so the MCP
+    layer never learns how the caller authenticated.
+
+    Nothing else on this app is touched: the cookie session still guards the web
+    routes, and `/r/{token}` still guards nothing on purpose.
+    """
+    path = request.url.path
+    if not path.startswith("/mcp"):
+        return await call_next(request)
+
+    if path.startswith("/mcp/k/"):
+        key, _, rest = path[len("/mcp/k/"):].partition("/")
+        request.scope["path"] = "/mcp/" + rest
+        request.scope["raw_path"] = request.scope["path"].encode()
+    else:
+        key = request.headers.get("X-API-Key", "")
+
+    db = SessionLocal()
+    try:
+        row = check_api_key(db, key)
+        set_caller(row.user if row else None)
+    finally:
+        db.close()
+    if not row:
+        return JSONResponse({"error": "missing or invalid API key"}, status_code=401)
+    return await call_next(request)
 
 
 # Unauthenticated HTML requests get bounced to /login instead of a raw 401 JSON.
@@ -489,14 +565,40 @@ async def public_review(token: str, request: Request, db: Session = Depends(get_
 # ── Profile (Anthropic API key) ─────────────────────────────────────────────
 
 @app.get("/profile", response_class=HTMLResponse)
-async def profile(request: Request, user: User = Depends(get_current_user)):
+async def profile(request: Request, user: User = Depends(get_current_user),
+                  db: Session = Depends(get_db)):
     # which publisher credentials this user has, and which fall back to the server's
     pub = {name: {"user": bool(getattr(user, column, None)),
                   "env": bool(os.environ.get(env, "").strip())}
            for name, (column, env) in _PUBLISHER_FIELDS.items()}
+    keys = (db.query(ApiKey).filter(ApiKey.user_id == user.id)
+              .order_by(ApiKey.created_at.desc()).all())
     return render(request, "profile.html", {
         "user": user, "has_key": bool(user.api_key_encrypted), "pub": pub,
+        "keys": keys,
+        "public_url": os.environ.get("PUBLIC_URL", "http://localhost:8013"),
     })
+
+
+@app.post("/profile/keys")
+async def create_mcp_key(name: str = Form(...), user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    """Mint an MCP key for yourself. Keys belong to people and never to the
+    deployment: one reaches exactly the reviews its owner is a member of, and
+    removing them from a review removes the key's reach with it."""
+    db.add(ApiKey(user_id=user.id, name=name.strip() or "mcp"))
+    db.commit()
+    return RedirectResponse("/profile", status_code=302)
+
+
+@app.post("/profile/keys/{key_id}/revoke")
+async def revoke_mcp_key(key_id: int, user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    row = db.query(ApiKey).filter(ApiKey.id == key_id, ApiKey.user_id == user.id).first()
+    if row:
+        row.active = False
+        db.commit()
+    return RedirectResponse("/profile", status_code=302)
 
 
 @app.post("/profile/publisher-key/{name}")

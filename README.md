@@ -128,6 +128,40 @@ assessment is done — charts over the included papers (study type, country, stu
 year, methodology axes). Apart from the PRISMA flow, which is always shown with
 its pending stages, each section appears only when its step is marked done.
 
+## Reading a review from a model client
+
+Every reviewer can mint their own key under **Profile → MCP keys** and point a
+model client (Claude Code, Claude Desktop) at `https://your-host/mcp` with an
+`X-API-Key` header — or at `https://your-host/mcp/k/{key}`, which carries the
+same key in the path for clients that cannot send custom headers. That URL *is*
+the credential: one key per client, revocable on its own.
+
+Twelve tools, one or two per pipeline step: the reviews you can reach and the
+state of one (configuration, progress, live PRISMA, what the LLM steps have
+cost), its iterations and imports, its queries per database, its criteria and
+extraction schema, a lexical record search carrying the same filters as the UI
+(including `divergent`, `modelonly` and `empty`), one record with every vote and
+every extraction row, the full text in slices, how retrieval went, what is still
+contested, the distribution of any extracted field, and the synthesis.
+
+**The surface is read-only, and that is a decision rather than a stage.** A
+screening decision carries a reviewer's name and belongs to the person doing the
+reading; a surface a model could vote from would quietly turn the reviewer into
+an editor of its output. So a key exposes a corpus and cannot corrupt one, and a
+key reaches exactly the reviews its owner reaches — the same `can_access()` the
+web app uses, with a review out of reach reported as "no review" rather than
+"forbidden".
+
+One thing to know before handing out a key: **every reviewer's vote is readable
+here**, while the web app hides them until you have voted. Blinding is a
+discipline of the moment of voting; this surface is for reading a corpus, and a
+reader that saw half the votes would mostly produce wrong totals. A reviewer who
+reads here before voting there has read ahead.
+
+Counts — `extraction_summary`, the PRISMA numbers — are computed in SQL and
+handed over as figures, for the same reason the synthesis computes its study
+characteristics instead of asking a model to count.
+
 ## Stack
 
 FastAPI + Jinja2 + SQLAlchemy/SQLite, JWT cookie auth. Per-user credentials

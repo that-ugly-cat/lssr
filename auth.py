@@ -6,6 +6,11 @@ Strategy (borant house pattern): JWT stored in an httpOnly cookie named 'session
 - Secret key via JWT_SECRET env var; startup crashes if missing.
 - is_admin flag on User for admin-only routes.
 
+The cookie is not the only credential. `/mcp` is authenticated by a per-user
+ApiKey instead (see the MCP section at the bottom of this file, and mcp_app.py):
+a model client has no browser and no cookie, and the key resolves to the person
+who minted it so that authorisation stays exactly where the web app puts it.
+
 There is deliberately no second factor here. One was sketched in the schema for
 a long time and never wired to a route, which is worse than not having it: the
 tool advertised a protection it did not apply. Where a second factor is wanted,
@@ -16,6 +21,7 @@ import ipaddress
 import logging
 import os
 import secrets
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 
 import bcrypt
@@ -199,3 +205,73 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     if not user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin required")
     return user
+
+
+# ── MCP surface ───────────────────────────────────────────────────────────────
+
+# The MCP tools are plain sync functions with no access to the request, so the
+# caller resolved by the middleware is handed over in a contextvar. One per
+# request, and `stateless_http` means one request per call.
+_caller: ContextVar["User | None"] = ContextVar("mcp_caller", default=None)
+
+
+def check_api_key(db: Session, key: str) -> "ApiKey | None":
+    """The active ApiKey row for this key, or None. Stamps last_used_at, so a
+    key still in use somewhere is visible instead of guessed at."""
+    from models import ApiKey
+    if not key:
+        return None
+    row = (db.query(ApiKey)
+             .filter(ApiKey.key == key, ApiKey.active == True)  # noqa: E712
+             .first())
+    if row is None or not row.user or not row.user.is_active:
+        return None
+    row.last_used_at = datetime.utcnow()
+    db.commit()
+    return row
+
+
+def set_caller(user: "User | None") -> None:
+    _caller.set(user)
+
+
+def current_caller() -> User:
+    user = _caller.get()
+    if user is None:
+        raise PermissionError("No authenticated caller")
+    return user
+
+
+def mcp_review(db: Session, ref: str):
+    """
+    Resolve one review for an MCP call, under the caller's own permissions.
+
+    A review can be named by its numeric id or by its name — a model that read
+    a name in an earlier answer should not have to go back for the id. Matching
+    on names only ever searches the caller's own reviews, and an ambiguous name
+    is refused with the candidates rather than resolved to the first hit: this
+    surface is read-only, but the wrong review is still the wrong answer.
+
+    Same rule as the web app: no access is indistinguishable from no review.
+    The model is told "no review", never "exists but forbidden".
+    """
+    from models import Workspace, can_access, user_workspaces
+    user = current_caller()
+    ref = (ref or "").strip()
+    if not ref:
+        raise LookupError("Which review? Pass an id or a name from list_reviews.")
+    if ref.isdigit():
+        ws = db.query(Workspace).filter(Workspace.id == int(ref)).first()
+        if ws is None or not can_access(db, user, ws):
+            raise LookupError(f"No review '{ref}'")
+        return ws
+    mine = user_workspaces(db, user)
+    needle = ref.lower()
+    exact = [w for w in mine if (w.name or "").lower() == needle]
+    hits = exact or [w for w in mine if needle in (w.name or "").lower()]
+    if not hits:
+        raise LookupError(f"No review '{ref}'. Try list_reviews.")
+    if len(hits) > 1:
+        names = ", ".join(f"{w.id}: {w.name}" for w in hits[:10])
+        raise LookupError(f"'{ref}' matches more than one review — {names}")
+    return hits[0]

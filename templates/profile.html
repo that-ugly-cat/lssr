@@ -20,6 +20,53 @@
   </form>
 </div>
 
+<div class="cards-label">MCP keys</div>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">
+    A key lets a model client (Claude Code, Claude Desktop) read your reviews
+    from inside a conversation: records, votes, criteria, extraction, synthesis.
+    <strong>Read-only</strong> — nothing on that surface votes, extracts or
+    marks a step done, so a key exposes a corpus and cannot change one. It
+    reaches exactly the reviews you reach, and stops there.
+  </p>
+  <table class="table">
+    <thead><tr><th>Name</th><th>Key</th><th>Last used</th><th></th></tr></thead>
+    <tbody>
+      {% for k in keys %}
+      <tr>
+        <td>{{ k.name }}{% if not k.active %} <span class="badge badge-muted">revoked</span>{% endif %}</td>
+        <td><code style="font-size:11px;">{{ k.key if k.active else '—' }}</code></td>
+        <td class="muted small">{{ k.last_used_at.strftime('%Y-%m-%d %H:%M') if k.last_used_at else 'never' }}</td>
+        <td>
+          {% if k.active %}
+          <form method="post" action="/profile/keys/{{ k.id }}/revoke" class="inline-form">
+            <button class="btn btn-small btn-danger" type="submit">Revoke</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted small">No keys yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="/profile/keys" class="inline-form">
+    <input name="name" placeholder="What is it for (e.g. Claude Code)" required>
+    <button class="btn btn-primary btn-small" type="submit">New key</button>
+  </form>
+
+  {% if keys and keys[0].active %}
+  <p class="muted small" style="margin-bottom:2px;">
+    Endpoint <code>{{ public_url }}/mcp</code>, header <code>X-API-Key</code>.
+    For clients that cannot send custom headers, the same key travels in the path:
+  </p>
+  <p><code style="font-size:11px;">{{ public_url }}/mcp/k/{{ keys[0].key }}</code></p>
+  <p class="muted small">That URL <em>is</em> the credential, so treat it like
+    one: it can end up in access logs. Use a key per client, and revoke it on
+    its own.</p>
+  {% endif %}
+</div>
+
 <div class="cards-label">Publisher full-text access</div>
 <div class="card">
   <p class="muted small" style="margin-top:0;">

@@ -62,6 +62,36 @@ class User(Base):
     owned_workspaces = relationship("Workspace", back_populates="owner")
 
 
+# ── MCP credentials ───────────────────────────────────────────────────────────
+
+class ApiKey(Base):
+    """
+    A key for the MCP surface, and deliberately a credential *of a person*.
+
+    Every MCP call resolves to `user` and then goes through the same
+    can_access() the web app uses, so a key reaches exactly the reviews its
+    owner reaches and stops there. Without that binding the model-facing
+    surface would be a hole straight through the access model — and here the
+    access model is also the attribution model, since a reviewer's id is what
+    every screening decision and every extraction hangs off.
+
+    Read-only for now: nothing on this surface writes, so a leaked key exposes
+    a corpus and cannot corrupt one. That is the whole reason the first version
+    reads and does not write.
+    """
+    __tablename__ = "api_keys"
+    id           = Column(Integer, primary_key=True)
+    user_id      = Column(Integer, ForeignKey("users.id"), nullable=False)
+    name         = Column(String, nullable=False)
+    key          = Column(String, unique=True, nullable=False,
+                          default=lambda: "lssr_" + secrets.token_urlsafe(32))
+    active       = Column(Boolean, default=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+
+    user = relationship("User")
+
+
 # ── Workspaces ────────────────────────────────────────────────────────────────
 
 class Workspace(Base):

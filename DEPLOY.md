@@ -19,6 +19,7 @@ synthesis). It calls the Claude API (per-user key) and the
 | `ELSEVIER_INSTTOKEN` | no | _(none)_ | institutional token the library obtains from Elsevier. Required for *any* Elsevier full text off the institution's network, including from the server |
 | `SPRINGER_API_KEY` | no | _(none)_ | Springer Nature **Open Access** API key, free from [dev.springernature.com](https://dev.springernature.com). Not the Meta API key — that returns metadata only |
 | `WILEY_TDM_TOKEN` | no | _(none)_ | Wiley TDM client token, issued from a Wiley Online Library account with the institution's entitlement |
+| `PUBLIC_URL` | for `/mcp` | _(none)_ | the app's public origin, e.g. `https://lssr.yourdomain.example`. The MCP transport checks the `Host` header against DNS rebinding, so behind a proxy the public host must be listed here or **every** MCP request is refused with *Invalid Host header*. It is also what the profile page prints as the endpoint to connect to |
 | `AUTH_MODE` | no | `local` | `local` = own login. `gateway` = trust an SSO gate in front (see the last section) |
 | `BORANT_TRUSTED_PROXY` | in `gateway` | `127.0.0.1` | the address the proxy connects from; headers from anywhere else are ignored |
 | `BORANT_LOGOUT_URL` | no | `https://id.borant.eu/logout` | where "log out" goes in `gateway` mode |
@@ -137,6 +138,19 @@ paper2md's own `server: uvicorn` and no proxy headers.
 - `https://lssr.yourdomain.example/` — reviews list
 - each user sets their Anthropic API key under **Profile** before any LLM step
 
+The MCP surface, with a key minted under **Profile → MCP keys**:
+
+```bash
+curl -s -X POST https://lssr.yourdomain.example/mcp \
+  -H "X-API-Key: lssr_…" -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -c 400
+```
+
+A `401 missing or invalid API key` means the key is wrong or revoked; *Invalid
+Host header* means `PUBLIC_URL` does not match the host the request arrived on.
+Without a key the endpoint answers 401 and nothing else — it is not browsable.
+
 ## 6. Updating
 
 ```bash
@@ -169,9 +183,15 @@ sign-in wall never meet it.
 **`local` stays the default.** An app that believes `X-Borant-Sub` with nothing
 in front of it lets in anyone who sends that header.
 
+**And `/mcp` stays outside the gate**, with its own per-user key. A model client
+has no browser and no cookie, so putting it behind a domain session would mean
+switching it off. `/mcp/*` covers the `/mcp/k/{key}` variant too. Nothing is
+loosened by this: with no valid key that path answers 401 and stops, and a valid
+key reaches only what its owner reaches.
+
 ```
 lssr.borant.eu {
-    @pubbliche path /r/* /health /static/* /login /logout
+    @pubbliche path / /r/* /health /static/* /mcp /mcp/* /login /logout
     handle @pubbliche {
         import noforge
         import nocookie
