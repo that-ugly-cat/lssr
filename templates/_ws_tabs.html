@@ -1,6 +1,6 @@
 <div class="page-head">
   <h1>{{ ws.name }}</h1>
-  <a class="btn" href="/">← All reviews</a>
+  <a class="btn" href="/app">← All reviews</a>
 </div>
 {% set sd = steps_done | default([]) %}
 {% macro check(step) %}{% if step in sd %} <span class="tab-done" title="marked done">✓</span>{% endif %}{% endmacro %}

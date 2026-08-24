@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}LSSR — Living Systematic Scoping Review{% endblock %}
+{% block body %}
+{#
+  La vetrina pubblica. Sta fuori dal gate e **non guarda mai chi la legge**:
+  nessun `{% if user %}` qui dentro. Sul ramo pubblico gli header d'identita'
+  vengono tolti per costruzione, quindi quel ramo sarebbe sempre falso dietro
+  il gate e a volte vero senza — la stessa pagina con due comportamenti.
+
+  Per la stessa ragione il bottone punta a `/app`, che e' **gated**: cosi' il
+  gate (o il login locale, se il gate non c'e') prende in mano la richiesta, e
+  funziona identico nei quattro casi — col gate o senza, gia' dentro o no.
+#}
+<div style="max-width:820px;margin:6vh auto 0">
+
+  <h1 style="margin-bottom:2px">LSSR</h1>
+  <p class="muted" style="margin-top:0;letter-spacing:.02em">Living Systematic Scoping Review</p>
+
+  <p style="font-size:1.02rem;line-height:1.65;margin-top:22px">
+    Una scoping review intera in un solo strumento — e <strong>viva</strong>:
+    ogni passo si rilancia su richiesta e aggiorna i risultati senza rifare il
+    lavoro umano che c'era gia'.
+  </p>
+
+  <div class="cards-label" style="margin-top:30px">Cosa fa</div>
+
+  <div class="card">
+    <strong>La query, tradotta dove serve</strong>
+    <p class="muted small" style="margin:6px 0 0">
+      Costruzione della stringa e traduzione consapevole della fonte verso
+      <strong>quattordici banche dati</strong>, con raccolta diretta per le
+      quattro che hanno un'API aperta. Deduplicazione fra fonti diverse.
+    </p>
+  </div>
+
+  <div class="card">
+    <strong>Lo screening, in cieco e in piu' persone</strong>
+    <p class="muted small" style="margin:6px 0 0">
+      Piu' revisori che non si vedono a vicenda, e una risoluzione dei
+      conflitti che resta un passaggio umano.
+    </p>
+  </div>
+
+  <div class="card">
+    <strong>Il full text, per gradi</strong>
+    <p class="muted small" style="margin:6px 0 0">
+      Una scala di recupero che prova le strade in ordine, ed estrazione
+      strutturata con una prima stesura dell'AI — da correggere, non da
+      accettare.
+    </p>
+  </div>
+
+  <div class="card">
+    <strong>Quello che esce</strong>
+    <p class="muted small" style="margin:6px 0 0">
+      Citazioni costruite proceduralmente dai record recuperati, un diagramma
+      PRISMA che si aggiorna da solo, e per ogni review un
+      <strong>cruscotto pubblico in sola lettura</strong> da condividere senza
+      dare un account a nessuno.
+    </p>
+  </div>
+
+  <div style="margin:34px 0 10px">
+    <a class="btn btn-primary" href="/app" style="padding:10px 22px">Entra →</a>
+  </div>
+
+  <p class="muted small" style="margin-top:26px">
+    Sviluppato da
+    <a href="https://www.ibme.uzh.ch/en/Biomedical-Ethics/Team/Research-Fellows/Giovanni-Spitale.html"
+       target="_blank" rel="noopener">Giovanni Spitale</a> —
+    Institute of Biomedical Ethics and History of Medicine, University of Zurich.
+  </p>
+
+</div>
+{% endblock %}
