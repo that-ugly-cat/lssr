@@ -274,6 +274,18 @@ class Import(Base):
     raw_count     = Column(Integer, default=0)              # references parsed
     new_count     = Column(Integer, default=0)              # records newly created
     merged_count  = Column(Integer, default=0)              # references merged into existing records
+    # PRISMA 2020 draws two columns: records found by searching databases and
+    # registers, and records found by any other route — expert knowledge,
+    # citation chasing, grey literature, a request from the commissioner. The
+    # flag is declared by whoever imports rather than inferred from the source
+    # label, because sooner or later someone imports a real database export
+    # under 'Other' just because that database is not in the menu, and an
+    # inferred flag would then misreport the flow with nobody noticing.
+    via_other_methods = Column(Boolean, default=False)
+    # Why these references were added and who asked for them. Per import batch,
+    # which is the granularity a nomination arrives in, and the line the methods
+    # section of the report needs: a count says how many, never why.
+    note          = Column(Text, nullable=True)
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow)
 
@@ -299,6 +311,12 @@ class RawReference(Base):
     import_id     = Column(Integer, ForeignKey("imports.id"), nullable=True)
     record_id     = Column(Integer, ForeignKey("records.id"), nullable=True)  # merge target
     database      = Column(String, nullable=True)
+    # Denormalised from the import batch so the PRISMA arms can be grouped
+    # without a join, and so a later edit of the batch cannot silently rewrite
+    # history. Direct harvests (PubMed, Europe PMC, OpenAlex, ERIC) are always
+    # False by construction — only a file import or a hand-added record can be
+    # anything else.
+    via_other_methods = Column(Boolean, default=False)
     canonical_key = Column(String, nullable=True)
     raw_json      = Column(Text, nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow)
@@ -715,6 +733,13 @@ def init_db():
             "ALTER TABLE users DROP COLUMN totp_secret_encrypted",
             "ALTER TABLE users DROP COLUMN totp_enabled",
             "ALTER TABLE users DROP COLUMN backup_codes_json",
+            # The second PRISMA arm. Defaulting existing rows to 0 is not a
+            # guess: every reference already in any pool arrived from a database
+            # search, so 'identified from databases and registers' is the true
+            # answer for all of them.
+            "ALTER TABLE imports ADD COLUMN via_other_methods BOOLEAN DEFAULT 0",
+            "ALTER TABLE imports ADD COLUMN note TEXT",
+            "ALTER TABLE raw_references ADD COLUMN via_other_methods BOOLEAN DEFAULT 0",
         ]:
             try:
                 conn.execute(text(stmt))
@@ -725,6 +750,30 @@ def init_db():
     _retire_assessment_criteria()
     _upgrade_methodology_fields()
     _backfill_workspace_years()
+    _backfill_manual_raw_references()
+
+
+def _backfill_manual_raw_references():
+    """One-time: records typed in by hand used to be created without a
+    RawReference, so they were counted at screening but never at identification.
+    PRISMA then showed a pool that shrank between 'without duplicates' and
+    'screened' with no arrow accounting for the difference, and the gap read as
+    dedup. Give each of them the reference row it should always have had, in the
+    other-methods arm where a hand-added record belongs. Idempotent."""
+    db = SessionLocal()
+    try:
+        have = {rid for (rid,) in db.query(RawReference.record_id)
+                                    .filter(RawReference.record_id.isnot(None)).distinct().all()}
+        orphans = [r for r in db.query(Record).filter(Record.added_manually == True).all()  # noqa: E712
+                   if r.id not in have]
+        for rec in orphans:
+            db.add(RawReference(workspace_id=rec.workspace_id, record_id=rec.id,
+                                database="manual", via_other_methods=True,
+                                canonical_key=rec.canonical_key))
+        if orphans:
+            db.commit()
+    finally:
+        db.close()
 
 
 def _backfill_workspace_years():

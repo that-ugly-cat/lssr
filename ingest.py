@@ -160,7 +160,7 @@ def _merge_into(rec: Record, ref: dict):
 
 
 def merge_reference(db, workspace_id: int, iteration: Iteration, ref: dict,
-                    import_id: int | None = None) -> str:
+                    import_id: int | None = None, via_other: bool = False) -> str:
     """Fold one normalized ref into the pool. Returns 'new' or 'merged'.
     Caller commits."""
     key = canonical_key(ref)
@@ -171,6 +171,7 @@ def merge_reference(db, workspace_id: int, iteration: Iteration, ref: dict,
         dup.last_seen_iter_id = iteration.id
         db.add(RawReference(workspace_id=workspace_id, import_id=import_id,
                             record_id=dup.id, database=ref.get("database"),
+                            via_other_methods=via_other,
                             canonical_key=key, raw_json=json.dumps(ref)))
         return "merged"
 
@@ -191,22 +192,26 @@ def merge_reference(db, workspace_id: int, iteration: Iteration, ref: dict,
     db.flush()  # assign rec.id for the RawReference FK
     db.add(RawReference(workspace_id=workspace_id, import_id=import_id,
                         record_id=rec.id, database=ref.get("database"),
+                        via_other_methods=via_other,
                         canonical_key=key, raw_json=json.dumps(ref)))
     return "new"
 
 
 def ingest_references(db, workspace, iteration, refs: list[dict], database: str,
-                      fmt: str, source_name: str, user_id: int | None) -> Import:
+                      fmt: str, source_name: str, user_id: int | None,
+                      via_other_methods: bool = False, note: str | None = None) -> Import:
     """Create an Import row and fold every ref into the pool. Commits once."""
     imp = Import(workspace_id=workspace.id, iteration_id=iteration.id,
                  database=database, fmt=fmt, source_name=source_name,
+                 via_other_methods=bool(via_other_methods), note=(note or None),
                  created_by_id=user_id)
     db.add(imp)
     db.flush()
     new_n = merged_n = 0
     for ref in refs:
         ref.setdefault("database", database)
-        outcome = merge_reference(db, workspace.id, iteration, ref, import_id=imp.id)
+        outcome = merge_reference(db, workspace.id, iteration, ref, import_id=imp.id,
+                                  via_other=bool(via_other_methods))
         if outcome == "new":
             new_n += 1
         else:

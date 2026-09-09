@@ -214,6 +214,15 @@ def get_review(review: str) -> dict:
     from a snapshot taken when the synthesis was last generated — so they move
     as the review moves, and the stages whose step is not marked done are
     provisional by design.
+
+    The top-level counts are always the totals. When a review has records that
+    arrived by some route other than searching a database — expert knowledge,
+    citation chasing, grey literature — `prisma.arms` splits the same flow into
+    the two columns PRISMA 2020 draws, `db` and `other`. A record counts as
+    `other` only when none of its provenances is a database, so `arms.other`
+    measures what those routes found *that the search missed*, and
+    `arms.other.already_found_by_search` says how much of a nominated list the
+    query had already caught. Reviews with no such records have no `arms` key.
     """
     db = SessionLocal()
     try:

@@ -33,7 +33,7 @@ from authors import author_key, canonicalize, split_authors
 from models import (
     ApiKey,
     DATABASES, DB_LABELS, HARVEST_DBS, PIPELINE_STEPS, PRICING, SOURCE_DBS, Criterion,
-    Import, PublicShare, Record, SessionLocal, User, Workspace, WorkspaceMember,
+    Import, PublicShare, RawReference, Record, SessionLocal, User, Workspace, WorkspaceMember,
     can_access,
     current_iteration, db_label, db_search_url, get_db, get_query, init_db,
     new_share_token, screen2_required, set_step_done, set_workspace_targets,
@@ -913,7 +913,7 @@ def _db_label(database: str, other_name: str) -> str:
 
 @app.post("/w/{ws_id}/records/import")
 async def import_file(ws_id: int, file: UploadFile = File(...), database: str = Form("scopus"),
-                      other_name: str = Form(""),
+                      other_name: str = Form(""), via_other: str = Form(""), note: str = Form(""),
                       user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     # utf-8-sig, not utf-8: Web of Science exports carry a BOM, and a leading
@@ -933,7 +933,8 @@ async def import_file(ws_id: int, file: UploadFile = File(...), database: str = 
     else:
         fmt = "bibtex"
     ingest_references(db, ws, it, refs, database=_db_label(database, other_name), fmt=fmt,
-                      source_name=file.filename, user_id=user.id)
+                      source_name=file.filename, user_id=user.id,
+                      via_other_methods=bool(via_other), note=note.strip() or None)
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 
@@ -945,6 +946,7 @@ _IMPORT_TMP = Path("data/import_tmp")
 @app.post("/w/{ws_id}/records/import/excel")
 async def import_excel_preview(ws_id: int, request: Request, file: UploadFile = File(...),
                                database: str = Form("scopus"), other_name: str = Form(""),
+                               via_other: str = Form(""), note: str = Form(""),
                                user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     data = await file.read()
@@ -977,12 +979,14 @@ async def import_excel_preview(ws_id: int, request: Request, file: UploadFile = 
         "columns": cols, "sample": sample, "total": total,
         "fields": EXCEL_FIELDS, "guess": guess,
         "database": database, "other_name": other_name,
+        "via_other": via_other, "note": note,
     })
 
 
 @app.post("/w/{ws_id}/records/import/excel/apply")
 async def import_excel_apply(ws_id: int, request: Request, token: str = Form(...),
                              database: str = Form("scopus"), other_name: str = Form(""),
+                             via_other: str = Form(""), note: str = Form(""),
                              type_col: str = Form(""), default_type: str = Form("article"),
                              user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
@@ -1002,7 +1006,8 @@ async def import_excel_apply(ws_id: int, request: Request, token: str = Form(...
         raise HTTPException(400, f"Could not read spreadsheet: {exc}")
     it = current_iteration(db, ws)
     ingest_references(db, ws, it, refs, database=_db_label(database, other_name), fmt="excel",
-                      source_name=None, user_id=user.id)
+                      source_name=None, user_id=user.id,
+                      via_other_methods=bool(via_other), note=note.strip() or None)
     path.unlink(missing_ok=True)
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
@@ -1015,6 +1020,7 @@ def _parse_year(year: str):
 async def add_record(ws_id: int, title: str = Form(...), authors: str = Form(""),
                      year: str = Form(""), doi: str = Form(""), url: str = Form(""),
                      abstract: str = Form(""), source: str = Form(""), type: str = Form("article"),
+                     note: str = Form(""),
                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     it = current_iteration(db, ws)
@@ -1030,6 +1036,20 @@ async def add_record(ws_id: int, title: str = Form(...), authors: str = Form("")
                  source_dbs_json=json.dumps(["manual"]), canonical_key=canonical_key(ref) or None,
                  added_manually=True, first_seen_iter_id=it.id, last_seen_iter_id=it.id)
     db.add(rec)
+    db.flush()
+    # A record typed in by hand is the other-methods arm in miniature, and it
+    # used to leave no RawReference at all: it was counted in screening but was
+    # invisible in Identification, so 'without duplicates' and 'screened' did
+    # not agree and the difference looked like dedup. One reference row per
+    # hand-added record fixes the arithmetic and puts it in the right arm.
+    imp = Import(workspace_id=ws.id, iteration_id=it.id, database="manual", fmt="manual",
+                 source_name=(title.strip()[:120] or None), raw_count=1, new_count=1,
+                 via_other_methods=True, note=note.strip() or None, created_by_id=user.id)
+    db.add(imp)
+    db.flush()
+    db.add(RawReference(workspace_id=ws.id, import_id=imp.id, record_id=rec.id,
+                        database="manual", via_other_methods=True,
+                        canonical_key=rec.canonical_key, raw_json=json.dumps(ref)))
     db.commit()
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 

@@ -109,6 +109,25 @@ The **PRISMA flow** is computed live from the current pool and rendered as a
 flow diagram on the Overview and the public page; stages whose pipeline step
 isn't marked done yet are drawn as dashed *pending* boxes, without counts.
 
+**Records found some other way.** No search query is perfect, and a review often
+has to add studies its query never returned: a paper an author knows, a hit from
+citation chasing, grey literature no database indexes, a request from whoever
+commissioned the review. Tick **via other methods** when importing them (and say
+in the note who nominated them and why the search missed them), and they become
+the second column PRISMA 2020 draws, instead of quietly joining the search
+results.
+
+A record counts as *other methods* only when **none** of its provenances is a
+database. That rule does not depend on the order things were imported: a
+nomination a later harvest also finds moves to the database column, and so does
+the reverse. It also makes the right-hand column worth reading — it counts what
+those other routes found *that the query did not*, with the nominations the
+search had already caught reported separately. Records added one at a time by
+hand belong to this arm too.
+
+Reviews that never use it are unaffected: no second column is drawn, and the
+diagram is exactly what it was.
+
 The screening and assessment tables (and full text) carry filters; screening and
 assessment export to **Excel** (the assessment sheet is the record × field
 extraction matrix).

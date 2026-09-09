@@ -15,6 +15,16 @@
       <option value="other">Other</option>
     </select>
     <input type="text" name="other_name" class="other-name" placeholder="name the source" style="display:none; max-width:160px;">
+    {# PRISMA 2020 draws two columns. Which one these references belong in is
+       declared here rather than guessed from the source name: a real database
+       export imported under 'Other' because that database is not in the menu
+       still belongs in the left column. #}
+    <label style="margin-left:6px; font-size:12px;"
+           title="Expert knowledge, citation chasing, grey literature, a request from the commissioner — anything not found by searching a bibliographic database. Shown as the second PRISMA column.">
+      <input type="checkbox" name="via_other" value="1"> via other methods
+    </label>
+    <input type="text" name="note" placeholder="who nominated these, and why the query missed them"
+           style="max-width:280px;">
   {% endmacro %}
   <form method="post" action="/w/{{ ws.id }}/records/import" enctype="multipart/form-data" class="inline-form">
     <input type="file" name="file" accept=".bib,.bibtex,.ris,.nbib" required>
@@ -28,11 +38,13 @@
   </form>
   {% if imports %}
   <table class="table" style="margin-top:12px;">
-    <thead><tr><th>Source</th><th>DB</th><th>Parsed</th><th>New</th><th>Merged</th></tr></thead>
+    <thead><tr><th>Source</th><th>DB</th><th>Parsed</th><th>New</th><th>Merged</th><th>Note</th></tr></thead>
     <tbody>
       {% for imp in imports %}
-      <tr><td>{{ imp.source_name or imp.fmt }}</td><td>{{ imp.database }}</td>
-          <td>{{ imp.raw_count }}</td><td>{{ imp.new_count }}</td><td>{{ imp.merged_count }}</td></tr>
+      <tr><td>{{ imp.source_name or imp.fmt }}</td>
+          <td>{{ imp.database }}{% if imp.via_other_methods %} <span class="muted" title="Second PRISMA column: identified via other methods">· other methods</span>{% endif %}</td>
+          <td>{{ imp.raw_count }}</td><td>{{ imp.new_count }}</td><td>{{ imp.merged_count }}</td>
+          <td class="muted">{{ imp.note or "" }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -148,6 +160,12 @@
     </div>
     <form method="post" action="/w/{{ ws.id }}/records/add">
       {{ record_fields('add') }}
+      <label>Provenance note
+        <input type="text" name="note"
+               placeholder="who nominated this, and why the search missed it"></label>
+      <div class="muted" style="font-size:12px; margin-top:4px;">
+        A record added here counts in the second PRISMA column, identified via other methods.
+      </div>
       <button class="btn btn-primary" type="submit" style="margin-top:12px;">Add record</button>
     </form>
   </div>
