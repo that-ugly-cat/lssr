@@ -945,3 +945,78 @@ def upsert_query(db, workspace: "Workspace", database: str, query_string: str,
     db.commit()
     db.refresh(q)
     return q
+
+
+# ── Duplicating a review (a v2 that keeps the protocol, drops the corpus) ──────
+
+# What a duplicate may carry over. Everything absent from this list is *work*
+# — records, screening votes, extractions, full texts, iterations, synthesis,
+# per-step done flags — and is never copied: a copy of a decision would carry a
+# reviewer's name into a review that reviewer never read.
+DUPLICABLE_PARTS = ["details", "settings", "criteria", "fields", "members", "queries", "share"]
+
+
+def duplicate_workspace(db, source: "Workspace", owner: "User", name: str,
+                        parts) -> "Workspace":
+    """Create a new workspace from `source`, copying only the selected parts.
+
+    The caller becomes the owner. Extraction fields are copied verbatim (key,
+    options and show_if included), which also means `ensure_extraction_fields`
+    will leave them alone; skip them and the new workspace seeds the builtins
+    the usual way on first visit to its settings.
+    """
+    parts = set(parts or [])
+    ws = Workspace(name=name.strip(), owner_id=owner.id)
+    if "details" in parts:
+        ws.description = source.description
+        ws.research_question = source.research_question
+    if "settings" in parts:
+        ws.screening_model = source.screening_model
+        ws.screen1_reviewers_required = source.screen1_reviewers_required
+        ws.screen2_reviewers_required = source.screen2_reviewers_required
+        ws.primary_db = source.primary_db
+        ws.year_from = source.year_from
+        ws.year_to = source.year_to
+        ws.target_dbs_json = source.target_dbs_json
+    db.add(ws)
+    db.flush()          # we need ws.id for the children below
+
+    if "criteria" in parts:
+        for c in (db.query(Criterion).filter(Criterion.workspace_id == source.id)
+                    .order_by(Criterion.position, Criterion.id).all()):
+            db.add(Criterion(workspace_id=ws.id, kind=c.kind, label=c.label,
+                             description=c.description, position=c.position))
+
+    if "fields" in parts:
+        for f in workspace_extraction_fields(db, source):
+            db.add(ExtractionField(
+                workspace_id=ws.id, key=f.key, label=f.label, help=f.help,
+                field_type=f.field_type, options_json=f.options_json,
+                show_if_key=f.show_if_key, show_if_values_json=f.show_if_values_json,
+                builtin=f.builtin, position=f.position))
+
+    if "members" in parts:
+        seen = {owner.id}                       # the new owner is not a member row
+        for m in db.query(WorkspaceMember).filter(
+                WorkspaceMember.workspace_id == source.id).all():
+            if m.user_id not in seen:
+                seen.add(m.user_id)
+                db.add(WorkspaceMember(workspace_id=ws.id, user_id=m.user_id))
+        if source.owner_id not in seen:         # duplicating someone else's review
+            db.add(WorkspaceMember(workspace_id=ws.id, user_id=source.owner_id))
+
+    if "queries" in parts:
+        for q in db.query(SearchQuery).filter(
+                SearchQuery.workspace_id == source.id).all():
+            db.add(SearchQuery(workspace_id=ws.id, database=q.database,
+                               query_string=q.query_string, is_primary=q.is_primary,
+                               year_from=q.year_from, year_to=q.year_to))
+
+    if "share" in parts:
+        # a fresh token: the source's link keeps pointing at the source
+        db.add(PublicShare(workspace_id=ws.id, token=new_share_token(),
+                           created_by_id=owner.id))
+
+    db.commit()
+    db.refresh(ws)
+    return ws

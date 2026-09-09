@@ -92,4 +92,47 @@
   </form>
   {% endif %}
 </div>
+<div class="cards-label">Duplicate</div>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">
+    Start a new review from this one — same protocol, empty corpus. Records,
+    screening decisions, extractions, full texts, iterations, the synthesis and
+    the per-step done flags are never copied.
+  </p>
+  <button class="btn" type="button"
+          onclick="document.getElementById('dup-ws').classList.add('open')">Duplicate this review</button>
+</div>
+
+<div class="overlay" id="dup-ws">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Duplicate review</div>
+      <button class="modal-close" type="button"
+              onclick="document.getElementById('dup-ws').classList.remove('open')">&times;</button>
+    </div>
+    <form method="post" action="/w/{{ ws.id }}/duplicate">
+      <label>Name of the new review <input type="text" name="name" value="{{ ws.name }} (v2)" required></label>
+      {% set dup_parts = [
+        ('details',  'Description & research question', 'The two long texts. Edit them afterwards if the new query changes the scope.', true),
+        ('settings', 'Settings', 'Screening model, reviewers required for screening 1 and 2, primary database, year window, translation targets.', true),
+        ('criteria', 'Criteria', 'Exclusion criteria (screening 1) and inclusion criteria (screening 2), with their guidance text.', true),
+        ('fields',   'Extraction fields', 'The whole extraction schema: keys, types, options and show_if rules. Unticked, the new review seeds the builtin fields instead.', true),
+        ('members',  'Members', 'The people who can work on the review. You become its owner either way.', true),
+        ('queries',  'Queries', 'The canonical query and its translations. Leave this off to write the search from scratch.', false),
+        ('share',    'Public link', 'Creates a new read-only /r/ token. The current link keeps pointing at this review.', false)
+      ] %}
+      <div class="cards-label" style="margin-top:14px;">Copy over</div>
+      {% for key, label, desc, on in dup_parts %}
+      <label class="check-row" style="align-items:flex-start;">
+        <input type="checkbox" name="parts" value="{{ key }}" {{ 'checked' if on else '' }} style="margin-top:3px;">
+        <span>
+          <strong>{{ label }}</strong>
+          <div class="muted small">{{ desc }}</div>
+        </span>
+      </label>
+      {% endfor %}
+      <button class="btn btn-primary" type="submit" style="margin-top:12px;">Duplicate</button>
+    </form>
+  </div>
+</div>
 {% endblock %}

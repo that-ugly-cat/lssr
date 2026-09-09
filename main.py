@@ -37,6 +37,7 @@ from models import (
     can_access,
     current_iteration, db_label, db_search_url, get_db, get_query, init_db,
     new_share_token, screen2_required, set_step_done, set_workspace_targets,
+    DUPLICABLE_PARTS, duplicate_workspace,
     upsert_query, user_workspaces, workspace_criteria, workspace_steps_done,
     workspace_target_dbs, workspace_years,
 )
@@ -328,6 +329,27 @@ async def create_workspace(
     db.add(ws)
     db.commit()
     return RedirectResponse(f"/w/{ws.id}", status_code=302)
+
+
+@app.post("/w/{ws_id}/duplicate")
+async def duplicate_review(ws_id: int, name: str = Form(...),
+                           parts: list[str] = Form([]),
+                           user: User = Depends(get_current_user),
+                           db: Session = Depends(get_db)):
+    """Start a new review from an existing one: the protocol, never the corpus.
+
+    Which parts come along is the caller's choice (see DUPLICABLE_PARTS); the
+    records and every human decision taken on them stay behind by construction,
+    so a duplicate is an empty review that already knows what it is looking for.
+    """
+    ws = _load_ws(db, user, ws_id)
+    if not name.strip():
+        raise HTTPException(400, "Name required")
+    unknown = [p for p in parts if p not in DUPLICABLE_PARTS]
+    if unknown:
+        raise HTTPException(400, f"Unknown part: {unknown[0]}")
+    new_ws = duplicate_workspace(db, ws, user, name, parts)
+    return RedirectResponse(f"/w/{new_ws.id}", status_code=302)
 
 
 @app.get("/w/{ws_id}", response_class=HTMLResponse)
