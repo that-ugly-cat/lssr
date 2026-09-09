@@ -37,7 +37,7 @@ from models import (
     can_access,
     current_iteration, db_label, db_search_url, get_db, get_query, init_db,
     new_share_token, screen2_required, set_step_done, set_workspace_targets,
-    DUPLICABLE_PARTS, duplicate_workspace,
+    DUPLICABLE_PARTS, delete_workspace, duplicate_workspace, workspace_footprint,
     upsert_query, user_workspaces, workspace_criteria, workspace_steps_done,
     workspace_target_dbs, workspace_years,
 )
@@ -350,6 +350,27 @@ async def duplicate_review(ws_id: int, name: str = Form(...),
         raise HTTPException(400, f"Unknown part: {unknown[0]}")
     new_ws = duplicate_workspace(db, ws, user, name, parts)
     return RedirectResponse(f"/w/{new_ws.id}", status_code=302)
+
+
+@app.post("/w/{ws_id}/delete")
+async def delete_review(ws_id: int, confirm_name: str = Form(""),
+                        user: User = Depends(get_current_user),
+                        db: Session = Depends(get_db)):
+    """Delete a review and everything in it. Owner only, and irreversible.
+
+    The confirmation is the review's own name, typed: a review is deleted about
+    once in its life and the click that does it sits under settings people open
+    for other reasons, so the guard has to cost more than a reflex.
+    """
+    ws = db.query(Workspace).filter(Workspace.id == ws_id).first()
+    if not ws or not can_access(db, user, ws):
+        raise HTTPException(404, "Workspace not found")
+    if not (ws.owner_id == user.id or user.is_admin):
+        raise HTTPException(403, "Owner required")
+    if confirm_name.strip() != (ws.name or "").strip():
+        return RedirectResponse(f"/w/{ws_id}/settings?delete_error=1", status_code=302)
+    delete_workspace(db, ws)
+    return RedirectResponse("/app", status_code=302)
 
 
 @app.get("/w/{ws_id}", response_class=HTMLResponse)
@@ -1134,6 +1155,7 @@ async def dedup_keep(ws_id: int, ids: str = Form(...),
 
 @app.get("/w/{ws_id}/settings", response_class=HTMLResponse)
 async def settings_page(ws_id: int, request: Request, member_error: int = 0,
+                        delete_error: int = 0,
                         user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
@@ -1149,6 +1171,7 @@ async def settings_page(ws_id: int, request: Request, member_error: int = 0,
         "field_types": ["text", "textarea", "number", "select", "multiselect"],
         "models": list(PRICING.keys()),
         "members": members, "owner": ws.owner, "member_error": bool(member_error),
+        "delete_error": bool(delete_error), "footprint": workspace_footprint(db, ws),
         "is_owner": ws.owner_id == user.id or user.is_admin,
     })
 

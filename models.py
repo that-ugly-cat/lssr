@@ -1020,3 +1020,57 @@ def duplicate_workspace(db, source: "Workspace", owner: "User", name: str,
     db.commit()
     db.refresh(ws)
     return ws
+
+
+# ── Deleting a review ─────────────────────────────────────────────────────────
+
+def workspace_footprint(db, workspace: "Workspace") -> dict:
+    """What a delete would take with it. Records are counted including the
+    soft-deleted ones the dedup merge left behind: they are rows, and a delete
+    removes rows, so the number shown has to be the number removed."""
+    wid = workspace.id
+    syn = db.query(Synthesis).filter(Synthesis.workspace_id == wid).first()
+    return {
+        "records": db.query(Record).filter(Record.workspace_id == wid).count(),
+        "decisions": db.query(ScreenDecision).filter(ScreenDecision.workspace_id == wid).count(),
+        "extractions": db.query(Extraction).filter(Extraction.workspace_id == wid).count(),
+        "fulltexts": db.query(Record).filter(Record.workspace_id == wid,
+                                             Record.full_text_status == "converted").count(),
+        "iterations": db.query(Iteration).filter(Iteration.workspace_id == wid).count(),
+        "members": db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == wid).count(),
+        "shares": db.query(PublicShare).filter(PublicShare.workspace_id == wid).count(),
+        "synthesis": bool(syn),
+        "published": bool(syn and syn.published),
+    }
+
+
+def delete_workspace(db, workspace: "Workspace") -> dict:
+    """Delete a review and everything hanging off it, rows and files.
+
+    Children go first and in dependency order — records before the iterations
+    they point at — because nothing here is declared with a database-level
+    cascade, and a workspace row removed on its own would leave every decision
+    and extraction behind, invisible and still counted by nothing.
+    """
+    wid = workspace.id
+    footprint = workspace_footprint(db, workspace)
+
+    syn_ids = [s.id for s in db.query(Synthesis).filter(Synthesis.workspace_id == wid).all()]
+    if syn_ids:
+        db.query(SynthesisBlock).filter(
+            SynthesisBlock.synthesis_id.in_(syn_ids)).delete(synchronize_session=False)
+
+    for model in (Extraction, ScreenDecision, RawReference, Record, Import,
+                  DedupDismissal, Iteration, SearchQuery, Criterion,
+                  ExtractionField, UserCostLog, WorkspaceMember, PublicShare,
+                  Synthesis):
+        db.query(model).filter(model.workspace_id == wid).delete(synchronize_session=False)
+
+    db.delete(workspace)
+    db.commit()
+
+    # the fetched PDFs live in one directory per workspace
+    import shutil
+    from fulltext import DATA_ROOT
+    shutil.rmtree(DATA_ROOT / str(wid), ignore_errors=True)
+    return footprint

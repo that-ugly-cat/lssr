@@ -185,4 +185,35 @@
     <button class="btn btn-small" type="submit" style="margin-top:8px;">Add field</button>
   </form>
 </div>
+{% if is_owner %}
+<div class="cards-label" style="color:var(--danger);">Danger zone</div>
+<div class="card card-danger">
+  <p style="margin-top:0;"><strong>Delete this review</strong></p>
+  <p class="muted small">
+    Permanent, and it takes everything with it:
+    <strong>{{ footprint.records }}</strong> record{{ '' if footprint.records == 1 else 's' }},
+    <strong>{{ footprint.decisions }}</strong> screening decision{{ '' if footprint.decisions == 1 else 's' }},
+    <strong>{{ footprint.extractions }}</strong> extraction row{{ '' if footprint.extractions == 1 else 's' }},
+    <strong>{{ footprint.fulltexts }}</strong> converted full text{{ '' if footprint.fulltexts == 1 else 's' }}
+    (their downloaded PDFs too), the criteria, the extraction schema, the queries,
+    {{ footprint.iterations }} iteration{{ '' if footprint.iterations == 1 else 's' }},
+    {{ footprint.members }} member link{{ '' if footprint.members == 1 else 's' }}
+    and {{ footprint.shares }} public link{{ '' if footprint.shares == 1 else 's' }}{% if footprint.published %},
+    including a <strong>published</strong> synthesis anyone holding that link can currently read{% elif footprint.synthesis %},
+    including the generated synthesis{% endif %}.
+    There is no undo and no export step: take one first if the work is worth keeping
+    (Records, Screening and Assessment each export to Excel).
+  </p>
+  {% if delete_error %}
+  <div class="flash flash-error" style="display:block;">That is not the review's name. Nothing was deleted.</div>
+  {% endif %}
+  <form method="post" action="/w/{{ ws.id }}/delete"
+        onsubmit="return confirm('Delete “{{ ws.name }}” and everything in it? This cannot be undone.');">
+    <label>Type <code>{{ ws.name }}</code> to confirm
+      <input type="text" name="confirm_name" autocomplete="off" placeholder="{{ ws.name }}" required>
+    </label>
+    <button class="btn btn-danger" type="submit" style="margin-top:8px;">Delete this review permanently</button>
+  </form>
+</div>
+{% endif %}
 {% endblock %}
