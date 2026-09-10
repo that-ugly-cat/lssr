@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>User guide — {{ app_name }}</title>
+<!-- Self-contained on purpose: this page is public and linked from the card on
+     borant.eu/tools, and /static is not public on every app in the perimeter.
+     A guide that loses its stylesheet to a path matcher is a guide nobody reads. -->
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0f1117;color:#e2e8f0;font-size:14.5px;line-height:1.7;
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  nav{display:flex;align-items:center;gap:1.2rem;padding:.8rem 1.6rem;
+      background:#0a0c12;border-bottom:1px solid #1e2235}
+  nav a{color:#a0aec0;text-decoration:none;font-size:.82rem}
+  nav a:hover{color:#e2e8f0}
+  nav .brand{font-weight:700;font-size:.95rem;color:#e2e8f0}
+  nav .spacer{flex:1}
+  .wrap{max-width:830px;margin:0 auto;padding:30px 22px 90px}
+  .guide h1{font-size:1.65rem;margin:6px 0 16px;line-height:1.3}
+  .guide h2{font-size:1.15rem;margin:34px 0 10px;color:#7aa2f7;line-height:1.35}
+  .guide h3{font-size:1rem;margin:22px 0 8px}
+  .guide p,.guide li{color:#a8b2c4;margin-bottom:11px}
+  .guide ul,.guide ol{padding-left:1.35rem;margin-bottom:11px}
+  .guide li>ul,.guide li>ol{margin:6px 0}
+  .guide strong{color:#e2e8f0}
+  .guide a{color:#7aa2f7}
+  .guide code{background:#171a26;border:1px solid #1e2235;border-radius:3px;
+              padding:1px 5px;font-size:.86em}
+  .guide pre{background:#171a26;border:1px solid #1e2235;border-radius:7px;
+             padding:13px 15px;overflow-x:auto;margin-bottom:13px;font-size:.83rem;line-height:1.55}
+  .guide pre code{background:none;border:0;padding:0}
+  .guide table{border-collapse:collapse;margin:14px 0;display:block;overflow-x:auto;font-size:.88rem}
+  .guide th,.guide td{border:1px solid #1e2235;padding:7px 11px;text-align:left;vertical-align:top}
+  .guide th{background:#171a26;color:#e2e8f0;white-space:nowrap}
+  .guide hr{border:0;border-top:1px solid #1e2235;margin:30px 0}
+  .guide blockquote{border-left:3px solid #2d3148;padding-left:14px;color:#8b95a8;margin:13px 0}
+</style>
+</head>
+<body>
+<nav>
+  <a href="/" class="brand">{{ app_name }}</a>
+  <div class="spacer"></div>
+  <a href="{{ app_url }}">Open the app &#8599;</a>
+</nav>
+<div class="wrap"><article class="guide">{{ guide_html | safe }}</article></div>
+</body>
+</html>
