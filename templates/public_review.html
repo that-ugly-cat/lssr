@@ -2,6 +2,7 @@
 {% block title %}{{ ws.name }}{% endblock %}
 {% block body %}
 {% set has_records = 'records' in steps_done %}
+{% set has_screening = 'screening' in steps_done %}
 {% set has_fulltext = 'fulltext' in steps_done %}
 {% set has_assessment = 'assessment' in steps_done %}
 {% set st = stats %}
@@ -51,8 +52,8 @@
       {% if queries %}<a href="#queries">Queries</a>{% endif %}
       {% if has_records %}<a href="#records">Records</a>{% endif %}
       {% if has_fulltext %}<a href="#fulltext">Full text</a>{% endif %}
-      {% if st.screen.total %}<a href="#screening">Screening</a>{% endif %}
-      {% if st.screen2.total %}<a href="#assessment">Assessment</a>{% endif %}
+      {% if has_screening and st.screen.total %}<a href="#screening">Screening</a>{% endif %}
+      {% if has_assessment and st.screen2.total %}<a href="#assessment">Assessment</a>{% endif %}
       {% if syn %}<a href="#synthesis">Synthesis</a>{% endif %}
     </div>
   </nav>
@@ -180,19 +181,23 @@
     </section>
     {% endif %}
 
-    {% if st.screen.total %}
+    {# The step flag decides, the count only proves there is something to show:
+       on a public page a bar computed from real votes still says "this is the
+       screening of this review", and that is a claim only the person running it
+       gets to make. Same shape as records, full text and synthesis above. #}
+    {% if has_screening and st.screen.total %}
     <section id="screening">
       <h2>Screening <span class="muted">— title &amp; abstract</span></h2>
       {{ screenbar(st.screen) }}
     </section>
     {% endif %}
 
-    {% if st.screen2.total %}
+    {% if has_assessment and st.screen2.total %}
     <section id="assessment">
       <h2>Assessment <span class="muted">— full text</span></h2>
       {{ screenbar(st.screen2) }}
 
-      {% if has_assessment and st.assessment.n %}
+      {% if st.assessment.n %}
       {% set a = st.assessment %}
       <h3 style="margin-top:20px;">Included papers <span class="muted">— {{ a.n }}</span></h3>
       <div class="pub-grid">
