@@ -146,9 +146,14 @@
       <button class="modal-close" type="button" onclick="document.getElementById('help-convert').classList.remove('open')">&times;</button>
     </div>
     <p class="small">Every stored PDF is sent to the <strong>paper2md</strong> service, which returns
-      clean markdown with references, figures and tables stripped — the shape the
-      assessment step reads. Records fetched as XML from Europe PMC are already
-      converted and skip this step, as do records excluded at screening 2.</p>
+      the <strong>whole</strong> article as markdown — references and back matter kept, on
+      purpose, because this is the text you read in the review modal. The assessment step
+      reads a trimmed copy instead, cut at the first references or back-matter heading:
+      the trimming is for the model, never for you.</p>
+    <p class="small">Records fetched as full-text <strong>XML</strong> from Europe PMC never come
+      through here — that path is converted on arrival by LSSR's own JATS reader, which
+      <em>does</em> drop references, figures and tables, so what it stores is the article
+      alone. Records excluded at screening 2 are skipped too.</p>
     <p class="small">If paper2md is unreachable or rejects a file, the PDF is kept and the record
       stays fetchable for a retry — the run reports why. Manual uploads of
       Markdown, TXT or DOCX are already text, so they don't pass through here.</p>

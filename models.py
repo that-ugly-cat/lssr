@@ -355,10 +355,15 @@ class Record(Base):
     full_text_path   = Column(String, nullable=True)
     full_text_md     = Column(Text, nullable=True)
     full_text_note   = Column(Text, nullable=True)     # retrieval warnings: discarded candidates, title mismatch
-    # sticky screening decisions (steps 5, 8) — unused in Fase 1, schema-ready
-    screen1_decision = Column(String, default="pending")  # include | exclude | pending
+    # Settled screening verdicts (steps 5, 8). Not the source of truth: the votes
+    # live in ScreenDecision, and recompute_record_screen1/2 recache the outcome
+    # here after every vote. Everything that has to filter, count or export by
+    # decision reads these columns — lists, PRISMA, the public page, dedup
+    # carry-over, the MCP surface — because resolving the votes per record does
+    # not survive a query.
+    screen1_decision = Column(String, default="pending")  # pending | include | exclude | maybe | conflict
     screen1_reason   = Column(Text, nullable=True)
-    screen1_by       = Column(String, nullable=True)      # model | user
+    screen1_by       = Column(String, nullable=True)      # model | human | adjudicator | conflict
     screen1_at       = Column(DateTime, nullable=True)
     screen2_decision = Column(String, default="pending")
     screen2_reason   = Column(Text, nullable=True)
