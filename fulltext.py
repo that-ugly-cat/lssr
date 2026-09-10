@@ -282,8 +282,11 @@ def _prune_empty_sections(blocks: list) -> list:
 
 
 def jats_to_markdown(xml_bytes: bytes) -> str:
-    """JATS full text → markdown. References, figures and tables are dropped —
-    the same shape paper2md returns for a PDF."""
+    """JATS full text → markdown, with references, figures and tables dropped.
+
+    Not the same shape paper2md returns for a PDF: that path is asked to keep
+    the whole text, back matter included, because a person reads it. The trim
+    for the model happens later and only there, in strip_back_matter."""
     import xml.etree.ElementTree as ET
     root = ET.fromstring(xml_bytes)
     out = []

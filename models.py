@@ -553,7 +553,7 @@ class ScreenDecision(Base):
     stage         = Column(String, nullable=False, default="screen1")  # screen1 | screen2
     reviewer_kind = Column(String, nullable=False)   # model | user | adjudicator
     reviewer_id   = Column(Integer, ForeignKey("users.id"), nullable=True)  # null for model
-    decision      = Column(String, nullable=False)   # include | exclude
+    decision      = Column(String, nullable=False)   # include | exclude | maybe
     reason        = Column(Text, nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow)
     updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
