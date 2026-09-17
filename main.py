@@ -141,7 +141,7 @@ async def api_key_gate(request: Request, call_next):
     db = SessionLocal()
     try:
         row = check_api_key(db, key)
-        set_caller(row.user if row else None)
+        set_caller(row.user if row else None, bool(row and row.can_write))
     finally:
         db.close()
     if not row:
@@ -652,12 +652,19 @@ async def profile(request: Request, user: User = Depends(get_current_user),
 
 
 @app.post("/profile/keys")
-async def create_mcp_key(name: str = Form(...), user: User = Depends(get_current_user),
+async def create_mcp_key(name: str = Form(...), can_write: str = Form(""),
+                         user: User = Depends(get_current_user),
                          db: Session = Depends(get_db)):
     """Mint an MCP key for yourself. Keys belong to people and never to the
     deployment: one reaches exactly the reviews its owner is a member of, and
-    removing them from a review removes the key's reach with it."""
-    db.add(ApiKey(user_id=user.id, name=name.strip() or "mcp"))
+    removing them from a review removes the key's reach with it.
+
+    Writing is decided here and never afterwards. There is no route that flips
+    an existing key, on purpose: a capability that can be added later is one
+    that can be added to a key already sitting in somebody's config file, and
+    the checkbox in front of you is the moment where that gets thought about."""
+    db.add(ApiKey(user_id=user.id, name=name.strip() or "mcp",
+                  can_write=bool(can_write)))
     db.commit()
     return RedirectResponse("/profile", status_code=302)
 

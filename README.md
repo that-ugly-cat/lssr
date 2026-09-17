@@ -155,27 +155,39 @@ model client (Claude Code, Claude Desktop) at `https://your-host/mcp` with an
 same key in the path for clients that cannot send custom headers. That URL *is*
 the credential: one key per client, revocable on its own.
 
-Twelve tools, one or two per pipeline step: the reviews you can reach and the
+Thirteen tools, one or two per pipeline step: the reviews you can reach and the
 state of one (configuration, progress, live PRISMA, what the LLM steps have
 cost), its iterations and imports, its queries per database, its criteria and
 extraction schema, a lexical record search carrying the same filters as the UI
 (including `divergent`, `modelonly` and `empty`), one record with every vote and
 every extraction row, the full text in slices, how retrieval went, what is still
-contested, the distribution of any extracted field, and the synthesis.
+contested, the distribution of any extracted field, and the synthesis. Twelve of
+them read. The thirteenth, `vote_screen1`, casts or retracts one
+title-and-abstract vote.
 
-**The surface is read-only, and that is a decision rather than a stage.** A
-screening decision carries a reviewer's name and belongs to the person doing the
-reading; a surface a model could vote from would quietly turn the reviewer into
-an editor of its output. So a key exposes a corpus and cannot corrupt one, and a
-key reaches exactly the reviews its owner reaches — the same `can_access()` the
-web app uses, with a review out of reach reported as "no review" rather than
-"forbidden".
+**Writing is a capability of the key, not of the person.** A key is minted to
+read, and casting votes is a checkbox ticked at that moment and never afterwards:
+a reviewer who votes daily in the browser still cannot vote through a key that
+was not minted for it, and the keys handed out before the verb existed stayed
+readers without anyone revisiting them. The property the read-only version
+bought is worth keeping in the part that still holds — a leaked reader exposes a
+corpus and cannot corrupt one — and the blast radius of a leaked writer is one
+stage of one review, recoverable, because extraction, adjudication, screening 2
+and marking a step done are not on this surface at all. A key reaches exactly
+the reviews its owner reaches, through the same `can_access()` the web app uses,
+with a review out of reach reported as "no review" rather than "forbidden".
 
-One thing to know before handing out a key: **every reviewer's vote is readable
-here**, while the web app hides them until you have voted. Blinding is a
-discipline of the moment of voting; this surface is for reading a corpus, and a
-reader that saw half the votes would mostly produce wrong totals. A reviewer who
-reads here before voting there has read ahead.
+The vote itself is an ordinary `user` row signed with the key owner's name,
+resolved by the same `resolve_screen1` and counted in the same PRISMA. Its
+reason always carries `[via MCP]`, so the provenance is visible in the screening
+table and in the export rather than inferred from a timestamp.
+
+**Every reviewer's vote is readable here**, while the web app hides them until
+you have voted. That was harmless while nothing here could vote, and it is the
+real cost of the verb: a model that reads a record and then votes on it has seen
+every other voice first, including the model screening pass, so what it casts is
+not an independent second reading and cannot be counted as one. Adjudication
+stays in the UI, where the blinding is.
 
 Counts — `extraction_summary`, the PRISMA numbers — are computed in SQL and
 handed over as figures, for the same reason the synthesis computes its study

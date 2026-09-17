@@ -75,9 +75,15 @@ class ApiKey(Base):
     access model is also the attribution model, since a reviewer's id is what
     every screening decision and every extraction hangs off.
 
-    Read-only for now: nothing on this surface writes, so a leaked key exposes
-    a corpus and cannot corrupt one. That is the whole reason the first version
-    reads and does not write.
+    Reading is what a key does by default, and `can_write` is what it takes to
+    do anything else. The first version of the MCP surface had no writes at all,
+    and the property that bought — a leaked key exposes a corpus and cannot
+    corrupt one — was worth keeping once one verb arrived. So the capability is
+    on the credential rather than on the person: a reviewer who can vote in the
+    browser still cannot vote through a key that was not minted for it, and the
+    keys handed out before this existed stay readers without anyone revisiting
+    them. Turning it on is a deliberate act at mint time, and the only way to
+    change your mind is to revoke and mint again.
     """
     __tablename__ = "api_keys"
     id           = Column(Integer, primary_key=True)
@@ -86,6 +92,7 @@ class ApiKey(Base):
     key          = Column(String, unique=True, nullable=False,
                           default=lambda: "lssr_" + secrets.token_urlsafe(32))
     active       = Column(Boolean, default=True)
+    can_write    = Column(Boolean, default=False)
     created_at   = Column(DateTime, default=datetime.utcnow)
     last_used_at = Column(DateTime, nullable=True)
 
@@ -745,6 +752,9 @@ def init_db():
             "ALTER TABLE imports ADD COLUMN via_other_methods BOOLEAN DEFAULT 0",
             "ALTER TABLE imports ADD COLUMN note TEXT",
             "ALTER TABLE raw_references ADD COLUMN via_other_methods BOOLEAN DEFAULT 0",
+            # Existing keys were minted when the surface had no writes at all;
+            # the default keeps them readers, which is what their owners agreed to.
+            "ALTER TABLE api_keys ADD COLUMN can_write BOOLEAN DEFAULT 0",
         ]:
             try:
                 conn.execute(text(stmt))

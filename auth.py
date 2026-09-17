@@ -214,6 +214,12 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
 # request, and `stateless_http` means one request per call.
 _caller: ContextVar["User | None"] = ContextVar("mcp_caller", default=None)
 
+# What the *key* may do, which is not the same question as what its owner may do.
+# Carried separately so that a write tool has to ask for it explicitly: the
+# default is False, so a code path that forgets to check still cannot be handed
+# a capability it never asked about.
+_caller_can_write: ContextVar[bool] = ContextVar("mcp_caller_can_write", default=False)
+
 
 def check_api_key(db: Session, key: str) -> "ApiKey | None":
     """The active ApiKey row for this key, or None. Stamps last_used_at, so a
@@ -231,14 +237,37 @@ def check_api_key(db: Session, key: str) -> "ApiKey | None":
     return row
 
 
-def set_caller(user: "User | None") -> None:
+def set_caller(user: "User | None", can_write: bool = False) -> None:
     _caller.set(user)
+    _caller_can_write.set(bool(user) and bool(can_write))
 
 
 def current_caller() -> User:
     user = _caller.get()
     if user is None:
         raise PermissionError("No authenticated caller")
+    return user
+
+
+def caller_can_write() -> bool:
+    return _caller_can_write.get()
+
+
+def require_write() -> User:
+    """The caller, if this key was minted with writing turned on.
+
+    Two refusals rather than one, because they are different problems: a key
+    that reads is working as configured and the answer is to mint another,
+    while no caller at all means the middleware did not run. The message says
+    which, so nobody spends an afternoon on the wrong one.
+    """
+    user = current_caller()
+    if not caller_can_write():
+        raise PermissionError(
+            "This API key is read-only. Writing is a capability of the key, not "
+            "of the person: mint a new one with writing enabled in Profile → "
+            "MCP keys, and point the client at that."
+        )
     return user
 
 

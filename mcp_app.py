@@ -8,13 +8,29 @@ extraction says about study design. Those questions arrive in a conversation,
 and until now the only way to answer them was to open the app, pick a tab and
 count by eye. This is the same corpus, readable from where the questions are.
 
-**Read-only, all of it.** No tool here writes: not a vote, not an extraction,
-not a step marked done. That is a decision and not a stage — a screening
-decision carries a reviewer's name and belongs to a person doing the reading,
-and a surface where a model could cast one would quietly turn the reviewer into
-an editor of its output. A leaked key therefore exposes a corpus and cannot
-corrupt one. If writes ever come, they come one verb at a time, each with its
-own reason.
+**One verb writes, and the rest reads.** That verb is vote_screen1, and the
+promise the first version made still holds for everything else: no extraction,
+no adjudication, no step marked done, no review created or deleted. The reason
+writes were refused wholesale was that a screening decision carries a reviewer's
+name and belongs to a person doing the reading, so a surface where a model could
+cast one turns the reviewer into an editor of its own output. That objection was
+never answered, only priced. Title-and-abstract screening at the scale these
+reviews reach is thousands of judgements against a written criterion list, which
+is work a conversation can genuinely share; and the vote it casts is a `user`
+row like any other, signed with the key owner's name, resolved by the same
+resolve_screen1 and counted in the same PRISMA. The trace is in the reason text,
+which always carries `[via MCP]`, and in the capability: writing belongs to the
+key, not to the person, so a key minted before this existed still cannot vote
+and a leaked reader still cannot corrupt a corpus. Screening 2 is not here,
+because in the app it happens in the same act as the extraction.
+
+The consequence worth saying out loud: blinding. The web app hides other
+reviewers' votes until you have cast yours; this surface shows them all, which
+was harmless while nothing here could vote. It is not harmless now. A model that
+reads a record and then votes on it has seen every other voice first, including
+the model screening pass, so what it casts is not an independent second reading
+and must not be counted as one. Use it to work through a pile against the
+criteria, and adjudicate in the UI, where the blinding is.
 
 **Access is the caller's own.** Every call resolves to the human who owns the
 API key, and every review lookup goes through auth.mcp_review(), which uses the
@@ -61,14 +77,18 @@ mcp = MCPServer(
     name="lssr",
     instructions=(
         "Living systematic scoping reviews: the whole pipeline from query to "
-        "synthesis, one workspace per review. Read-only — every decision, vote "
-        "and extraction is made by a human in the web app, never here. Start "
-        "with list_reviews, then get_review for the state of one and "
-        "get_protocol for the criteria and the extraction schema it is being "
-        "read against. Counts come from the database, so they are exact: "
-        "prefer extraction_summary to counting records yourself. search_records "
-        "is lexical, not semantic — no hit means those words are not in the "
-        "title, abstract or authors, never that the corpus lacks the topic."
+        "synthesis, one workspace per review. Start with list_reviews, then "
+        "get_review for the state of one and get_protocol for the criteria and "
+        "the extraction schema it is being read against. Counts come from the "
+        "database, so they are exact: prefer extraction_summary to counting "
+        "records yourself. search_records is lexical, not semantic — no hit "
+        "means those words are not in the title, abstract or authors, never "
+        "that the corpus lacks the topic. "
+        "Everything reads except vote_screen1, which casts a title-and-abstract "
+        "vote in the key owner's name: read get_protocol first, because a vote "
+        "not argued from the written criteria is noise in somebody's review, "
+        "and confirm with the user before the first one. Extraction, "
+        "adjudication, screening 2 and marking a step done stay in the web app."
     ),
 )
 
@@ -678,6 +698,88 @@ def list_conflicts(review: str, stage: str = "screen1", wide: bool = True,
                 "matched": total, "returned": len(hits),
                 "records": [dict(_brief(r), votes=votes.get(r.id, [])) for r in hits]}
     except (LookupError, PermissionError) as e:
+        return _fail(str(e))
+    finally:
+        db.close()
+
+
+@mcp.tool()
+def vote_screen1(review: str, record_id: int, decision: str, reason: str = "") -> dict:
+    """
+    Cast or retract one title-and-abstract vote. The only tool here that writes.
+
+    decision: include, exclude, maybe, or `clear` to retract the vote you
+        already cast. Retracting only ever removes your own row; an
+        adjudicator's ruling and the model's pass are untouched.
+    reason: why, in the review's own terms — which exclusion criterion the
+        abstract trips, or what makes it eligible. Stored with `[via MCP]`
+        appended, always, so the provenance survives into the UI and the
+        screening export. Read get_protocol before the first vote: a vote
+        argued from anything but the written criteria is noise in a corpus
+        somebody else will have to trust.
+
+    The vote is a `user` row signed with the key owner's name, identical to one
+    cast in the browser and resolved by the same rules: an adjudicator outranks
+    it, two humans differing make a conflict, and until the review's required
+    number of reviewers have voted the model's provisional decision still
+    stands. So the answer reports `record_decision` after the write as well as
+    the vote itself, because casting a vote and settling a record are not the
+    same event and on a two-reviewer review they usually are not the same day.
+
+    One record per call, deliberately. There is no batch verb: a screening pass
+    is hundreds of individual judgements and a tool that takes them in bulk is a
+    tool that writes hundreds of them from one misreading.
+
+    Needs a key minted with writing enabled, and it is not an independent second
+    reading — see the note on blinding at the top of this module.
+    """
+    from models import recompute_record_screen1, upsert_screen_decision
+    decision = (decision or "").strip().lower()
+    if decision not in ("include", "exclude", "maybe", "clear"):
+        return _fail("decision must be include, exclude, maybe, or clear")
+    db = SessionLocal()
+    try:
+        user = auth.require_write()
+        ws = auth.mcp_review(db, review)
+        r = (db.query(Record).filter(Record.id == int(record_id),
+                                     Record.workspace_id == ws.id).first())
+        if r is None:
+            return _fail(f"No record {record_id} in '{ws.name}'")
+        if r.is_removed:
+            return _fail(f"Record {record_id} was merged into another as a "
+                         "duplicate and is not in the screening pool.")
+        mine = (db.query(ScreenDecision)
+                  .filter(ScreenDecision.record_id == r.id,
+                          ScreenDecision.stage == "screen1",
+                          ScreenDecision.reviewer_kind == "user",
+                          ScreenDecision.reviewer_id == user.id).first())
+        # Read before writing: the upsert mutates this very row, so asking it
+        # afterwards what it used to say returns the answer we just put there.
+        previous = mine.decision if mine else None
+        if decision == "clear":
+            if mine is None:
+                return _fail(f"You have no screen-1 vote on record {record_id} "
+                             "to retract.")
+            db.delete(mine)
+            db.flush()
+        else:
+            note = (reason or "").strip()
+            upsert_screen_decision(db, r, "screen1", "user", user.id, decision,
+                                   f"{note} [via MCP]" if note else "via MCP")
+        recompute_record_screen1(db, ws, r)
+        db.commit()
+        return {
+            "review": ws.name,
+            "record": {"id": r.id, "title": r.title, "year": r.year},
+            "your_vote": None if decision == "clear" else decision,
+            "replaced": previous,
+            "record_decision": r.screen1_decision,
+            "decided_by": r.screen1_by,
+            "reviewers_required": ws.screen1_reviewers_required or 1,
+            "votes": _votes(db, [r.id], "screen1").get(r.id, []),
+        }
+    except (LookupError, PermissionError) as e:
+        db.rollback()
         return _fail(str(e))
     finally:
         db.close()
