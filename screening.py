@@ -117,19 +117,20 @@ def screen_record(client, system_prompt: str, title: str, abstract: str,
         model=model,
         # 300 truncated real answers, and a truncated JSON object has no closing
         # brace, so _parse() rejected the whole reply and the record was parked.
-        max_tokens=1000,
+        # 2000, not 1000: at 1000 six records out of 710 still truncated, and
+        # their abstracts were unremarkable, so the length is in the reply —
+        # the model writes prose before the JSON on a small minority of records.
+        # The obvious cure, prefilling the assistant turn with the opening
+        # brace, is NOT available here: claude-sonnet-5 rejects it outright
+        # ("This model does not support assistant message prefill. The
+        # conversation must end with a user message."). So the cap is the lever,
+        # and a higher cap costs nothing on the replies that do not use it.
+        max_tokens=2000,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
-        # The assistant turn is prefilled with the opening brace. Raising the
-        # cap alone was treating the symptom: the records that still truncated
-        # at 1000 had unremarkable abstracts, so the length was in the *reply* —
-        # the model was writing prose before the JSON the prompt asks for.
-        # Prefilling removes that preamble instead of paying for it.
-        messages=[{"role": "user", "content": user},
-                  {"role": "assistant", "content": "{"}],
+        messages=[{"role": "user", "content": user}],
     )
     text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
-    # the prefilled brace is not echoed back, so put it back before parsing
-    parsed = _parse("{" + text)
+    parsed = _parse(text)
     d = str((parsed or {}).get("decision", "")).lower()
     if d in ("include", "exclude", "maybe"):
         decision = d
