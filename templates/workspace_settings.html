@@ -102,12 +102,16 @@
   {% for c in items %}
   <div class="cb-card">
     <div class="cb-card-head">
-      <div class="cb-card-title">{{ c.label }}</div>
+      <div class="cb-card-title muted small">{{ kind }} {{ loop.index }}</div>
       <form method="post" action="/w/{{ ws.id }}/criteria/{{ c.id }}/delete">
         <button class="btn btn-danger btn-small" type="submit">Delete</button>
       </form>
     </div>
-    {% if c.description %}<p class="cb-card-desc">{{ c.description }}</p>{% endif %}
+    <form method="post" action="/w/{{ ws.id }}/criteria/{{ c.id }}/edit">
+      <label>Label <input type="text" name="label" value="{{ c.label }}" required></label>
+      <label>Description / guidance <textarea name="description" rows="3">{{ c.description or '' }}</textarea></label>
+      <button class="btn btn-small" type="submit">Save changes</button>
+    </form>
   </div>
   {% else %}
   <p class="muted small" style="margin-top:0;">None yet.</p>

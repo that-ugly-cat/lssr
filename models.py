@@ -593,6 +593,24 @@ def upsert_screen_decision(db, record, stage, reviewer_kind, reviewer_id,
     return row
 
 
+def human_voted_subq(db, workspace_id: int, stage: str = "screen1"):
+    """Record ids a person already ruled on at this stage — a member's vote or an
+    adjudicator's resolution.
+
+    Not interchangeable with Record.screen1_by == 'model'. That column caches the
+    *resolved* decision, and resolve_screen1() keeps falling back to the model
+    while a lone human vote sits below reviewers_required: on a two-reviewer
+    workspace it reads 'model' even for records a reviewer has worked through.
+    Anything asking "has a person touched this record" must ask the votes, not
+    the cache. Kept in one place because three call sites once asked it three
+    different wrong ways."""
+    return (db.query(ScreenDecision.record_id)
+              .filter(ScreenDecision.workspace_id == workspace_id,
+                      ScreenDecision.stage == stage,
+                      ScreenDecision.reviewer_kind.in_(["user", "adjudicator"]))
+              .scalar_subquery())
+
+
 def resolve_screen1(rows, reviewers_required: int):
     """Reduce a record's screen-1 votes to (decision, by, reason).
     Priority: adjudicator > human consensus (≥ required) > model > pending.
@@ -986,6 +1004,21 @@ def workspace_criteria(db, workspace: "Workspace", kind: str) -> list["Criterion
     return (db.query(Criterion)
               .filter(Criterion.workspace_id == workspace.id, Criterion.kind == kind)
               .order_by(Criterion.position, Criterion.id).all())
+
+
+def recompact_criteria(db, workspace_id: int, kind: str):
+    """Renumber one kind of criteria to 0..n-1 in their current order. No commit.
+
+    Positions used to be handed out as count() at insert time and never reclaimed
+    on delete, so deleting one and adding another left a gap and a collision. That
+    is not cosmetic: reviewers cite criteria by number in the reason they attach to
+    a vote, and those reasons outlive the screening. Call this after every
+    mutation and the numbering stays what the list shows."""
+    for i, c in enumerate(db.query(Criterion)
+                            .filter(Criterion.workspace_id == workspace_id,
+                                    Criterion.kind == kind)
+                            .order_by(Criterion.position, Criterion.id).all()):
+        c.position = i
 
 
 def get_query(db, workspace: "Workspace", database: str) -> "SearchQuery | None":

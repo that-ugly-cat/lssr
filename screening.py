@@ -123,9 +123,9 @@ def screen_record(client, system_prompt: str, title: str, abstract: str,
 # ── Background job ─────────────────────────────────────────────────────────────
 
 def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = False):
-    from models import (Record, ScreenDecision, SessionLocal, UserCostLog, Workspace,
-                        calc_cost, recompute_record_screen1, upsert_screen_decision,
-                        workspace_criteria)
+    from models import (Record, SessionLocal, UserCostLog, Workspace,
+                        calc_cost, human_voted_subq, recompute_record_screen1,
+                        upsert_screen_decision, workspace_criteria)
     import anthropic
 
     db = SessionLocal()
@@ -135,19 +135,15 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
         system = build_system(ws.research_question, workspace_criteria(db, ws, "exclusion"))
         # records any human already voted on (or an adjudicator resolved) are the
         # humans' call — the model never overrides them.
-        human_ids = {rid for (rid,) in
-                     db.query(ScreenDecision.record_id)
-                       .filter(ScreenDecision.workspace_id == workspace_id,
-                               ScreenDecision.stage == "screen1",
-                               ScreenDecision.reviewer_kind.in_(["user", "adjudicator"])).all()}
         q = (db.query(Record)
                .filter(Record.workspace_id == workspace_id,
-                       Record.is_removed == False))               # noqa: E712
+                       Record.is_removed == False,                # noqa: E712
+                       ~Record.id.in_(human_voted_subq(db, workspace_id, "screen1"))))
         if not rerun:
             # default: only records with no decision yet (no model row, no human)
             q = q.filter(Record.screen1_decision == "pending")
         # re-run also re-screens the model's own past calls, but never human ones
-        pending = [r for r in q.all() if r.id not in human_ids]
+        pending = q.all()
         total = len(pending)
         _set(workspace_id, {"status": "running", "message": f"Screening {total} records…",
                             "total": total, "done": 0, "included": 0, "excluded": 0, "maybe": 0,

@@ -36,7 +36,8 @@ from models import (
     Import, PublicShare, RawReference, Record, SessionLocal, User, Workspace, WorkspaceMember,
     can_access,
     current_iteration, db_label, db_search_url, get_db, get_query, init_db,
-    new_share_token, screen2_required, set_step_done, set_workspace_targets,
+    human_voted_subq, new_share_token, recompact_criteria, screen2_required, set_step_done,
+    set_workspace_targets,
     DUPLICABLE_PARTS, delete_workspace, duplicate_workspace, workspace_footprint,
     upsert_query, user_workspaces, workspace_criteria, workspace_steps_done,
     workspace_target_dbs, workspace_years,
@@ -1365,6 +1366,26 @@ async def add_criterion(ws_id: int, kind: str = Form(...), label: str = Form(...
                                      Criterion.kind == kind).count()
     db.add(Criterion(workspace_id=ws.id, kind=kind, label=label.strip(),
                      description=description.strip() or None, position=pos))
+    db.flush()
+    recompact_criteria(db, ws.id, kind)
+    db.commit()
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+
+
+@app.post("/w/{ws_id}/criteria/{cid}/edit")
+async def edit_criterion(ws_id: int, cid: int, label: str = Form(...),
+                         description: str = Form(""), user: User = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    """Change a criterion's wording in place. Without this the only way to reword
+    one was to delete it and add it back, which lost its position and its id."""
+    ws = _load_ws(db, user, ws_id)
+    c = db.query(Criterion).filter(Criterion.id == cid, Criterion.workspace_id == ws.id).first()
+    if not c:
+        raise HTTPException(404, "No such criterion")
+    if not label.strip():
+        raise HTTPException(400, "Label required")
+    c.label = label.strip()
+    c.description = description.strip() or None
     db.commit()
     return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
 
@@ -1375,7 +1396,10 @@ async def delete_criterion(ws_id: int, cid: int, user: User = Depends(get_curren
     ws = _load_ws(db, user, ws_id)
     c = db.query(Criterion).filter(Criterion.id == cid, Criterion.workspace_id == ws.id).first()
     if c:
+        kind = c.kind
         db.delete(c)
+        db.flush()
+        recompact_criteria(db, ws.id, kind)
         db.commit()
     return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
 
@@ -1395,13 +1419,19 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
                                        Record.screen1_decision == d).count()
     counts = {d: _count(d) for d in ("pending", "include", "exclude", "maybe", "conflict")}
     counts["total"] = sum(counts[d] for d in ("pending", "include", "exclude", "maybe", "conflict"))
-    # records the model may (re-)screen: everything not decided by a human
+    # records the model may (re-)screen: everything already decided, minus what a
+    # person has voted on. Read off Record.screen1_by this undercounts the humans
+    # badly — that column stays 'model' until reviewers_required votes are in, so
+    # a two-reviewer workspace reported 0 reviewed records and offered to re-screen
+    # work people had already done.
+    _human = human_voted_subq(db, ws.id, "screen1")
     model_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                       Record.is_removed == False,   # noqa: E712
-                                      Record.screen1_by == "model").count()
+                                      Record.screen1_decision != "pending",
+                                      ~Record.id.in_(_human)).count()
     manual_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                        Record.is_removed == False,  # noqa: E712
-                                       Record.screen1_by.in_(["human", "adjudicator", "conflict"])).count()
+                                       Record.id.in_(_human)).count()
     # Records where at least one voice differs from another, the model included.
     # Wider than screen1_decision == 'conflict', which only ever means two humans
     # disagreeing: 'maybe' against 'include' counts, and so does the model against
@@ -1431,7 +1461,10 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         # standing on the model's word alone: it voted, no human has yet. Empty
         # once a corpus is fully screened, and filling again after each refresh,
         # which is exactly when it is worth looking at.
-        tq = tq.filter(Record.screen1_by == "model")
+        # Not screen1_by == 'model': that is the resolved decision, and it stays
+        # 'model' while a lone human vote sits below reviewers_required, so the
+        # filter used to return records reviewers had already worked through.
+        tq = tq.filter(Record.screen1_decision != "pending", ~Record.id.in_(_human))
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
     records = tq.limit(500).all()
 
@@ -1460,7 +1493,8 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         return db.query(func.coalesce(func.sum(expr), 0)).filter(
             Record.workspace_id == ws.id, Record.is_removed == False, *filters).scalar() or 0  # noqa: E712
     pending_chars = _chars(Record.screen1_decision == "pending")
-    model_chars = _chars(Record.screen1_by == "model")
+    # same set model_n counts, so the price quoted matches the number on the button
+    model_chars = _chars(Record.screen1_decision != "pending", ~Record.id.in_(_human))
 
     def _fmt(x):
         if x <= 0:

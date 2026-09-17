@@ -67,7 +67,7 @@ import auth
 from models import (
     HARVEST_DBS, PIPELINE_STEPS, Extraction, Import, Iteration, PublicShare,
     Record, ScreenDecision, SearchQuery, SessionLocal, Synthesis, UserCostLog,
-    authoritative_values, db_label, db_search_url, screen2_required,
+    authoritative_values, db_label, db_search_url, human_voted_subq, screen2_required,
     user_workspaces, workspace_criteria, workspace_extraction_fields,
     workspace_steps_done, workspace_target_dbs,
 )
@@ -472,13 +472,16 @@ def search_records(review: str, q: str = "", screen1: str = "", screen2: str = "
             if not val:
                 continue
             col = Record.screen1_decision if stage == "screen1" else Record.screen2_decision
-            by = Record.screen1_by if stage == "screen1" else Record.screen2_by
             if val in DECISIONS:
                 rows = rows.filter(col == val)
             elif val == "divergent":
                 rows = rows.filter(Record.id.in_(_divergent_sub(db, ws.id, stage)))
             elif val == "modelonly":
-                rows = rows.filter(by == "model")
+                # the model has ruled and no person has yet. Filtering on `by`
+                # returned the whole pool: it holds the resolved decision, which
+                # stays 'model' while a lone human vote sits below quorum.
+                rows = rows.filter(col != "pending",
+                                   ~Record.id.in_(human_voted_subq(db, ws.id, stage)))
             elif val == "empty" and stage == "screen2":
                 ids = {r.id for r in _live(db, ws.id)
                        .filter(Record.screen2_decision == "include").all()
