@@ -61,6 +61,10 @@ def _summarize_votes(rows, names: dict) -> str:
             return "model"
         if v.reviewer_kind == "adjudicator":
             return "adjudicator"
+        if v.reviewer_kind == "shadow":
+            # named, never silently folded into "user": it has no reviewer_id, so
+            # the fallback below would have exported a dry run as a person's vote.
+            return "model (dry run, not counted)"
         return names.get(v.reviewer_id, "user")
     return "; ".join(f"{who(v)}={v.decision}"
                      for v in sorted(rows, key=lambda r: (r.reviewer_kind, r.id)))

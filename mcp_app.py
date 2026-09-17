@@ -65,7 +65,7 @@ from sqlalchemy import distinct, func, or_
 
 import auth
 from models import (
-    HARVEST_DBS, PIPELINE_STEPS, Extraction, Import, Iteration, PublicShare,
+    DECIDING_KINDS, HARVEST_DBS, PIPELINE_STEPS, Extraction, Import, Iteration, PublicShare,
     Record, ScreenDecision, SearchQuery, SessionLocal, Synthesis, UserCostLog,
     authoritative_values, db_label, db_search_url, human_voted_subq, screen2_required,
     user_workspaces, workspace_criteria, workspace_extraction_fields,
@@ -159,6 +159,7 @@ def _votes(db, record_ids: list, stage: str) -> dict:
                         ScreenDecision.record_id.in_(record_ids)).all()):
         out.setdefault(v.record_id, []).append({
             "reviewer": ("the model" if v.reviewer_kind == "model"
+                         else "the model, dry run (does not count)" if v.reviewer_kind == "shadow"
                          else (v.reviewer.name if v.reviewer else "unknown")),
             "kind": v.reviewer_kind,
             "decision": v.decision,
@@ -171,10 +172,14 @@ def _votes(db, record_ids: list, stage: str) -> dict:
 def _divergent_sub(db, ws_id: int, stage: str):
     """Records where at least one voice differs from another, the model's and
     every 'maybe' included. Wider than decision == 'conflict', which only ever
-    means two humans disagreeing — on a real corpus the gap is large."""
+    means two humans disagreeing — on a real corpus the gap is large.
+
+    Shadow rows are left out: a dry run differing from a reviewer is the
+    measurement being taken, not a record in dispute."""
     return (db.query(ScreenDecision.record_id)
               .filter(ScreenDecision.workspace_id == ws_id,
-                      ScreenDecision.stage == stage)
+                      ScreenDecision.stage == stage,
+                      ScreenDecision.reviewer_kind.in_(DECIDING_KINDS))
               .group_by(ScreenDecision.record_id)
               .having(func.count(distinct(ScreenDecision.decision)) > 1)
               .scalar_subquery())

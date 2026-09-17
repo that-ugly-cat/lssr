@@ -50,7 +50,7 @@
   {% endif %}
   <form method="post" action="/w/{{ ws.id }}/screening/run" id="scr-form" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
     <span style="display:inline-flex; flex-direction:column; align-items:flex-start;">
-      <button class="btn btn-primary" type="submit" name="rerun" value="" id="scr-btn"
+      <button class="btn btn-primary" type="submit" name="mode" value="pending" id="scr-btn"
         {{ 'disabled' if (n_exclusion == 0 or not has_key or counts.pending == 0) else '' }}>
         Run on {{ counts.pending }} pending
       </button>
@@ -58,20 +58,67 @@
     </span>
     {% if model_n > 0 %}
     <span style="display:inline-flex; flex-direction:column; align-items:flex-start;">
-      <button class="btn" type="submit" name="rerun" value="1"
+      <button class="btn" type="submit" name="mode" value="rerun"
         {{ 'disabled' if (n_exclusion == 0 or not has_key) else '' }}>
         Re-run on {{ counts.pending + model_n }} (model + pending)
       </button>
       <span class="muted small">est. {{ est_rerun }}</span>
     </span>
     {% endif %}
-    <span class="muted small">{{ model }} pre-screens. Records a human has voted on ({{ manual_n }}) are the reviewers' call — never re-screened.</span>
+    {% if manual_n > 0 %}
+    <span style="display:inline-flex; flex-direction:column; align-items:flex-start;">
+      <button class="btn" type="submit" name="mode" value="shadow"
+        {{ 'disabled' if (n_exclusion == 0 or not has_key) else '' }}
+        title="Screens the records reviewers have voted on, under the criteria as they stand now, and records the answers beside theirs without changing a single decision">
+        🌓 Dry run on {{ manual_n }} (voted by people)
+      </button>
+      <span class="muted small">est. {{ est_shadow }}</span>
+    </span>
+    {% endif %}
+    <span class="muted small">{{ model }} pre-screens. Records a human has voted on ({{ manual_n }}) are the reviewers' call — never re-screened. The <strong>dry run</strong> is the exception that proves it: it reads exactly those records and writes a vote that counts for nothing, to answer whether the model would agree with the reviewers under today's criteria.</span>
   </form>
   <div class="progress-wrap" id="scr-prog" style="display:none;">
     <div class="progress"><div class="progress-fill" id="scr-fill"></div></div>
   </div>
   <div id="scr-status" class="flash" style="display:none;"></div>
 </div>
+
+{% if shadow.pairs %}
+<div class="cards-label">🌓 Dry run — would the model agree with the reviewers?</div>
+<div class="card">
+  <p class="muted small" style="margin-top:0;">
+    {{ model }} screened the {{ shadow.shadow_n }} records people had already voted on, under the
+    exclusion criteria as they stand now. <strong>Nothing here decided anything</strong>: these votes
+    are stored apart, they never resolve a record, never enter the PRISMA counts and never make a
+    record divergent. Each pair below is one dry-run answer against one reviewer's answer.
+  </p>
+  <p style="font-size:1.4em; margin:6px 0;">
+    <strong>{{ shadow.pct }}% agreement</strong>
+    <span class="muted small">— {{ shadow.agree }} of {{ shadow.pairs }} pairs;
+      {{ shadow.disagree }} differ{% if shadow.disagree %},
+      <a href="/w/{{ ws.id }}/screening?decision=shadow_disagrees">walk them one by one →</a>{% endif %}</span>
+  </p>
+  <table class="tbl small" style="width:auto; margin-top:10px;">
+    <tr><th style="text-align:left;">dry run ↓ &nbsp; reviewer →</th>
+      {% for h in ['include','maybe','exclude'] %}<th style="min-width:72px;">{{ h }}</th>{% endfor %}</tr>
+    {% for s in ['include','maybe','exclude'] %}
+    <tr>
+      <th style="text-align:left;">{{ s }}</th>
+      {% for h in ['include','maybe','exclude'] %}
+      {% set ids = shadow_matrix.get((s, h), []) %}
+      <td class="ta-right {{ '' if s == h else 'muted' }}"
+          style="{{ 'font-weight:600;' if s == h and ids else '' }}">
+        {{ ids|length if ids else '·' }}
+      </td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="muted small">The diagonal is agreement. Read a cell as “the dry run said <em>row</em>, a
+    reviewer said <em>column</em>”. A dry run that disagrees is not evidence that either side is
+    wrong: it marks a record worth re-reading, which is why the reasons are kept.</p>
+</div>
+{% endif %}
 
 {% set f = filters %}
 {% macro sorth(field, label) %}
@@ -82,7 +129,7 @@
 <div class="cards-label">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
-    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict','divergent','modelonly'] else 'muted' }}">all ({{ counts.total }})</a>
+    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict','divergent','modelonly','shadow_disagrees'] else 'muted' }}">all ({{ counts.total }})</a>
     {% for d in ['pending','include','maybe','exclude','conflict'] %}
     · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }} ({{ counts[d] }})</a>
     {% endfor %}
@@ -90,6 +137,10 @@
          title="At least one voice differs from another, the model included — wider than 'conflict', which only means two humans disagreeing">≠ divergent ({{ divergent_n }})</a>
     · <a href="/w/{{ ws.id }}/screening?decision=modelonly" class="{{ '' if decision=='modelonly' else 'muted' }}"
          title="Decided by the pre-screener alone — it voted and no human has yet. Empty on a fully screened corpus, and filling again after every refresh">🤖 model only ({{ model_n }})</a>
+    {% if shadow.disagree %}
+    · <a href="/w/{{ ws.id }}/screening?decision=shadow_disagrees" class="{{ '' if decision=='shadow_disagrees' else 'muted' }}"
+         title="Records where the dry run would not have voted as a reviewer did. Nothing here is in dispute — the dry run decides nothing">🌓 dry run differs ({{ shadow.disagree }})</a>
+    {% endif %}
   </span>
   <a class="btn btn-small" href="/w/{{ ws.id }}/screening/export.xlsx" style="float:right;">Export to Excel ↓</a>
 </div>
@@ -148,7 +199,9 @@
         {% if r.id in divergent_ids %}<div><span class="badge badge-warn" title="Opinions differ">≠</span></div>{% endif %}
         <div class="muted small nowrap" style="margin-top:2px;">
           {%- for v in votes.get(r.id, [])|sort(attribute='reviewer_kind') -%}
-          {%- set who = {'model':'🤖','adjudicator':'⚖️'}.get(v.reviewer_kind, '👤') -%}
+          {#- '👤' is the fallback, so a kind that is not a person must be listed here
+              or a dry run would be drawn as a reviewer. -#}
+          {%- set who = {'model':'🤖','adjudicator':'⚖️','shadow':'🌓'}.get(v.reviewer_kind, '👤') -%}
           {%- set em = {'include':'✅','exclude':'❌','maybe':'🤔'}.get(v.decision, '·') -%}
           <span title="{{ v.reviewer_kind }}: {{ v.decision }}">{{ who }}{{ em }}</span>{% if not loop.last %} {% endif %}
           {%- endfor -%}
@@ -181,6 +234,7 @@
             {% set vem = {'include':'✅','exclude':'❌','maybe':'🤔'}.get(v.decision, '·') %}
             {% if v.reviewer_kind == 'model' %}<div>🤖 model {{ vem }}</div>
             {% elif v.reviewer_kind == 'adjudicator' %}<div>⚖️ {{ v.reviewer.name if v.reviewer else 'adjudicator' }} {{ vem }}</div>
+            {% elif v.reviewer_kind == 'shadow' %}<div class="muted">🌓 model, dry run {{ vem }} <span class="small">(not counted)</span></div>
             {% else %}<div>{{ v.reviewer.name if v.reviewer else 'reviewer' }} {{ vem }}</div>{% endif %}
           {% endfor %}
         </div>

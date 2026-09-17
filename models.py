@@ -548,11 +548,25 @@ def upsert_extraction(db, workspace, record, reviewer_kind, reviewer_id, values:
 
 # ── Screening decisions (per reviewer, steps 5 & 8) ────────────────────────────
 
+#: reviewer kinds whose vote can decide a record. 'shadow' is deliberately
+#: absent: it is the model screening again, under criteria as they stand now,
+#: over records people have already ruled on, purely to measure agreement. It
+#: must never move a decision, so every consumer that resolves, counts or
+#: exports votes filters on this tuple rather than on "not the model".
+DECIDING_KINDS = ("model", "user", "adjudicator")
+
+
 class ScreenDecision(Base):
     """One vote per (record × reviewer × stage). Reviewers are the LLM
     (reviewer_kind='model'), the workspace members ('user'), or the adjudicator
     who resolves conflicts ('adjudicator'). Record.screen1_decision is the cached
-    resolution of these rows — see resolve_screen1()."""
+    resolution of these rows — see resolve_screen1().
+
+    A fourth kind, 'shadow', holds a dry run of the model and is excluded from
+    resolution by DECIDING_KINDS. It exists because the model's real row *is*
+    the published decision whenever a lone human vote sits below quorum, so
+    asking "would the model agree with me now?" by re-running it would overwrite
+    the very answer being checked."""
     __tablename__ = "screen_decisions"
     id            = Column(Integer, primary_key=True)
     workspace_id  = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
@@ -611,11 +625,50 @@ def human_voted_subq(db, workspace_id: int, stage: str = "screen1"):
               .scalar_subquery())
 
 
+def shadow_agreement(db, workspace_id: int, stage: str = "screen1"):
+    """Compare the model's dry run with what people actually voted.
+
+    Returns (matrix, stats), where matrix maps (shadow, human) -> [record ids]
+    and stats carries the headline numbers. A record with several human votes
+    counts once per voter, because agreement is a property of a pair.
+
+    Only records that have both a shadow row and a human vote appear: a dry run
+    over anything else has nothing to agree with."""
+    rows = (db.query(ScreenDecision)
+              .filter(ScreenDecision.workspace_id == workspace_id,
+                      ScreenDecision.stage == stage,
+                      ScreenDecision.reviewer_kind.in_(["shadow", "user", "adjudicator"])).all())
+    shadow = {r.record_id: r.decision for r in rows if r.reviewer_kind == "shadow"}
+    matrix, agree, disagree = {}, 0, 0
+    for r in rows:
+        if r.reviewer_kind == "shadow" or r.record_id not in shadow:
+            continue
+        s = shadow[r.record_id]
+        matrix.setdefault((s, r.decision), []).append(r.record_id)
+        if s == r.decision:
+            agree += 1
+        else:
+            disagree += 1
+    pairs = agree + disagree
+    return matrix, {
+        "pairs": pairs,
+        "agree": agree,
+        "disagree": disagree,
+        "pct": round(100.0 * agree / pairs, 1) if pairs else None,
+        "shadow_n": len(shadow),
+        "disagree_ids": sorted({rid for (s, h), ids in matrix.items() if s != h for rid in ids}),
+    }
+
+
 def resolve_screen1(rows, reviewers_required: int):
     """Reduce a record's screen-1 votes to (decision, by, reason).
     Priority: adjudicator > human consensus (≥ required) > model > pending.
     Humans disagreeing → 'conflict'. Humans agreeing but too few yet → falls
     back to the model's provisional decision (or pending)."""
+    # Drop anything that is not allowed to decide (today: 'shadow'). Done once
+    # here rather than trusted to each branch below, so a kind added later
+    # cannot slip into a decision by matching no filter and no guard.
+    rows = [r for r in rows if r.reviewer_kind in DECIDING_KINDS]
     adj = [r for r in rows if r.reviewer_kind == "adjudicator"]
     if adj:
         r = max(adj, key=lambda x: x.updated_at or datetime.min)

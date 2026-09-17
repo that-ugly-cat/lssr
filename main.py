@@ -32,11 +32,13 @@ from auth import (
 from authors import author_key, canonicalize, split_authors
 from models import (
     ApiKey,
+    DECIDING_KINDS,
     DATABASES, DB_LABELS, HARVEST_DBS, PIPELINE_STEPS, PRICING, SOURCE_DBS, Criterion,
     Import, PublicShare, RawReference, Record, SessionLocal, User, Workspace, WorkspaceMember,
     can_access,
     current_iteration, db_label, db_search_url, get_db, get_query, init_db,
-    human_voted_subq, new_share_token, recompact_criteria, screen2_required, set_step_done,
+    human_voted_subq, new_share_token, recompact_criteria, screen2_required,
+    shadow_agreement, set_step_done,
     set_workspace_targets,
     DUPLICABLE_PARTS, delete_workspace, duplicate_workspace, workspace_footprint,
     upsert_query, user_workspaces, workspace_criteria, workspace_steps_done,
@@ -1432,6 +1434,8 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     manual_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                        Record.is_removed == False,  # noqa: E712
                                        Record.id.in_(_human)).count()
+    # dry run: the model against the reviewers, on the records it may not decide
+    shadow_matrix, shadow_stats = shadow_agreement(db, ws.id, "screen1")
     # Records where at least one voice differs from another, the model included.
     # Wider than screen1_decision == 'conflict', which only ever means two humans
     # disagreeing: 'maybe' against 'include' counts, and so does the model against
@@ -1441,9 +1445,13 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     from sqlalchemy import distinct, func
     from models import ScreenDecision
     is_owner = ws.owner_id == user.id or user.is_admin
+    # DECIDING_KINDS, not every row: a shadow vote is a dry run and disagreeing
+    # with it is the measurement, not a contested record. Without this filter the
+    # divergent count would jump by however many the dry run happened to differ on.
     divergent_sub = (db.query(ScreenDecision.record_id)
                        .filter(ScreenDecision.workspace_id == ws.id,
-                               ScreenDecision.stage == "screen1")
+                               ScreenDecision.stage == "screen1",
+                               ScreenDecision.reviewer_kind.in_(DECIDING_KINDS))
                        .group_by(ScreenDecision.record_id)
                        .having(func.count(distinct(ScreenDecision.decision)) > 1)
                        .scalar_subquery())
@@ -1465,6 +1473,10 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         # 'model' while a lone human vote sits below reviewers_required, so the
         # filter used to return records reviewers had already worked through.
         tq = tq.filter(Record.screen1_decision != "pending", ~Record.id.in_(_human))
+    elif decision == "shadow_disagrees":
+        # the dry run's whole point: walk the records where the model, run again
+        # under the criteria as they stand, would not have voted as a reviewer did.
+        tq = tq.filter(Record.id.in_(shadow_stats["disagree_ids"] or [-1]))
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
     records = tq.limit(500).all()
 
@@ -1500,6 +1512,8 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         if x <= 0:
             return "$0.00"
         return "<$0.01" if x < 0.01 else f"${x:.2f}"
+    shadow_chars = _chars(Record.id.in_(_human))
+    est_shadow = _fmt(screening.estimate_cost(model, system, manual_n, shadow_chars))
     est_pending = _fmt(screening.estimate_cost(model, system, counts["pending"], pending_chars))
     est_rerun = _fmt(screening.estimate_cost(model, system, counts["pending"] + model_n,
                                              pending_chars + model_chars))
@@ -1507,7 +1521,8 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         "user": user, "ws": ws, "tab": "screening", "steps_done": workspace_steps_done(ws),
         "counts": counts,
         "model_n": model_n, "manual_n": manual_n, "model": model,
-        "est_pending": est_pending, "est_rerun": est_rerun,
+        "est_pending": est_pending, "est_rerun": est_rerun, "est_shadow": est_shadow,
+        "shadow_matrix": shadow_matrix, "shadow": shadow_stats,
         "records": records, "decision": decision,
         "votes": votes, "my_voted": my_voted,
         "divergent_n": divergent_n, "divergent_ids": divergent_ids,
@@ -1523,17 +1538,23 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
 
 
 @app.post("/w/{ws_id}/screening/run")
-async def run_screening(ws_id: int, rerun: str = Form(""), user: User = Depends(get_current_user),
+async def run_screening(ws_id: int, mode: str = Form(""), rerun: str = Form(""),
+                        user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     api_key = _user_api_key(user)
     if not api_key:
         raise HTTPException(400, "Set your Anthropic API key in your profile first")
+    # `rerun` is the old field name, still honoured so a bookmarked POST keeps
+    # working. An unknown mode falls back to the safest one rather than erroring.
+    mode = mode or ("rerun" if rerun else "pending")
+    if mode not in ("pending", "rerun", "shadow"):
+        mode = "pending"
     from screening import get_job, start_screen1
     job = get_job(ws.id)
     if job and job.get("status") == "running":
         raise HTTPException(409, "Screening already in progress")
-    start_screen1(ws.id, api_key, user.id, rerun=bool(rerun))
+    start_screen1(ws.id, api_key, user.id, mode=mode)
     return RedirectResponse(f"/w/{ws_id}/screening", status_code=302)
 
 
