@@ -103,20 +103,40 @@ def screen_record(client, system_prompt: str, title: str, abstract: str,
     """Returns (decision, reason, tokens_in, tokens_out). An answer that is not
     one of include/exclude/maybe becomes 'maybe' — the same bucket the prompt
     uses for genuine uncertainty, so it reaches a human rather than being
-    decided silently."""
+    decided silently — but it says so in the reason, which is the only field
+    that survives into the export and into a reviewer's view of the record.
+
+    Measured on a live review before this was fixed: 66 of 100 'maybe' records
+    carried an empty reason, which is what an unparsed reply looked like. A
+    reviewer could not tell those from the model's genuine uncertainty, and the
+    bucket the prompt reserves for "ask a human" had quietly become the bucket
+    for "the answer was never read"."""
     user = screening_user(title, abstract)
     resp = _create_with_retry(
         client,
         model=model,
-        max_tokens=300,
+        # 300 truncated real answers, and a truncated JSON object has no closing
+        # brace, so _parse() rejected the whole reply and the record was parked.
+        max_tokens=1000,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
     )
     text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
-    parsed = _parse(text) or {}
-    d = str(parsed.get("decision", "")).lower()
-    decision = d if d in ("include", "exclude", "maybe") else "maybe"  # park the unparseable
-    reason = parsed.get("reason", "") or ""
+    parsed = _parse(text)
+    d = str((parsed or {}).get("decision", "")).lower()
+    if d in ("include", "exclude", "maybe"):
+        decision = d
+        reason = (parsed or {}).get("reason", "") or ""
+        if not reason.strip():
+            reason = "(the model returned a decision with no reason)"
+    else:
+        # name the failure and its cause, so it is visible as a failure rather
+        # than looking like a considered 'maybe'
+        decision = "maybe"
+        why = ("the reply hit the token limit and was cut off"
+               if getattr(resp, "stop_reason", None) == "max_tokens"
+               else "the reply could not be parsed as JSON")
+        reason = f"screening error: {why} — this record was not judged, re-run it."
     return decision, reason, resp.usage.input_tokens, resp.usage.output_tokens
 
 
