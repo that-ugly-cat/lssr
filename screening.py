@@ -119,10 +119,17 @@ def screen_record(client, system_prompt: str, title: str, abstract: str,
         # brace, so _parse() rejected the whole reply and the record was parked.
         max_tokens=1000,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": user}],
+        # The assistant turn is prefilled with the opening brace. Raising the
+        # cap alone was treating the symptom: the records that still truncated
+        # at 1000 had unremarkable abstracts, so the length was in the *reply* —
+        # the model was writing prose before the JSON the prompt asks for.
+        # Prefilling removes that preamble instead of paying for it.
+        messages=[{"role": "user", "content": user},
+                  {"role": "assistant", "content": "{"}],
     )
     text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
-    parsed = _parse(text)
+    # the prefilled brace is not echoed back, so put it back before parsing
+    parsed = _parse("{" + text)
     d = str((parsed or {}).get("decision", "")).lower()
     if d in ("include", "exclude", "maybe"):
         decision = d
