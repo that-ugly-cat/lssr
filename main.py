@@ -1304,11 +1304,14 @@ async def set_details(ws_id: int, description: str = Form(""), research_question
 @app.post("/w/{ws_id}/settings/screening")
 async def set_screening_config(ws_id: int, reviewers_required: int = Form(...),
                                reviewers_required_2: str = Form(""),
+                               dry_run_enabled: str = Form(""),
                                user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     if not (ws.owner_id == user.id or user.is_admin):
         raise HTTPException(403, "Owner required")
     ws.screen1_reviewers_required = max(1, min(10, reviewers_required))
+    # an unchecked checkbox sends nothing, so absence is the off signal
+    ws.dry_run_enabled = bool(dry_run_enabled)
     # empty means "same as screening 1", the behaviour before the two stages
     # could be set apart. Changing it re-resolves stage 2 for every record, since
     # the cached decision was computed against the old number.
@@ -1434,8 +1437,15 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     manual_n = db.query(Record).filter(Record.workspace_id == ws.id,
                                        Record.is_removed == False,  # noqa: E712
                                        Record.id.in_(_human)).count()
-    # dry run: the model against the reviewers, on the records it may not decide
-    shadow_matrix, shadow_stats = shadow_agreement(db, ws.id, "screen1")
+    # dry run: the model against the reviewers, on the records it may not decide.
+    # Switched off, the page must show neither the button nor the results, so the
+    # numbers are not computed at all rather than computed and hidden in the
+    # template — one place to be wrong instead of several.
+    if ws.dry_run_enabled:
+        shadow_matrix, shadow_stats = shadow_agreement(db, ws.id, "screen1")
+    else:
+        shadow_matrix, shadow_stats = {}, {"pairs": 0, "agree": 0, "disagree": 0,
+                                           "pct": None, "shadow_n": 0, "disagree_ids": []}
     # Records where at least one voice differs from another, the model included.
     # Wider than screen1_decision == 'conflict', which only ever means two humans
     # disagreeing: 'maybe' against 'include' counts, and so does the model against
@@ -1487,6 +1497,11 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
                            ScreenDecision.record_id.in_(rec_ids)).all() if rec_ids else [])
     votes = {}
     for v in all_votes:
+        # with the dry run switched off its rows are dropped here rather than
+        # skipped in each of the three places the template renders a vote, so
+        # the per-record 🌓 chips cannot leak what the hidden panel would have said
+        if v.reviewer_kind == "shadow" and not ws.dry_run_enabled:
+            continue
         votes.setdefault(v.record_id, []).append(v)
     # records the current reviewer has already voted on → their votes are revealed
     my_voted = {v.record_id for v in all_votes
@@ -1550,6 +1565,10 @@ async def run_screening(ws_id: int, mode: str = Form(""), rerun: str = Form(""),
     mode = mode or ("rerun" if rerun else "pending")
     if mode not in ("pending", "rerun", "shadow"):
         mode = "pending"
+    # the button is hidden when the setting is off, but hiding a control is not
+    # the same as refusing the request it would have sent
+    if mode == "shadow" and not ws.dry_run_enabled:
+        raise HTTPException(403, "The dry run is switched off for this review")
     from screening import get_job, start_screen1
     job = get_job(ws.id)
     if job and job.get("status") == "running":

@@ -65,7 +65,7 @@
       <span class="muted small">est. {{ est_rerun }}</span>
     </span>
     {% endif %}
-    {% if manual_n > 0 %}
+    {% if ws.dry_run_enabled and manual_n > 0 %}
     <span style="display:inline-flex; flex-direction:column; align-items:flex-start;">
       <button class="btn" type="submit" name="mode" value="shadow"
         {{ 'disabled' if (n_exclusion == 0 or not has_key) else '' }}
@@ -75,7 +75,7 @@
       <span class="muted small">est. {{ est_shadow }}</span>
     </span>
     {% endif %}
-    <span class="muted small">{{ model }} pre-screens. Records a human has voted on ({{ manual_n }}) are the reviewers' call — never re-screened. The <strong>dry run</strong> is the exception that proves it: it reads exactly those records and writes a vote that counts for nothing, to answer whether the model would agree with the reviewers under today's criteria.</span>
+    <span class="muted small">{{ model }} pre-screens. Records a human has voted on ({{ manual_n }}) are the reviewers' call — never re-screened.{% if ws.dry_run_enabled %} The <strong>dry run</strong> is the exception that proves it: it reads exactly those records and writes a vote that counts for nothing, to answer whether the model would agree with the reviewers under today's criteria.{% endif %}</span>
   </form>
   <div class="progress-wrap" id="scr-prog" style="display:none;">
     <div class="progress"><div class="progress-fill" id="scr-fill"></div></div>
@@ -83,7 +83,7 @@
   <div id="scr-status" class="flash" style="display:none;"></div>
 </div>
 
-{% if shadow.pairs %}
+{% if ws.dry_run_enabled and shadow.pairs %}
 <div class="cards-label">🌓 Dry run — would the model agree with the reviewers?</div>
 <div class="card">
   <p class="muted small" style="margin-top:0;">
@@ -137,7 +137,7 @@
          title="At least one voice differs from another, the model included — wider than 'conflict', which only means two humans disagreeing">≠ divergent ({{ divergent_n }})</a>
     · <a href="/w/{{ ws.id }}/screening?decision=modelonly" class="{{ '' if decision=='modelonly' else 'muted' }}"
          title="Decided by the pre-screener alone — it voted and no human has yet. Empty on a fully screened corpus, and filling again after every refresh">🤖 model only ({{ model_n }})</a>
-    {% if shadow.disagree %}
+    {% if ws.dry_run_enabled and shadow.disagree %}
     · <a href="/w/{{ ws.id }}/screening?decision=shadow_disagrees" class="{{ '' if decision=='shadow_disagrees' else 'muted' }}"
          title="Records where the dry run would not have voted as a reviewer did. Nothing here is in dispute — the dry run decides nothing">🌓 dry run differs ({{ shadow.disagree }})</a>
     {% endif %}

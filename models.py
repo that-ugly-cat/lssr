@@ -118,6 +118,13 @@ class Workspace(Base):
     # text. NULL means "same as screening 1", which is how every workspace
     # behaved before this column existed.
     screen2_reviewers_required = Column(Integer, nullable=True)
+    # Whether this review offers the screening-1 dry run: the model screening
+    # again, under current criteria, over records people have already voted on,
+    # writing a vote that decides nothing. Off by default, because it costs real
+    # money to run and is a methods question most reviews never ask. Off also
+    # hides the results, so a review that ran one and then switched it off is
+    # hiding data rather than deleting it — the shadow rows stay.
+    dry_run_enabled   = Column(Boolean, default=False)
     steps_done_json   = Column(Text, nullable=True)   # JSON list of completed pipeline steps
     # Search strategy: the primary database the canonical query is authored in
     # (translated from), the shared publication-year window applied to *every*
@@ -790,6 +797,7 @@ def init_db():
             "ALTER TABLE workspaces ADD COLUMN screening_model VARCHAR DEFAULT 'claude-haiku-4-5'",
             "ALTER TABLE workspaces ADD COLUMN screen1_reviewers_required INTEGER DEFAULT 1",
             "ALTER TABLE workspaces ADD COLUMN screen2_reviewers_required INTEGER",
+            "ALTER TABLE workspaces ADD COLUMN dry_run_enabled BOOLEAN DEFAULT 0",
             "ALTER TABLE workspaces ADD COLUMN steps_done_json VARCHAR",
             "ALTER TABLE users ADD COLUMN elsevier_key_encrypted VARCHAR",
             "ALTER TABLE users ADD COLUMN elsevier_insttoken_encrypted VARCHAR",
@@ -833,6 +841,7 @@ def init_db():
             except Exception:
                 pass
     _backfill_screen_decisions()
+    _enable_dry_run_where_already_used()
     _retire_assessment_criteria()
     _upgrade_methodology_fields()
     _backfill_workspace_years()
@@ -941,6 +950,34 @@ def _retire_assessment_criteria():
                 conn.commit()
             except Exception:
                 pass
+
+
+def _enable_dry_run_where_already_used():
+    """Turn the dry run on for workspaces that have already run one.
+
+    The column defaults to off, and off hides the results as well as the button.
+    Without this, deploying the setting would make a dry run somebody has already
+    paid for vanish from their screening page with no explanation — the rows
+    would still be there, which is worse, because nothing on screen would say so.
+    Idempotent: it only ever turns the flag on, so a later deliberate off stays
+    off unless new shadow rows appear."""
+    db = SessionLocal()
+    try:
+        ids = {r[0] for r in db.query(ScreenDecision.workspace_id)
+                                .filter(ScreenDecision.reviewer_kind == "shadow").distinct().all()}
+        if not ids:
+            return
+        changed = (db.query(Workspace)
+                     .filter(Workspace.id.in_(ids),
+                             (Workspace.dry_run_enabled == False) |          # noqa: E712
+                             (Workspace.dry_run_enabled.is_(None)))
+                     .update({Workspace.dry_run_enabled: True}, synchronize_session=False))
+        if changed:
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
 
 
 def _backfill_screen_decisions():
@@ -1124,6 +1161,7 @@ def duplicate_workspace(db, source: "Workspace", owner: "User", name: str,
         ws.screening_model = source.screening_model
         ws.screen1_reviewers_required = source.screen1_reviewers_required
         ws.screen2_reviewers_required = source.screen2_reviewers_required
+        ws.dry_run_enabled = source.dry_run_enabled
         ws.primary_db = source.primary_db
         ws.year_from = source.year_from
         ws.year_to = source.year_to

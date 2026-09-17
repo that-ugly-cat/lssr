@@ -39,8 +39,22 @@
              value="{{ ws.screen2_reviewers_required or '' }}" placeholder="same"
              style="max-width:80px;" {{ '' if is_owner else 'disabled' }}>
     </label>
+    <label style="margin-left:14px;">
+      <input type="checkbox" name="dry_run_enabled" value="1"
+             {{ 'checked' if ws.dry_run_enabled else '' }}
+             {{ '' if is_owner else 'disabled' }}>
+      🌓 Offer the screening-1 dry run
+    </label>
     {% if is_owner %}<button class="btn btn-small" type="submit">Save</button>{% endif %}
   </form>
+  <p class="muted small">
+    The <strong>dry run</strong> screens the records reviewers have already voted on,
+    under the criteria as they stand now, and records the model's answers beside theirs
+    without changing a single decision — it answers "would the model agree with us?".
+    It costs an API call per record, so it is off unless a review wants to ask that
+    question. Switching it off hides the button and the results; it does not delete
+    them, and switching it back on shows the same numbers again.
+  </p>
   <p class="muted small">
     1 = single screening (one human vote decides). 2 = blind double screening —
     two members must agree; if they disagree the record is flagged <strong>conflict</strong>
