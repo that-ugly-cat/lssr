@@ -48,6 +48,12 @@ expose read-only public links to its dashboard and published synthesis.
    once on full text); disagreement becomes a **conflict** the owner
    adjudicates. Decisions are sticky across iterations.
 
+   An optional **🌓 dry run** answers the question a re-run cannot: it screens
+   exactly the records reviewers have already voted on, under the criteria as
+   they stand now, and records the model's answers beside theirs without
+   deciding anything — then reports the agreement matrix and lists the
+   disagreements. Off unless a review switches it on.
+
    The decision column carries **every voice** — 🤖 model, 👤 reviewer,
    ⚖️ adjudicator — with a `≠` marker when they disagree, still behind the blind
    rule. Two filters beyond the decisions: **≠ divergent**, every record where at
