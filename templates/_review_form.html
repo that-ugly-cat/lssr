@@ -1,10 +1,17 @@
 {# AI-assisted: when this reviewer hasn't voted yet, the model's draft decision
    is pre-selected and its field values pre-filled — confirm or edit. #}
 {% set mydec = my_vote.decision if my_vote else (model_vote.decision if model_vote else '') %}
+{% import "_earmark.html" as em %}
 <div class="review-head">
   <div>
+    {#- The dot is here and not only in the row behind: reading the full text
+        is when a note is usually worth writing, and closing the modal to make
+        one is how a note does not get made. -#}
+    {{ em.mine(ws, rec, my_mark) }}
     <strong>{{ rec.title or '(untitled)' }}</strong>
     <div class="muted small">{{ rec.year or '' }}{% if rec.authors %} · {{ rec.authors }}{% endif %}{% if rec.doi %} · <a href="https://doi.org/{{ rec.doi }}" target="_blank" rel="noopener">{{ rec.doi }}</a>{% endif %}</div>
+    {{ em.note(ws, rec, my_mark) }}
+    {{ em.others(rec, {rec.id: marks}, user) }}
   </div>
   <div style="display:flex; gap:8px; align-items:center;">
     {% if rec.full_text_path %}<a class="btn btn-small" href="/w/{{ ws.id }}/records/{{ rec.id }}/pdf" target="_blank" rel="noopener">Open PDF ↗</a>{% endif %}

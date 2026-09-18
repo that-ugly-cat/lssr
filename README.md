@@ -54,9 +54,20 @@ expose read-only public links to its dashboard and published synthesis.
    deciding anything — then reports the agreement matrix and lists the
    disagreements. Off unless a review switches it on.
 
-   The decision column carries **every voice** — 🤖 model, 👤 reviewer,
+   The decision column carries **every voice** — 🤖 model, 👤 reviewer by name,
    ⚖️ adjudicator — with a `≠` marker when they disagree, still behind the blind
-   rule. Two filters beyond the decisions: **≠ divergent**, every record where at
+   rule; the column beside it is for casting a vote, not for reading one.
+
+   An **earmark ⚑** is the margin of the shared copy: a dot on a record, one
+   per reviewer, with an optional line of why. Everyone sees everyone's, only
+   your own is yours to write, and it counts nowhere — no PRISMA number, no
+   decision, no export column. It hangs off the record rather than the stage,
+   so the same mark is there at screening and again at assessment. Unlike the
+   votes it is *not* blind, on purpose: *the DOI resolves to the wrong article*
+   is worth having before you vote. That is a hole in the blinding and it is
+   documented as one — judgement belongs in the vote, where it is counted.
+
+   Two filters beyond the decisions: **≠ divergent**, every record where at
    least one voice differs from another, the model's included and `maybe`
    counting as a difference — much wider than *conflict*, which only ever means
    two humans disagreeing; and **🤖 model only**, records standing on the

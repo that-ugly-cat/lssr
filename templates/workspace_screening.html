@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_earmark.html" as em %}
 {% block title %}Screening — {{ ws.name }}{% endblock %}
 {% block body %}
 {% include "_ws_tabs.html" %}
@@ -21,7 +22,7 @@
 </div>
 {% endif %}
 
-<div class="card">
+<div class="card" id="scr-summary">
   <div class="screen-progress" title="{{ counts.include }} included · {{ counts.maybe }} maybe · {{ counts.exclude }} excluded · {{ counts.conflict }} conflict · {{ counts.pending }} pending">
     {% if counts.total > 0 %}
     {% if counts.include %}<div class="seg seg-inc" style="width: {{ (counts.include / counts.total * 100)|round(2) }}%"></div>{% endif %}
@@ -83,6 +84,7 @@
   <div id="scr-status" class="flash" style="display:none;"></div>
 </div>
 
+<div id="scr-dryrun">
 {% if ws.dry_run_enabled and shadow.pairs %}
 <div class="cards-label">🌓 Dry run — would the model agree with the reviewers?</div>
 <div class="card">
@@ -119,6 +121,7 @@
     wrong: it marks a record worth re-reading, which is why the reasons are kept.</p>
 </div>
 {% endif %}
+</div>
 
 {% set f = filters %}
 {% macro sorth(field, label) %}
@@ -126,7 +129,7 @@
   <a class="th-sort" href="?decision={{ f.decision }}&q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f.rtype }}&yf={{ f.yf }}&yt={{ f.yt }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
 {%- endmacro %}
 
-<div class="cards-label">
+<div class="cards-label" id="scr-filters">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
     · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict','divergent','modelonly','shadow_disagrees'] else 'muted' }}">all ({{ counts.total }})</a>
@@ -135,6 +138,8 @@
     {% endfor %}
     · <a href="/w/{{ ws.id }}/screening?decision=divergent" class="{{ '' if decision=='divergent' else 'muted' }}"
          title="At least one voice differs from another, the model included — wider than 'conflict', which only means two humans disagreeing">≠ divergent ({{ divergent_n }})</a>
+    · <a href="/w/{{ ws.id }}/screening?decision=earmarked" class="{{ '' if decision=='earmarked' else 'muted' }}"
+         title="Records you have earmarked. Only ever your own — what other people find interesting is a different question">⚑ earmarked ({{ mine_marked|length }})</a>
     · <a href="/w/{{ ws.id }}/screening?decision=modelonly" class="{{ '' if decision=='modelonly' else 'muted' }}"
          title="Decided by the pre-screener alone — it voted and no human has yet. Empty on a fully screened corpus, and filling again after every refresh">🤖 model only ({{ model_n }})</a>
     {% if ws.dry_run_enabled and shadow.disagree %}
@@ -166,52 +171,70 @@
   <a class="btn btn-small" href="/w/{{ ws.id }}/screening?decision={{ f.decision }}">Clear</a>
 </form>
 
-<table class="table">
-  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Decision</th><th class="ta-right">Your vote &amp; reviewers</th></tr></thead>
+<table class="table" id="scr-table">
+  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Decision &amp; reviewers</th><th class="ta-right">Your vote</th></tr></thead>
   <tbody>
     {% for r in records %}
-    <tr>
+    <tr data-rid="{{ r.id }}">
       <td class="nowrap">{{ r.year or '—' }}</td>
+      {#- `| first` yields Undefined on an empty list, not None, and the macro
+          then blows up reading .note off it. Spelled out instead. -#}
+      {% set my_marks = earmarks.get(r.id, []) | selectattr('user_id','equalto', user.id) | list %}
+      {% set my_mark = my_marks[0] if my_marks else none %}
       <td>
+        {{ em.mine(ws, r, my_mark) }}
         <strong>{{ r.title or '(untitled)' }}</strong>
         {% if r.type and r.type != 'article' %}<span class="badge badge-muted">{{ r.type.replace('_',' ') }}</span>{% endif %}
+        {{ em.note(ws, r, my_mark) }}
         <div class="muted small">{{ r.authors or '' }}{% if r.doi %} · <a href="https://doi.org/{{ r.doi }}" target="_blank" rel="noopener">{{ r.doi }}</a>{% elif r.url %} · <a href="{{ r.url }}" target="_blank" rel="noopener">{{ r.url|truncate(50) }}</a>{% endif %}</div>
         {% if r.abstract %}
         <details class="abstract-toggle"><summary class="muted small">abstract</summary><div class="small" style="margin-top:4px; max-width:75ch;">{{ r.abstract }}</div></details>
         {% else %}<div class="muted small" style="font-style:italic;">no abstract</div>{% endif %}
         {% if r.screen1_reason %}<div class="muted small rationale">{{ r.screen1_reason }}</div>{% endif %}
       </td>
-      <td class="nowrap">
-        <span title="{{ r.screen1_decision }}" style="font-size:16px;">
-          {% if r.screen1_decision == 'include' %}✅{% elif r.screen1_decision == 'exclude' %}❌{% elif r.screen1_decision == 'maybe' %}🤔{% elif r.screen1_decision == 'conflict' %}⚠️{% else %}❓{% endif %}
-        </span>
-        {% if r.screen1_by == 'adjudicator' %}<span class="badge badge-model">adjudicated</span>
-        {% elif r.screen1_by == 'human' %}<span class="badge badge-ok">reviewers</span>
-        {% elif r.screen1_by == 'conflict' %}<span class="badge badge-warn">conflict</span>
-        {% elif r.screen1_by == 'model' %}<span class="badge badge-muted">model</span>{% endif %}
+      {#- The settled decision *and* the voices behind it. Both live here: the
+          right-hand column is for casting a vote, not for reading one. The two
+          used to be drawn twice — a compact emoji strip here, a named list over
+          there — in two notations and under two different blind rules. -#}
+      <td style="min-width:150px;">
+        <div class="nowrap">
+          <span title="{{ r.screen1_decision }}" style="font-size:16px;">
+            {% if r.screen1_decision == 'include' %}✅{% elif r.screen1_decision == 'exclude' %}❌{% elif r.screen1_decision == 'maybe' %}🤔{% elif r.screen1_decision == 'conflict' %}⚠️{% else %}❓{% endif %}
+          </span>
+          {% if r.screen1_by == 'adjudicator' %}<span class="badge badge-model">adjudicated</span>
+          {% elif r.screen1_by == 'human' %}<span class="badge badge-ok">reviewers</span>
+          {% elif r.screen1_by == 'conflict' %}<span class="badge badge-warn">conflict</span>
+          {% elif r.screen1_by == 'model' %}<span class="badge badge-muted">model</span>{% endif %}
+          {#- ≠ stays behind the blind rule, as it was: on a row you may not read
+              yet, "someone disagrees" is itself a vote you have not earned. -#}
+          {% if r.id in revealed and r.id in divergent_ids %} <span class="badge badge-warn" title="Opinions differ">≠</span>{% endif %}
+        </div>
         {% set humanrows = votes.get(r.id, []) | selectattr('reviewer_kind','equalto','user') | list %}
         {% if humanrows %}<div class="muted small">{{ humanrows|length }}/{{ reviewers_required }} reviewed</div>{% endif %}
-        {#- every voice on this record. Gated the same way as the reviewer panel,
-            so blind screening survives: you see them once you have voted, once an
-            adjudicator has closed the record, or if you are the adjudicator. -#}
-        {% set seen = (r.id in my_voted) or (r.screen1_by == 'adjudicator') or is_owner %}
-        {% if seen and votes.get(r.id) %}
-        {% if r.id in divergent_ids %}<div><span class="badge badge-warn" title="Opinions differ">≠</span></div>{% endif %}
-        <div class="muted small nowrap" style="margin-top:2px;">
-          {%- for v in votes.get(r.id, [])|sort(attribute='reviewer_kind') -%}
-          {#- '👤' is the fallback, so a kind that is not a person must be listed here
-              or a dry run would be drawn as a reviewer. -#}
-          {%- set who = {'model':'🤖','adjudicator':'⚖️','shadow':'🌓'}.get(v.reviewer_kind, '👤') -%}
-          {%- set em = {'include':'✅','exclude':'❌','maybe':'🤔'}.get(v.decision, '·') -%}
-          <span title="{{ v.reviewer_kind }}: {{ v.decision }}">{{ who }}{{ em }}</span>{% if not loop.last %} {% endif %}
-          {%- endfor -%}
+        {#- every voice on this record, named. `revealed` is computed once in
+            main.py; nothing here decides who may read a vote. -#}
+        {% if votes.get(r.id) %}
+        {% if r.id in revealed %}
+        <div class="muted small" style="margin-top:4px;">
+          {%- for v in votes.get(r.id, []) %}
+            {% set vem = {'include':'✅','exclude':'❌','maybe':'🤔'}.get(v.decision, '·') %}
+            {% if v.reviewer_kind == 'model' %}<div>🤖 model {{ vem }}</div>
+            {% elif v.reviewer_kind == 'adjudicator' %}<div>⚖️ {{ v.reviewer.name if v.reviewer else 'adjudicator' }} {{ vem }}</div>
+            {% elif v.reviewer_kind == 'shadow' %}<div class="muted">🌓 model, dry run {{ vem }} <span class="small">(not counted)</span></div>
+            {% else %}<div>👤 {{ v.reviewer.name if v.reviewer else 'reviewer' }} {{ vem }}</div>{% endif %}
+          {%- endfor %}
         </div>
+        {% else %}
+        <div class="muted small" style="margin-top:4px; font-style:italic;">vote to reveal</div>
         {% endif %}
+        {% endif %}
+        {#- Outside the `revealed` gate above, deliberately: the votes are
+            blind, the margin is not. -#}
+        {{ em.others(r, earmarks, user) }}
       </td>
       <td class="ta-right small" style="min-width:190px;">
         {% set myrows = votes.get(r.id, []) | selectattr('reviewer_kind','equalto','user') | selectattr('reviewer_id','equalto', user.id) | list %}
         {% set myvote = myrows[0].decision if myrows else none %}
-        {% set reveal = (r.id in my_voted) or (is_owner and r.screen1_decision == 'conflict') %}
         <div style="display:flex; gap:4px; justify-content:flex-end; flex-wrap:wrap;">
           {% for d, em in [('include','✅'),('maybe','🤔'),('exclude','❌')] %}
           <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/screen1/vote" style="display:inline;">
@@ -228,19 +251,6 @@
           </form>
           {% endif %}
         </div>
-        {% if reveal %}
-        <div class="muted small" style="margin-top:4px;">
-          {% for v in votes.get(r.id, []) %}
-            {% set vem = {'include':'✅','exclude':'❌','maybe':'🤔'}.get(v.decision, '·') %}
-            {% if v.reviewer_kind == 'model' %}<div>🤖 model {{ vem }}</div>
-            {% elif v.reviewer_kind == 'adjudicator' %}<div>⚖️ {{ v.reviewer.name if v.reviewer else 'adjudicator' }} {{ vem }}</div>
-            {% elif v.reviewer_kind == 'shadow' %}<div class="muted">🌓 model, dry run {{ vem }} <span class="small">(not counted)</span></div>
-            {% else %}<div>{{ v.reviewer.name if v.reviewer else 'reviewer' }} {{ vem }}</div>{% endif %}
-          {% endfor %}
-        </div>
-        {% else %}
-        <div class="muted small" style="margin-top:4px; font-style:italic;">vote to reveal others</div>
-        {% endif %}
         {% if is_owner and r.screen1_decision == 'conflict' %}
         <div style="margin-top:6px; display:flex; gap:4px; justify-content:flex-end; align-items:center;">
           <span class="muted small">resolve:</span>
@@ -262,12 +272,82 @@
 {% if records|length >= 500 %}<p class="muted small">Showing first 500 — narrow the filter to see more.</p>{% endif %}
 
 {% include "_step_done.html" %}
+
+{#- Outside #scr-table on purpose: the redraw that follows a vote replaces that
+    whole element, and a toast living inside it would be swept away by the very
+    action it is reporting. role=status, not alert: it confirms something the
+    reviewer just did, it does not interrupt them. -#}
+<div id="toast-host">
+  <div class="toast hidden" id="toast" role="status" aria-live="polite">
+    <span class="toasttext"></span>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/poller.js?v=2"></script>
+<script src="/static/js/poller.js?v=3"></script>
+<script src="/static/js/inplace.js?v=2"></script>
 <script>
 poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status', 'scr-prog', 'scr-fill');
+
+// ── the earmark ──
+//
+// The dot paints before the round trip: a marker meant to be used carelessly
+// cannot make you wait to see that it worked. The redraw that follows keeps
+// the ⚑ count on the filter tabs honest, and the server's answer is what the
+// row ends up drawn from.
+//
+// The note posts on Enter or on leaving the field — `change` fires on blur
+// only when the value actually differs, so clicking away without typing
+// costs nothing.
+function wireEarmarks(rootId) {
+  const root = document.getElementById(rootId);
+  if (!root) return;
+  root.addEventListener('click', (e) => {
+    const btn = e.target.closest('.earmark-form .earmark');
+    if (!btn) return;
+    const on = btn.classList.toggle('on');
+    // The note field lives beside the dot and is shown with it. Clearing the
+    // dot deletes the row server-side, so the text goes too — leaving it in a
+    // hidden input would put it back on screen next time, unsaved.
+    const scope = btn.closest('td, .review-head');
+    const note = scope && scope.querySelector('.earmark-note');
+    if (note) {
+      note.hidden = !on;
+      if (!on) note.querySelector('input[name="note"]').value = '';
+    }
+  });
+  root.addEventListener('change', (e) => {
+    const input = e.target;
+    if (input.matches('.earmark-note input[name="note"]')) input.form.requestSubmit();
+  });
+}
+
+
+// Voting and adjudicating redraw in place. #scr-form is in the list because the
+// run buttons count records a vote moves: a vote on the last model-only record
+// retires "re-run", and any vote grows the dry run's pile.
+const live = inplace({
+  regions: ['scr-summary', 'scr-form', 'scr-dryrun', 'scr-filters', 'scr-table'],
+  jobs: [['scr-status', 'scr-btn']],
+  roots: ['scr-table'],
+  match: (action) => (action.endsWith('/screen1/vote') ? 'vote'
+                    : action.endsWith('/screen1/adjudicate') ? 'adjudicate'
+                    : action.endsWith('/earmark') ? 'earmark' : null),
+  message: (kind, form, data) => {
+    // The dot says nothing: it lit up under the pointer, and a notice for
+    // every mark is exactly the noise that stops people marking things. Its
+    // note does say something, because saving on blur is otherwise invisible.
+    if (kind === 'earmark') {
+      return form.classList.contains('earmark-note')
+        ? (data.note ? 'Note saved' : 'Note cleared') : null;
+    }
+    const d = new FormData(form).get('decision');
+    if (kind === 'adjudicate') return d === 'clear' ? 'Ruling withdrawn' : `Resolved: ${d}`;
+    return inplace.voteMessage(d, data);
+  },
+});
+wireEarmarks('scr-table');
 
 // Collapsible exclusion-criteria rail; remembers its state.
 const critTab = document.getElementById('crit-tab');

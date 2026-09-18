@@ -57,7 +57,7 @@
   <a class="th-sort" href="?q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f.rtype }}&yf={{ f.yf }}&yt={{ f.yt }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
 {%- endmacro %}
 
-<div class="page-head" style="margin-top:6px;">
+<div class="page-head" id="rec-pool" style="margin-top:6px;">
   <div class="cards-label" style="margin:0;">Pool ({{ active_n }})</div>
   <div style="display:flex; gap:8px; align-items:center;">
     <button class="btn btn-danger btn-small" type="button" id="batch-del-btn" style="display:none;"
@@ -92,12 +92,12 @@
   <a class="btn btn-small" href="/w/{{ ws.id }}/records">Clear</a>
 </form>
 
-<table class="table">
+<table class="table" id="rec-table">
   {% set type_lbl = {'article': 'paper', 'book': 'book', 'book_chapter': 'book chapter', 'grey': 'grey lit'} %}
   <thead><tr><th class="nowrap"><input type="checkbox" id="sel-all" title="Select all"></th><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Type</th><th>Source</th><th>DBs</th><th></th></tr></thead>
   <tbody>
     {% for r in records %}
-    <tr>
+    <tr data-rid="{{ r.id }}">
       <td class="nowrap"><input type="checkbox" class="rec-sel" value="{{ r.id }}"></td>
       <td class="nowrap">{{ r.year or '—' }}</td>
       <td>
@@ -115,8 +115,11 @@
       <td class="ta-right nowrap">
         <button class="btn btn-small" type="button"
           onclick='editRecord({{ {"id": r.id, "title": r.title or "", "authors": r.authors or "", "year": r.year or "", "doi": r.doi or "", "url": r.url or "", "source": r.source or "", "type": r.type or "article", "abstract": r.abstract or ""}|tojson }})'>Edit</button>
-        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/remove" style="display:inline;"
-              onsubmit="return confirm('Delete this record permanently? Removals at this stage aren’t tracked.');">
+        {#- No onsubmit="confirm(…)": the page asks in its own toast, the same
+            way the batch delete does. Two idioms for one act on one page meant
+            the single delete was the blocking browser dialog and the batch was
+            not, for no reason anyone chose. -#}
+        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/remove" style="display:inline;">
           <button class="btn btn-danger btn-small" type="submit">Delete</button>
         </form>
       </td>
@@ -188,8 +191,83 @@
 {% endblock %}
 
 {% block scripts %}
-<div id="toast-host"></div>
+<div id="toast-host">
+  <div class="toast hidden" id="toast" role="status" aria-live="polite">
+    <span class="toasttext"></span>
+  </div>
+</div>
+<form method="post" action="/w/{{ ws.id }}/records/undo-delete" id="undo-form" style="display:none;">
+  <input type="hidden" name="token">
+</form>
+<script src="/static/js/inplace.js?v=2"></script>
 <script>
+// ── the confirmation, and the notice ──
+//
+// One idiom for both deletes. It is not a `confirm()`: this page can delete
+// four hundred records in a click, and the browser dialog gives you a sentence
+// and two buttons with no sight of what you selected.
+function toastConfirm(message, onConfirm) {
+  const host = document.getElementById('toast-host');
+  const old = document.getElementById('toast-confirm');
+  if (old) old.remove();
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.id = 'toast-confirm';          // its own node: the notice lives here too
+  t.innerHTML = `<span></span>`;
+  t.firstChild.textContent = message;
+  const ok = document.createElement('button');
+  ok.className = 'btn btn-danger btn-small'; ok.textContent = 'Delete'; ok.type = 'button';
+  const no = document.createElement('button');
+  no.className = 'btn btn-small'; no.textContent = 'Cancel'; no.type = 'button';
+  no.onclick = () => t.remove();
+  ok.onclick = () => { t.remove(); onConfirm(); };
+  t.append(no, ok);
+  host.append(t);
+}
+
+// ── acting on a row without losing the page ──
+const live = inplace({
+  regions: ['rec-pool', 'rec-table'],
+  roots: ['rec-table', 'add-rec', 'edit-rec'],
+  // Deleting is not listed: it is confirmed first, and then handed to
+  // live.act() by hand. Importing is not listed either — it rewrites the whole
+  // pool and nobody is working row by row while they do it, so the plain
+  // reload is the honest thing there.
+  match: (action) => (action.endsWith('/records/add') ? 'add'
+                    : action.endsWith('/edit') ? 'edit' : null),
+  message: (kind, form, data) => {
+    if (kind === 'add') return `Record added: ${data.title}`;
+    if (kind === 'edit') return 'Record updated';
+    if (kind === 'undo') {
+      if (!data.records) return 'Nothing left to restore';
+      const again = data.renumbered
+        ? ` (${data.renumbered} under a new id — theirs had been taken)` : '';
+      return `${data.records} record${data.records === 1 ? '' : 's'} restored${again}`;
+    }
+    // A delete offers the way back, for as long as the notice is on screen —
+    // and the snapshot behind it outlives the notice by a day, so a button
+    // missed is not a record lost, only one that needs asking about.
+    const n = data.deleted;
+    const text = `${n} record${n === 1 ? '' : 's'} deleted`;
+    if (!data.undo) return text;
+    return { text, action: { label: 'Undo', run: () => undoDelete(data.undo) } };
+  },
+  onDone: (kind) => {
+    if (kind === 'add') document.getElementById('add-rec').classList.remove('open');
+    if (kind === 'edit') document.getElementById('edit-rec').classList.remove('open');
+  },
+  // The ticked boxes are the page's own state and the server has never heard
+  // of them, so they have to be put back by hand after the rows are replaced.
+  afterRedraw: () => { restoreSelection(); refreshSelection(); },
+});
+
+function undoDelete(token) {
+  const f = document.getElementById('undo-form');
+  f.querySelector('[name=token]').value = token;
+  live.act(f, 'undo');
+}
+
+// ── the add / edit modals ──
 function editRecord(r) {
   document.getElementById('edit-form').action = `/w/{{ ws.id }}/records/${r.id}/edit`;
   for (const k of ['title','authors','year','doi','url','source','type','abstract'])
@@ -197,41 +275,56 @@ function editRecord(r) {
   document.getElementById('edit-rec').classList.add('open');
 }
 
-// ── selection + batch delete ──
-const selAll = document.getElementById('sel-all');
-const delBtn = document.getElementById('batch-del-btn');
-const countEl = document.getElementById('sel-count');
+// ── selection + delete ──
+//
+// Delegated, and looked up on use: every redraw replaces the table and the
+// pool header, so a listener bound to a checkbox and a reference to the button
+// would both be pointing at nodes that left the page.
+let remembered = new Set();
 function selected() { return Array.from(document.querySelectorAll('.rec-sel:checked')); }
 function refreshSelection() {
   const n = selected().length;
-  countEl.textContent = n;
-  delBtn.style.display = n ? '' : 'none';
+  const countEl = document.getElementById('sel-count');
+  const delBtn = document.getElementById('batch-del-btn');
+  if (countEl) countEl.textContent = n;
+  if (delBtn) delBtn.style.display = n ? '' : 'none';
 }
-document.querySelectorAll('.rec-sel').forEach(cb => cb.addEventListener('change', refreshSelection));
-if (selAll) selAll.addEventListener('change', () => {
-  document.querySelectorAll('.rec-sel').forEach(cb => { cb.checked = selAll.checked; });
+function rememberSelection() { remembered = new Set(selected().map(cb => cb.value)); }
+function restoreSelection() {
+  document.querySelectorAll('.rec-sel').forEach(cb => { cb.checked = remembered.has(cb.value); });
+  // Rows that are gone are gone: a remembered id with no checkbox left is a
+  // record that was just deleted, and keeping it would re-select a ghost.
+  const alive = new Set(Array.from(document.querySelectorAll('.rec-sel')).map(cb => cb.value));
+  remembered = new Set(Array.from(remembered).filter(id => alive.has(id)));
+}
+
+const table = document.getElementById('rec-table');
+table.addEventListener('change', (e) => {
+  const el = e.target;
+  if (el.id === 'sel-all') {
+    document.querySelectorAll('.rec-sel').forEach(cb => { cb.checked = el.checked; });
+  } else if (!el.classList.contains('rec-sel')) {
+    return;
+  }
+  rememberSelection();
   refreshSelection();
 });
 
-// confirmation toast (non-blocking, replaces window.confirm)
-function toastConfirm(message, onConfirm) {
-  const host = document.getElementById('toast-host');
-  host.innerHTML = '';
-  const t = document.createElement('div');
-  t.className = 'toast';
-  t.innerHTML = `<span>${message}</span>`;
-  const ok = document.createElement('button'); ok.className = 'btn btn-danger btn-small'; ok.textContent = 'Delete';
-  const no = document.createElement('button'); no.className = 'btn btn-small'; no.textContent = 'Cancel';
-  no.onclick = () => host.innerHTML = '';
-  ok.onclick = () => { host.innerHTML = ''; onConfirm(); };
-  t.append(no, ok); host.append(t);
-}
+// A single row's Delete: confirmed here, then posted in place like the rest.
+table.addEventListener('submit', (e) => {
+  const form = e.target;
+  if (!(form instanceof HTMLFormElement) || !form.getAttribute('action').endsWith('/remove')) return;
+  e.preventDefault();
+  const title = (form.closest('tr').querySelector('strong') || {}).textContent || 'this record';
+  toastConfirm(`Delete “${title.slice(0, 60)}” permanently?`, () => live.act(form, 'delete'));
+});
+
 function confirmBatchDelete() {
   const ids = selected().map(cb => cb.value);
   if (!ids.length) return;
-  toastConfirm(`Delete ${ids.length} record${ids.length > 1 ? 's' : ''} permanently? Not tracked.`, () => {
+  toastConfirm(`Delete ${ids.length} record${ids.length > 1 ? 's' : ''} permanently?`, () => {
     document.getElementById('batch-ids').value = ids.join(',');
-    document.getElementById('batch-form').submit();
+    live.act(document.getElementById('batch-form'), 'delete');
   });
 }
 </script>

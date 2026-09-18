@@ -67,7 +67,8 @@ import auth
 from models import (
     DECIDING_KINDS, HARVEST_DBS, PIPELINE_STEPS, Extraction, Import, Iteration, PublicShare,
     Record, ScreenDecision, SearchQuery, SessionLocal, Synthesis, UserCostLog,
-    authoritative_values, db_label, db_search_url, human_voted_subq, screen2_required,
+    authoritative_values, db_label, db_search_url, earmarks_by_record, human_voted_subq,
+    my_earmark_ids, screen2_required,
     user_workspaces, workspace_criteria, workspace_extraction_fields,
     workspace_steps_done, workspace_target_dbs,
 )
@@ -447,6 +448,7 @@ def get_protocol(review: str) -> dict:
 
 @mcp.tool()
 def search_records(review: str, q: str = "", screen1: str = "", screen2: str = "",
+                   earmarked: bool = False,
                    full_text: str = "", database: str = "", year_from: int = 0,
                    year_to: int = 0, limit: int = 50, offset: int = 0) -> dict:
     """
@@ -462,6 +464,10 @@ def search_records(review: str, q: str = "", screen1: str = "", screen2: str = "
         on full text with nothing extracted, i.e. in the review and
         contributing to no field of the synthesis. Any screen2 filter implies
         the screen-1 included pool, the only place screening 2 happens.
+    earmarked: True returns only the records the caller has earmarked. Only
+        ever the caller's own — everybody's marks are readable on a record
+        through get_record, but what *other* people have flagged is a
+        different question and not one this filter answers.
     full_text: none, url, fetched, converted, failed. Only `converted` is text
         a reviewer or the LLM actually reads.
     database: a source database key (pubmed, scopus, wos, …). Records carry
@@ -469,8 +475,12 @@ def search_records(review: str, q: str = "", screen1: str = "", screen2: str = "
     """
     db = SessionLocal()
     try:
+        caller = auth.current_caller()
         ws = auth.mcp_review(db, review)
         rows = _live(db, ws.id)
+        if earmarked:
+            rows = rows.filter(Record.id.in_(
+                my_earmark_ids(db, ws.id, caller.id) or {-1}))
         if screen2:
             rows = rows.filter(Record.screen1_decision == "include")
         for stage, val in (("screen1", screen1), ("screen2", screen2)):
@@ -538,6 +548,7 @@ def get_record(review: str, record_id: int) -> dict:
     """
     db = SessionLocal()
     try:
+        caller = auth.current_caller()
         ws = auth.mcp_review(db, review)
         r = (db.query(Record).filter(Record.id == int(record_id),
                                      Record.workspace_id == ws.id).first())
@@ -561,6 +572,16 @@ def get_record(review: str, record_id: int) -> dict:
             "screen1_reason": r.screen1_reason,
             "screen2_votes": _votes(db, [r.id], "screen2").get(r.id, []),
             "screen2_reason": r.screen2_reason,
+            # The margin of the shared copy: every reviewer's earmark on this
+            # record, theirs as well as the caller's. Notes, not decisions —
+            # nothing here is counted anywhere, and a note arguing a verdict is
+            # still only a note. `mine` says which one the caller could edit in
+            # the web app; this surface does not write them.
+            "earmarks": [{"reviewer": (m.user.name if m.user else "a reviewer"),
+                          "mine": m.user_id == caller.id,
+                          "note": m.note,
+                          "marked": _d(m.created_at)}
+                         for m in earmarks_by_record(db, ws.id, [r.id]).get(r.id, [])],
         })
         rows = db.query(Extraction).filter(Extraction.record_id == r.id).all()
         out["extractions"] = [{

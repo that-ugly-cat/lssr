@@ -728,6 +728,111 @@ def recompute_record_screen2(db, workspace, record):
     record.screen2_at = datetime.utcnow()
 
 
+# ── Earmarks: the margin of the shared copy ───────────────────────────────────
+
+class Earmark(Base):
+    """A dot on a record, one per reviewer, with an optional why.
+
+    Borrowed from PaperTrail's yellow flag and TheList's dot, and it keeps two
+    of their three properties: **it is not a permission** — marking a record
+    grants nothing and takes nothing away, it only needs the access you already
+    have — and **it is counted nowhere**. No PRISMA number moves, no export
+    column appears, no decision changes. That is what lets it be used
+    carelessly: a mark that gets counted is a commitment, and this is the
+    equivalent of a thumb on a page.
+
+    The third property is deliberately *not* kept. In those two tools the mark
+    is private; here everyone in the review sees everyone's, your own being the
+    only one you can write. The reason is that a scoping review is read by more
+    than one person and the margin is worth sharing: *same cohort as #212*,
+    *ask Federico whether this is the protocol paper*, *the DOI resolves to the
+    wrong article*. Those belong to the team, not to a diary.
+
+    That choice has a cost, and it is written here so nobody has to rediscover
+    it. Screening 1 is blind: you do not see another reviewer's *vote* until
+    you have cast yours, and that is still true. But a note saying "I'd exclude
+    this" is a vote in everything but name, and this field is visible before
+    you vote. The tool does not police it — a reviewer who argues a decision in
+    somebody else's margin has bypassed their own blinding, and the guide says
+    so plainly. What is kept apart is the part that counts: the earmark never
+    reaches resolve_screen1, the conflict logic, the PRISMA flow or the export.
+
+    It hangs off the record and not off a stage, because the thumb is on the
+    paper: a note made while reading the title is there again when the full
+    text is read, which is when it is usually wanted.
+    """
+    __tablename__ = "earmarks"
+    id           = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
+    record_id    = Column(Integer, ForeignKey("records.id"), nullable=False)
+    user_id      = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # One line. A margin note that grows into a paragraph is a document, and a
+    # document about a record belongs in the vote's reason or in the synthesis.
+    note         = Column(String, nullable=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+    updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("record_id", "user_id", name="uq_earmark_record_user"),)
+
+    user = relationship("User")
+
+
+#: Longest note kept. Not a validation error — anything longer is cut, because
+#: refusing a note is a worse outcome than shortening one.
+EARMARK_NOTE_MAX = 280
+
+
+def earmarks_by_record(db, workspace_id: int, record_ids: list) -> dict:
+    """{record_id: [Earmark]} for a page of rows, everybody's, in one query."""
+    if not record_ids:
+        return {}
+    rows = (db.query(Earmark)
+              .filter(Earmark.workspace_id == workspace_id,
+                      Earmark.record_id.in_(record_ids))
+              .order_by(Earmark.created_at).all())
+    out = {}
+    for r in rows:
+        out.setdefault(r.record_id, []).append(r)
+    return out
+
+
+def my_earmark_ids(db, workspace_id: int, user_id: int) -> set:
+    """The caller's own marks. What the ⚑ filter and its count are built from:
+    the filter is never over anybody else's, because a list of what other
+    people find interesting is a different feature with a different question
+    behind it."""
+    return {r[0] for r in db.query(Earmark.record_id)
+                           .filter(Earmark.workspace_id == workspace_id,
+                                   Earmark.user_id == user_id).all()}
+
+
+def set_earmark(db, record, user_id: int, on: bool | None = None,
+                note: str | None = None) -> Earmark | None:
+    """Raise, clear or annotate the caller's dot. Returns the row, or None when
+    it ended up cleared.
+
+    `on=None` means toggle, which is what the one-click dot sends: the button
+    knows what it was drawn as, but the row is the only thing that knows the
+    truth, and two clicks racing should still converge on the same answer.
+    """
+    row = (db.query(Earmark)
+             .filter(Earmark.record_id == record.id, Earmark.user_id == user_id).first())
+    target = (row is None) if on is None else on
+    if not target:
+        if row is not None:
+            db.delete(row)
+        return None
+    if row is None:
+        row = Earmark(workspace_id=record.workspace_id, record_id=record.id, user_id=user_id)
+        db.add(row)
+    if note is not None:
+        note = note.strip()[:EARMARK_NOTE_MAX]
+        row.note = note or None
+    row.updated_at = datetime.utcnow()
+    db.flush()
+    return row
+
+
 # ── Cost tracking (LLM steps) ──────────────────────────────────────────────────
 
 # Pricing per million tokens (input, output) — approximate, update when Anthropic

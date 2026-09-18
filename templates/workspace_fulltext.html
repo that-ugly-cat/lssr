@@ -16,7 +16,7 @@
     rest by hand. Tap <span class="ft-help" style="position:static; vertical-align:middle;">?</span>
     on each for the details. Converted full texts flow to Assessment.
   </p>
-  <div class="ft-counts muted small">
+  <div class="ft-counts muted small" id="ft-counts">
     <span>📄 {{ ft.included }} included</span> ·
     <span>⬇️ {{ ft.to_fetch }} to fetch</span> ·
     <span>📥 {{ ft.fetched }} PDF ready</span> ·
@@ -53,7 +53,7 @@
   </div>
 </div>
 
-<div class="cards-label">
+<div class="cards-label" id="ft-filters">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
     {% for key, lbl, n in status_nav %}
@@ -83,11 +83,11 @@
   <a class="btn btn-small" href="/w/{{ ws.id }}/fulltext?status={{ f.status }}">Clear</a>
 </form>
 
-<table class="table">
+<table class="table" id="ft-table">
   <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Full text</th></tr></thead>
   <tbody>
     {% for r in records %}
-    <tr>
+    <tr data-rid="{{ r.id }}">
       <td class="nowrap">{{ r.year or '—' }}</td>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
@@ -117,6 +117,13 @@
     {% endfor %}
   </tbody>
 </table>
+
+{#- Outside the redrawn regions: see the note on the screening page. -#}
+<div id="toast-host">
+  <div class="toast hidden" id="toast" role="status" aria-live="polite">
+    <span class="toasttext"></span>
+  </div>
+</div>
 
 <div class="overlay" id="help-fetch">
   <div class="modal">
@@ -164,9 +171,26 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/poller.js?v=2"></script>
+<script src="/static/js/poller.js?v=3"></script>
+<script src="/static/js/inplace.js?v=2"></script>
 <script>
 poller('ft-fetch-form', 'ft-fetch-status', 'ft-fetch-btn', '/w/{{ ws.id }}/fulltext/fetch/status', 'ft-fetch-prog', 'ft-fetch-fill');
 poller('ft-conv-form', 'ft-conv-status', 'ft-conv-btn', '/w/{{ ws.id }}/fulltext/convert/status', 'ft-conv-prog', 'ft-conv-fill');
+
+// A hand-uploaded full text lands in place. Both run forms are redrawn because
+// an upload is one fewer to fetch and, once converted, one fewer to convert —
+// and the counts above them are the same numbers.
+inplace({
+  regions: ['ft-counts', 'ft-fetch-form', 'ft-conv-form', 'ft-filters', 'ft-table'],
+  jobs: [['ft-fetch-status', 'ft-fetch-btn'], ['ft-conv-status', 'ft-conv-btn']],
+  roots: ['ft-table'],
+  match: (action) => (action.endsWith('/fulltext/upload') ? 'upload' : null),
+  // A markdown, text or Word file is already the full text and lands
+  // converted; a PDF is only stored, and needs the convert pass to become
+  // readable — which is a second step, so it gets said rather than assumed.
+  message: (kind, form, data) => (data.status === 'converted'
+    ? 'Full text uploaded and converted'
+    : 'PDF uploaded — run “2 · Convert” to turn it into text'),
+});
 </script>
 {% endblock %}

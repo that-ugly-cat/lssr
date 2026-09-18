@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_earmark.html" as em %}
 {% block title %}Assessment — {{ ws.name }}{% endblock %}
 {% block body %}
 {% include "_ws_tabs.html" %}
@@ -63,13 +64,15 @@
   <a class="th-sort" href="?decision={{ f.decision }}&q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f.rtype }}&yf={{ f.yf }}&yt={{ f.yt }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
 {%- endmacro %}
 
-<div class="cards-label">
+<div class="cards-label" id="as-filters">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
     · <a href="/w/{{ ws.id }}/assessment?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict','empty','modelonly'] else 'muted' }}">all ({{ counts.total }})</a>
     {% for d in ['pending','include','maybe','exclude','conflict'] %}
     · <a href="/w/{{ ws.id }}/assessment?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }} ({{ counts[d] }})</a>
     {% endfor %}
+    · <a href="/w/{{ ws.id }}/assessment?decision=earmarked" class="{{ '' if decision=='earmarked' else 'muted' }}"
+         title="Records you have earmarked — the same marks as on Screening, because they hang off the record and not off a stage">⚑ earmarked ({{ mine_marked|length }})</a>
     · <a href="/w/{{ ws.id }}/assessment?decision=modelonly" class="{{ '' if decision=='modelonly' else 'muted' }}"
          title="Drafted by the model on full text and confirmed by nobody — the draft also pre-fills the extraction, so these are the ones to check">🤖 model only ({{ drafted }})</a>
     · <a href="/w/{{ ws.id }}/assessment?decision=empty" class="{{ '' if decision=='empty' else 'muted' }}"
@@ -98,15 +101,21 @@
   <a class="btn btn-small" href="/w/{{ ws.id }}/assessment?decision={{ f.decision }}">Clear</a>
 </form>
 
-<table class="table">
+<table class="table" id="as-table">
   <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Full text</th><th>Screen 2</th><th class="ta-right">Review</th></tr></thead>
   <tbody>
     {% for r in records %}
-    <tr>
+    <tr data-rid="{{ r.id }}">
       <td class="nowrap">{{ r.year or '—' }}</td>
+      {#- `| first` yields Undefined on an empty list, not None, and the macro
+          then blows up reading .note off it. Spelled out instead. -#}
+      {% set my_marks = earmarks.get(r.id, []) | selectattr('user_id','equalto', user.id) | list %}
+      {% set my_mark = my_marks[0] if my_marks else none %}
       <td>
+        {{ em.mine(ws, r, my_mark) }}
         <strong>{{ r.title or '(untitled)' }}</strong>
         <div class="muted small">{{ r.authors or '' }}</div>
+        {{ em.note(ws, r, my_mark) }}
       </td>
       <td class="nowrap small">
         {% if r.full_text_status == 'converted' %}<span class="badge badge-ok">converted</span>
@@ -123,6 +132,7 @@
         {% elif r.screen2_by == 'model' %}<span class="badge badge-muted">model</span>{% endif %}
         {% set humanrows = votes.get(r.id, []) | selectattr('reviewer_kind','equalto','user') | list %}
         {% if humanrows %}<div class="muted small">{{ humanrows|length }}/{{ reviewers_required }} reviewed</div>{% endif %}
+        {{ em.others(r, earmarks, user) }}
         {% if is_owner and r.screen2_decision == 'conflict' %}
         <div style="margin-top:4px; display:flex; gap:4px;">
           <span class="muted small">resolve:</span>
@@ -152,6 +162,15 @@
 </table>
 
 {% include "_step_done.html" %}
+
+{#- Outside every redrawn region on purpose: the redraw that follows a saved
+    review replaces those, and a toast living inside one would be swept away by
+    the very action it is reporting. -#}
+<div id="toast-host">
+  <div class="toast hidden" id="toast" role="status" aria-live="polite">
+    <span class="toasttext"></span>
+  </div>
+</div>
 
 <div class="overlay" id="review-modal">
   <div class="modal modal-xl">
@@ -189,7 +208,8 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/poller.js?v=2"></script>
+<script src="/static/js/poller.js?v=3"></script>
+<script src="/static/js/inplace.js?v=2"></script>
 <script>
 function applyConditionals(root) {
   const fieldVal = (key) => {
@@ -245,5 +265,76 @@ document.querySelectorAll('.overlay-top').forEach(o =>
   o.addEventListener('click', (e) => { if (e.target === o) o.classList.remove('open'); }));
 
 poller('as-form', 'as-status', 'as-btn', '/w/{{ ws.id }}/assessment/status', 'as-prog', 'as-fill');
+
+// ── the earmark ──
+//
+// The dot paints before the round trip: a marker meant to be used carelessly
+// cannot make you wait to see that it worked. The redraw that follows keeps
+// the ⚑ count on the filter tabs honest, and the server's answer is what the
+// row ends up drawn from.
+//
+// The note posts on Enter or on leaving the field — `change` fires on blur
+// only when the value actually differs, so clicking away without typing
+// costs nothing.
+function wireEarmarks(rootId) {
+  const root = document.getElementById(rootId);
+  if (!root) return;
+  root.addEventListener('click', (e) => {
+    const btn = e.target.closest('.earmark-form .earmark');
+    if (!btn) return;
+    const on = btn.classList.toggle('on');
+    // The note field lives beside the dot and is shown with it. Clearing the
+    // dot deletes the row server-side, so the text goes too — leaving it in a
+    // hidden input would put it back on screen next time, unsaved.
+    const scope = btn.closest('td, .review-head');
+    const note = scope && scope.querySelector('.earmark-note');
+    if (note) {
+      note.hidden = !on;
+      if (!on) note.querySelector('input[name="note"]').value = '';
+    }
+  });
+  root.addEventListener('change', (e) => {
+    const input = e.target;
+    if (input.matches('.earmark-note input[name="note"]')) input.form.requestSubmit();
+  });
+}
+
+
+// Saving a review and adjudicating redraw in place. This page had the most to
+// gain: the save redirected to /assessment with no query string at all, so a
+// reviewer working through a filtered pile was returned to the top of the
+// unfiltered one, every time. #as-form is redrawn because a saved review is a
+// draft confirmed, which is one fewer for the model to draft.
+const live = inplace({
+  regions: ['as-form', 'as-filters', 'as-table'],
+  jobs: [['as-status', 'as-btn']],
+  roots: ['as-table', 'review-body'],
+  match: (action) => (action.endsWith('/screen2/adjudicate') ? 'adjudicate'
+                    : action.endsWith('/earmark') ? 'earmark'
+                    : action.endsWith('/review') ? 'review' : null),
+  message: (kind, form, data) => {
+    if (kind === 'earmark') {
+      return form.classList.contains('earmark-note')
+        ? (data.note ? 'Note saved' : 'Note cleared') : null;
+    }
+    if (kind === 'adjudicate') {
+      const d = new FormData(form).get('decision');
+      return d === 'clear' ? 'Ruling withdrawn' : `Resolved: ${d}`;
+    }
+    const bits = [];
+    if (data.fields) bits.push(`${data.fields} field${data.fields === 1 ? '' : 's'}`);
+    if (data.final) bits.push('set as final');
+    const tail = bits.length ? ` · ${bits.join(', ')}` : '';
+    // A review is allowed to be an extraction and no decision, and saying
+    // "saved: " with nothing after it would read as a decision that was lost.
+    if (!data.vote) return `Review saved${tail || ' — no decision recorded'}`;
+    return inplace.voteMessage(data.vote, data, 'Review saved') + tail;
+  },
+  onDone: (kind) => { if (kind === 'review') closeReview(); },
+});
+wireEarmarks('as-table');
+// The modal is rebuilt from the server on every open, so its dot and its note
+// are wired to the container that survives that, not to the fragment.
+wireEarmarks('review-body');
 </script>
 {% endblock %}

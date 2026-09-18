@@ -37,6 +37,7 @@ from models import (
     Import, PublicShare, RawReference, Record, SessionLocal, User, Workspace, WorkspaceMember,
     can_access,
     current_iteration, db_label, db_search_url, get_db, get_query, init_db,
+    earmarks_by_record, my_earmark_ids, set_earmark,
     human_voted_subq, new_share_token, recompact_criteria, screen2_required,
     shadow_agreement, set_step_done,
     set_workspace_targets,
@@ -1046,7 +1047,7 @@ def _parse_year(year: str):
 
 
 @app.post("/w/{ws_id}/records/add")
-async def add_record(ws_id: int, title: str = Form(...), authors: str = Form(""),
+async def add_record(ws_id: int, request: Request, title: str = Form(...), authors: str = Form(""),
                      year: str = Form(""), doi: str = Form(""), url: str = Form(""),
                      abstract: str = Form(""), source: str = Form(""), type: str = Form("article"),
                      note: str = Form(""),
@@ -1080,11 +1081,13 @@ async def add_record(ws_id: int, title: str = Form(...), authors: str = Form("")
                         database="manual", via_other_methods=True,
                         canonical_key=rec.canonical_key, raw_json=json.dumps(ref)))
     db.commit()
+    if _from_script(request):
+        return JSONResponse({"id": rec.id, "title": rec.title})
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 
 @app.post("/w/{ws_id}/records/{rid}/edit")
-async def edit_record(ws_id: int, rid: int, title: str = Form(...), authors: str = Form(""),
+async def edit_record(ws_id: int, rid: int, request: Request, title: str = Form(...), authors: str = Form(""),
                       year: str = Form(""), doi: str = Form(""), url: str = Form(""),
                       abstract: str = Form(""), source: str = Form(""), type: str = Form("article"),
                       user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1105,42 +1108,70 @@ async def edit_record(ws_id: int, rid: int, title: str = Form(...), authors: str
     rec.abstract = abstract.strip() or None
     rec.canonical_key = canonical_key({"doi": rec.doi, "title": rec.title, "year": rec.year}) or None
     db.commit()
+    if _from_script(request):
+        return JSONResponse({"id": rec.id, "title": rec.title})
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 
-def _delete_records(db, ws, recs):
-    """Hard-delete records and their orphaned screen/extraction rows."""
+def _delete_records(db, ws, recs) -> str | None:
+    """Hard-delete records and their orphaned screen/extraction rows.
+
+    Returns an undo token: the rows are written out before they go, so the ten
+    seconds after a mis-click are recoverable without making the deletion itself
+    any softer. See undo.py for why the restore keeps the original ids.
+    """
     rids = [r.id for r in recs]
     if not rids:
-        return
-    from models import Extraction, ScreenDecision
+        return None
+    import undo
+    token = undo.stash(ws.id, undo.snapshot(db, ws.id, recs))
+    from models import Earmark, Extraction, ScreenDecision
     db.query(ScreenDecision).filter(ScreenDecision.record_id.in_(rids)).delete(synchronize_session=False)
     db.query(Extraction).filter(Extraction.record_id.in_(rids)).delete(synchronize_session=False)
+    db.query(Earmark).filter(Earmark.record_id.in_(rids)).delete(synchronize_session=False)
     for r in recs:
         db.delete(r)     # raw_refs cascade via the relationship
     db.commit()
+    return token
 
 
 @app.post("/w/{ws_id}/records/{rid}/remove")
-async def remove_record(ws_id: int, rid: int,
+async def remove_record(ws_id: int, rid: int, request: Request,
                         user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Hard delete — at the records stage a removal leaves no trace (removals are
     tracked from screening onward, as exclude decisions)."""
     ws = _load_ws(db, user, ws_id)
     rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
-    if rec:
-        _delete_records(db, ws, [rec])
+    token = _delete_records(db, ws, [rec]) if rec else None
+    if _from_script(request):
+        return JSONResponse({"deleted": 1 if rec else 0, "undo": token})
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 
 @app.post("/w/{ws_id}/records/remove-batch")
-async def remove_records_batch(ws_id: int, ids: str = Form(...),
+async def remove_records_batch(ws_id: int, request: Request, ids: str = Form(...),
                                user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
     recs = (db.query(Record).filter(Record.id.in_(id_list), Record.workspace_id == ws.id).all()
             if id_list else [])
-    _delete_records(db, ws, recs)
+    token = _delete_records(db, ws, recs)
+    if _from_script(request):
+        return JSONResponse({"deleted": len(recs), "undo": token})
+    return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
+
+
+@app.post("/w/{ws_id}/records/undo-delete")
+async def undo_delete(ws_id: int, request: Request, token: str = Form(...),
+                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Put back what the last delete took. Unknown tokens are not an error: an
+    undo clicked twice, or after the snapshot expired, has simply nothing to do
+    and must not look like a failure."""
+    ws = _load_ws(db, user, ws_id)
+    import undo
+    result = undo.restore(db, ws.id, token)
+    if _from_script(request):
+        return JSONResponse(result or {"records": 0, "renumbered": 0})
     return RedirectResponse(f"/w/{ws_id}/records", status_code=302)
 
 
@@ -1470,6 +1501,8 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
                              Record.is_removed == False,          # noqa: E712
                              Record.id.in_(divergent_sub)).count())
 
+    mine_marked = my_earmark_ids(db, ws.id, user.id)
+
     tq = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False)  # noqa: E712
     if decision in ("pending", "include", "exclude", "maybe", "conflict"):
         tq = tq.filter(Record.screen1_decision == decision)
@@ -1483,6 +1516,11 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         # 'model' while a lone human vote sits below reviewers_required, so the
         # filter used to return records reviewers had already worked through.
         tq = tq.filter(Record.screen1_decision != "pending", ~Record.id.in_(_human))
+    elif decision == "earmarked":
+        # Mine, never everybody's: a list of what other people find interesting
+        # is a different question, and at screening 1 it would also be an
+        # aggregate over attention the blind rule keeps out of sight.
+        tq = tq.filter(Record.id.in_(mine_marked or {-1}))
     elif decision == "shadow_disagrees":
         # the dry run's whole point: walk the records where the model, run again
         # under the criteria as they stand, would not have voted as a reviewer did.
@@ -1503,12 +1541,29 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         if v.reviewer_kind == "shadow" and not ws.dry_run_enabled:
             continue
         votes.setdefault(v.record_id, []).append(v)
+    # One order for the voices on a row, so the column reads the same way on
+    # every record: whoever closed it, then the model, then the people, and last
+    # the dry run — a voice that decides nothing belongs at the bottom.
+    _voice_rank = {"adjudicator": 0, "model": 1, "user": 2, "shadow": 3}
+    for _vs in votes.values():
+        _vs.sort(key=lambda v: (_voice_rank.get(v.reviewer_kind, 2),
+                                (v.reviewer.name if v.reviewer else "") or ""))
     # records the current reviewer has already voted on → their votes are revealed
     my_voted = {v.record_id for v in all_votes
                 if v.reviewer_kind == "user" and v.reviewer_id == user.id}
     # same definition as divergent_sub, for the marker on the rows on screen
     divergent_ids = {rid for rid, vs in votes.items()
                      if len({v.decision for v in vs}) > 1}
+    # The blind rule for the votes on a row, in one place. The template used to
+    # carry two that disagreed: the compact vote strip under the decision was
+    # revealed to the owner on every record, while the named list beside the
+    # buttons was revealed to them only on conflicts — the same data, two rules.
+    # This is the one the page's own help text states: after you have voted, or
+    # once an adjudicator has closed the record.
+    revealed = {r.id for r in records
+                if is_owner or r.id in my_voted or r.screen1_by == "adjudicator"}
+
+    earmarks = earmarks_by_record(db, ws.id, rec_ids)
 
     # cost estimate for the screening buttons
     import screening
@@ -1539,8 +1594,9 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         "est_pending": est_pending, "est_rerun": est_rerun, "est_shadow": est_shadow,
         "shadow_matrix": shadow_matrix, "shadow": shadow_stats,
         "records": records, "decision": decision,
-        "votes": votes, "my_voted": my_voted,
+        "votes": votes, "revealed": revealed,
         "divergent_n": divergent_n, "divergent_ids": divergent_ids,
+        "earmarks": earmarks, "mine_marked": mine_marked,
         "reviewers_required": ws.screen1_reviewers_required or 1,
         "is_owner": is_owner,
         "dbs_present": _dbs_present(db, ws.id),
@@ -1610,8 +1666,20 @@ async def export_records(ws_id: int, user: User = Depends(get_current_user),
     return _xlsx_response(records_xlsx(db, ws), ws, "records")
 
 
+def _from_script(request: Request) -> bool:
+    """Is the page asking for this itself, rather than a browser navigating?
+
+    The screening table votes by fetch and redraws in place, so it wants the
+    record's resolved state back, not a redirect it would have to follow and
+    then throw away. Without the header — no JavaScript, or a form posted the
+    old way — nothing changes: the route redirects as it always did.
+    """
+    return request.headers.get("x-requested-with") == "fetch"
+
+
 @app.post("/w/{ws_id}/records/{rid}/screen1/vote")
-async def vote_screen1(ws_id: int, rid: int, decision: str = Form(...), reason: str = Form(""),
+async def vote_screen1(ws_id: int, rid: int, request: Request,
+                       decision: str = Form(...), reason: str = Form(""),
                        back: str = Form("pending"),
                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """The current reviewer's independent screen-1 vote. 'clear' retracts it."""
@@ -1634,11 +1702,45 @@ async def vote_screen1(ws_id: int, rid: int, decision: str = Form(...), reason: 
                                    reason.strip() or "manual vote")
         recompute_record_screen1(db, ws, rec)
         db.commit()
+    if _from_script(request):
+        # What the vote *did*, which is not what was clicked: below the required
+        # number of reviewers the record still stands on the model's decision,
+        # and two reviewers who differ make a conflict nobody voted for.
+        return JSONResponse({"vote": decision,
+                             "decision": rec.screen1_decision if rec else None,
+                             "by": rec.screen1_by if rec else None})
     return RedirectResponse(f"/w/{ws_id}/screening?decision={back}", status_code=302)
 
 
+@app.post("/w/{ws_id}/records/{rid}/earmark")
+async def earmark(ws_id: int, rid: int, request: Request,
+                  on: str = Form(""), note: str | None = Form(None),
+                  user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Raise, clear or annotate the caller's dot on a record.
+
+    Any member, because a mark is not a permission and needs only the access
+    the workspace already grants — and only ever the caller's own row: marking
+    a record *for somebody else* is a different feature with a different
+    question behind it, so it is not half-built here.
+
+    `on` empty means toggle, which is what the dot sends. Nothing is logged and
+    no decision is recomputed: this must not be able to move a record.
+    """
+    ws = _load_ws(db, user, ws_id)
+    rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
+    if not rec:
+        raise HTTPException(404, "Record not found")
+    want = None if on == "" else (on not in ("0", "false", ""))
+    row = set_earmark(db, rec, user.id, want, note)
+    db.commit()
+    if _from_script(request):
+        return JSONResponse({"on": row is not None, "note": row.note if row else None})
+    return RedirectResponse(request.headers.get("referer") or f"/w/{ws_id}/screening",
+                            status_code=302)
+
+
 @app.post("/w/{ws_id}/records/{rid}/screen1/adjudicate")
-async def adjudicate_screen1(ws_id: int, rid: int, decision: str = Form(...),
+async def adjudicate_screen1(ws_id: int, rid: int, request: Request, decision: str = Form(...),
                              user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Owner/admin resolves a conflicted record. 'clear' removes the ruling."""
     ws = _load_ws(db, user, ws_id)
@@ -1661,6 +1763,10 @@ async def adjudicate_screen1(ws_id: int, rid: int, decision: str = Form(...),
                                    "adjudication")
         recompute_record_screen1(db, ws, rec)
         db.commit()
+    if _from_script(request):
+        return JSONResponse({"vote": decision,
+                             "decision": rec.screen1_decision if rec else None,
+                             "by": rec.screen1_by if rec else None})
     return RedirectResponse(f"/w/{ws_id}/screening?decision=conflict", status_code=302)
 
 
@@ -1762,7 +1868,7 @@ async def record_pdf(ws_id: int, rid: int, user: User = Depends(get_current_user
 
 
 @app.post("/w/{ws_id}/records/{rid}/fulltext/upload")
-async def upload_fulltext(ws_id: int, rid: int, file: UploadFile = File(...),
+async def upload_fulltext(ws_id: int, rid: int, request: Request, file: UploadFile = File(...),
                           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
@@ -1774,6 +1880,12 @@ async def upload_fulltext(ws_id: int, rid: int, file: UploadFile = File(...),
         fulltext.ingest_upload(db, ws.id, rec, file.filename or "", data)
     except Exception as exc:
         raise HTTPException(400, f"Could not read file: {exc}")
+    if _from_script(request):
+        # Only the status. There is deliberately no warning to pass on: an
+        # upload clears the record's note, because the reviewer chose this file,
+        # and a PDF whose text turns out to belong to another paper is flagged
+        # later, by the convert pass, not here.
+        return JSONResponse({"status": rec.full_text_status})
     return RedirectResponse(f"/w/{ws_id}/fulltext", status_code=302)
 
 
@@ -1809,6 +1921,8 @@ async def assessment_page(ws_id: int, request: Request, decision: str = "all",
                  if r.screen2_decision == "include" and r.id not in extracted}
     counts["empty"] = len(empty_ids)
 
+    mine_marked = my_earmark_ids(db, ws.id, user.id)
+
     # the visible table: apply the screen-2 decision filter + shared filters
     tq = base
     if decision in ("pending", "include", "exclude", "maybe", "conflict"):
@@ -1820,6 +1934,8 @@ async def assessment_page(ws_id: int, request: Request, decision: str = "all",
         # same idea as on screening 1, and it matters more here, since the draft
         # also pre-fills the extraction the reviewer will be looking at.
         tq = tq.filter(Record.screen2_by == "model")
+    elif decision == "earmarked":
+        tq = tq.filter(Record.id.in_(mine_marked or {-1}))
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
     records = tq.limit(500).all()
 
@@ -1832,6 +1948,8 @@ async def assessment_page(ws_id: int, request: Request, decision: str = "all",
         votes.setdefault(v.record_id, []).append(v)
         if v.reviewer_kind == "user" and v.reviewer_id == user.id:
             my_reviewed.add(v.record_id)
+
+    earmarks = earmarks_by_record(db, ws.id, rec_ids)
 
     n_fields = len(workspace_extraction_fields(db, ws))
     n_converted = sum(1 for r in all_recs if r.full_text_status == "converted")
@@ -1858,6 +1976,7 @@ async def assessment_page(ws_id: int, request: Request, decision: str = "all",
     return render(request, "workspace_assessment.html", {
         "user": user, "ws": ws, "tab": "assessment", "steps_done": workspace_steps_done(ws),
         "records": records, "votes": votes, "my_reviewed": my_reviewed,
+        "earmarks": earmarks, "mine_marked": mine_marked,
         "counts": counts, "decision": decision, "dbs_present": _dbs_present(db, ws.id),
         "filters": {"decision": decision, "q": q, "source": source, "rtype": rtype,
                     "yf": yf, "yt": yt, "sort": sort, "order": order},
@@ -1964,8 +2083,10 @@ async def review_fragment(ws_id: int, rid: int, request: Request,
                 other_extractions.append({"who": who, "pairs": pairs,
                                           "when": row.updated_at})
 
+    marks = earmarks_by_record(db, ws.id, [rec.id]).get(rec.id, [])
     return render(request, "_review_form.html", {
         "user": user, "ws": ws, "rec": rec, "fields": fields,
+        "marks": marks, "my_mark": next((m for m in marks if m.user_id == user.id), None),
         "inclusion": workspace_criteria(db, ws, "inclusion"),
         "values": values, "my_vote": my_vote, "other_votes": other_votes,
         "from_draft": from_draft, "model_vote": next(
@@ -2019,11 +2140,22 @@ async def save_review(ws_id: int, rid: int, request: Request,
                                (form.get("screen2_reason") or "").strip() or "full-text review")
         recompute_record_screen2(db, ws, rec)
     db.commit()
+    if _from_script(request):
+        # What was saved, so the toast can tell a review that only extracted
+        # from one that also decided — and, when it decided, where that left the
+        # record, which below quorum is not where the vote pointed.
+        return JSONResponse({"vote": decision or None,
+                             "decision": rec.screen2_decision,
+                             "by": rec.screen2_by,
+                             "fields": len(values),
+                             "final": bool(form.get("set_final"))})
+    # Without the query string, so the plain path lands on the default filter —
+    # which is the reason the redraw above exists.
     return RedirectResponse(f"/w/{ws_id}/assessment", status_code=302)
 
 
 @app.post("/w/{ws_id}/records/{rid}/screen2/adjudicate")
-async def adjudicate_screen2(ws_id: int, rid: int, decision: str = Form(...),
+async def adjudicate_screen2(ws_id: int, rid: int, request: Request, decision: str = Form(...),
                              user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     if not (ws.owner_id == user.id or user.is_admin):
@@ -2045,6 +2177,10 @@ async def adjudicate_screen2(ws_id: int, rid: int, decision: str = Form(...),
                                    "adjudication")
         recompute_record_screen2(db, ws, rec)
         db.commit()
+    if _from_script(request):
+        return JSONResponse({"vote": decision,
+                             "decision": rec.screen2_decision if rec else None,
+                             "by": rec.screen2_by if rec else None})
     return RedirectResponse(f"/w/{ws_id}/assessment", status_code=302)
 
 

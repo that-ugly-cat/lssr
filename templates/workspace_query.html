@@ -132,7 +132,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/poller.js?v=2"></script>
+<script src="/static/js/poller.js?v=3"></script>
 <script>
 {% if primary_db in harvest_dbs and primary and primary.query_string %}
 poller('run-form-{{ primary_db }}', 'run-status-{{ primary_db }}', 'run-btn-{{ primary_db }}', '/w/{{ ws.id }}/harvest/{{ primary_db }}/status', 'run-prog-{{ primary_db }}', 'run-fill-{{ primary_db }}');

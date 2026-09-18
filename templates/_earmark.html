@@ -1,0 +1,53 @@
+{#- The earmark: a dot on a record, one per reviewer, with an optional why.
+
+    Two macros, because the mark has two halves that belong in two different
+    columns. `dot()` is yours — it goes at the head of the title, where the eye
+    lands when scanning a long list, because the mark is a property of the
+    paper and not of a decision. `others()` is everybody else's, and it goes in
+    the column that already collects what everyone thinks of this record.
+
+    Everybody's marks are visible to everybody: the margin of a shared copy,
+    not a diary. What that costs at screening 1 is written in models.py on the
+    Earmark class and said plainly in the guide — the votes stay blind, an
+    argued note does not, and a reviewer who writes a decision in here has
+    gone around their own blinding.
+-#}
+
+{#- Your dot, and your note when it is raised. `my_mark` is your own row or
+    None; keeping the lookup outside the macro means the caller does it once
+    per row instead of the macro filtering a list twice. -#}
+{% macro mine(ws, r, my_mark) %}
+<form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/earmark" class="earmark-form">
+  <button type="submit" class="earmark{{ ' on' if my_mark else '' }}"
+          aria-pressed="{{ 'true' if my_mark else 'false' }}"
+          title="{{ 'Remove your earmark' if my_mark else 'Earmark this record — everyone in the review can see it' }}">⚑</button>
+</form>
+{% endmacro %}
+
+{#- Always rendered, hidden until the dot is up. Not `{% if my_mark %}`: in the
+    review modal nothing is redrawn when the dot is clicked, so a field that
+    only exists server-side would not appear until the record was reopened —
+    and a note you have to reopen something to write is a note nobody writes. -#}
+{% macro note(ws, r, my_mark) %}
+<form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/earmark" class="earmark-note"
+      {{ '' if my_mark else 'hidden' }}>
+  <input type="hidden" name="on" value="1">
+  {#- Saved on Enter, or on leaving the field — and `change` fires on blur only
+      when the value actually differs, so simply clicking away posts nothing. -#}
+  <input type="text" name="note" value="{{ my_mark.note or '' }}" maxlength="280"
+         placeholder="why, if it helps — everyone sees this">
+</form>
+{% endmacro %}
+
+{#- Everyone else's, under the voices. Never your own: yours is where you can
+    write it, and printing it twice would read as two people. -#}
+{% macro others(r, marks, user) %}
+{% set theirs = marks.get(r.id, []) | rejectattr('user_id', 'equalto', user.id) | list %}
+{% if theirs %}
+<div class="earmark-others">
+  {%- for m in theirs %}
+  <div><span class="earmark on">⚑</span> {{ m.user.name if m.user else 'a reviewer' }}{% if m.note %} — <em>{{ m.note }}</em>{% endif %}</div>
+  {%- endfor %}
+</div>
+{% endif %}
+{% endmacro %}
