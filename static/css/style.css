@@ -669,3 +669,15 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
 .earmark-others { margin-top: 4px; font-size: 12px; color: var(--muted-2); }
 .earmark-others em { color: var(--muted); }
 .earmark-others .earmark { cursor: default; padding: 0 2px 0 0; }
+
+/* ── the record id, visible ── */
+/* The number people quote to each other — in a note, in the wiki, in a
+   message. Tabular figures so the column stays a column, and `user-select:
+   all` so one click takes the whole id and not three of its digits. */
+.recid {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--muted-2);
+  user-select: all;
+}

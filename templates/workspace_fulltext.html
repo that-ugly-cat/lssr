@@ -84,10 +84,11 @@
 </form>
 
 <table class="table" id="ft-table">
-  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Full text</th></tr></thead>
+  <thead><tr><th class="nowrap">{{ sorth('id','#') }}</th><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Full text</th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr data-rid="{{ r.id }}">
+      <td class="recid">{{ r.id }}</td>
       <td class="nowrap">{{ r.year or '—' }}</td>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
@@ -113,7 +114,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="3" class="muted">{% if status != 'all' or f.q or f.source or f.rtype or f.yf or f.yt %}No records match this filter.{% else %}No records included at screening 1 yet.{% endif %}</td></tr>
+    <tr><td colspan="4" class="muted">{% if status != 'all' or f.q or f.source or f.rtype or f.yf or f.yt %}No records match this filter.{% else %}No records included at screening 1 yet.{% endif %}</td></tr>
     {% endfor %}
   </tbody>
 </table>

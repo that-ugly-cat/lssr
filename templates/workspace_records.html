@@ -94,11 +94,12 @@
 
 <table class="table" id="rec-table">
   {% set type_lbl = {'article': 'paper', 'book': 'book', 'book_chapter': 'book chapter', 'grey': 'grey lit'} %}
-  <thead><tr><th class="nowrap"><input type="checkbox" id="sel-all" title="Select all"></th><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Type</th><th>Source</th><th>DBs</th><th></th></tr></thead>
+  <thead><tr><th class="nowrap"><input type="checkbox" id="sel-all" title="Select all"></th><th class="nowrap">{{ sorth('id','#') }}</th><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Type</th><th>Source</th><th>DBs</th><th></th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr data-rid="{{ r.id }}">
       <td class="nowrap"><input type="checkbox" class="rec-sel" value="{{ r.id }}"></td>
+      <td class="recid">{{ r.id }}</td>
       <td class="nowrap">{{ r.year or '—' }}</td>
       <td>
         <strong>{{ r.title or '(untitled)' }}</strong>
@@ -125,7 +126,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="7" class="muted">No records match. Adjust the filter, or run a PubMed search / import a file.</td></tr>
+    <tr><td colspan="8" class="muted">No records match. Adjust the filter, or run a PubMed search / import a file.</td></tr>
     {% endfor %}
   </tbody>
 </table>
