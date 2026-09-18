@@ -102,10 +102,11 @@
 </form>
 
 <table class="table" id="as-table">
-  <thead><tr><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Full text</th><th>Screen 2</th><th class="ta-right">Review</th></tr></thead>
+  <thead><tr><th class="nowrap">{{ sorth('id','#') }}</th><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Full text</th><th>Screen 2</th><th class="ta-right">Review</th></tr></thead>
   <tbody>
     {% for r in records %}
     <tr data-rid="{{ r.id }}">
+      <td class="recid">{{ r.id }}</td>
       <td class="nowrap">{{ r.year or '—' }}</td>
       {#- `| first` yields Undefined on an empty list, not None, and the macro
           then blows up reading .note off it. Spelled out instead. -#}
@@ -156,7 +157,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="5" class="muted">No records match this filter.</td></tr>
+    <tr><td colspan="6" class="muted">No records match this filter.</td></tr>
     {% endfor %}
   </tbody>
 </table>
