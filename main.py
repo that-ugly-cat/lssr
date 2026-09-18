@@ -1340,7 +1340,20 @@ async def set_screening_config(ws_id: int, reviewers_required: int = Form(...),
     ws = _load_ws(db, user, ws_id)
     if not (ws.owner_id == user.id or user.is_admin):
         raise HTTPException(403, "Owner required")
+    # Same rule as stage 2 below, and it was missing here: the cached decision
+    # on every record was resolved against the OLD number, so changing it
+    # without re-resolving leaves the setting saying one thing and the whole
+    # table, the counts, the PRISMA and the export saying another. It is the
+    # asymmetry that matters most in exactly the case people change this for —
+    # a review configured for two reviewers that has been screened by one,
+    # where every decision is still standing on the model's fallback.
+    before1 = ws.screen1_reviewers_required
     ws.screen1_reviewers_required = max(1, min(10, reviewers_required))
+    if ws.screen1_reviewers_required != before1:
+        from models import recompute_record_screen1
+        for rec in db.query(Record).filter(Record.workspace_id == ws.id,
+                                           Record.is_removed == False).all():  # noqa: E712
+            recompute_record_screen1(db, ws, rec)
     # an unchecked checkbox sends nothing, so absence is the off signal
     ws.dry_run_enabled = bool(dry_run_enabled)
     # empty means "same as screening 1", the behaviour before the two stages
