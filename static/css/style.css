@@ -714,3 +714,15 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
 .last-touch:hover { border-color: var(--accent-light); }
 /* Shown but inert when that record is not in the filter being looked at. */
 .last-touch.muted { color: var(--muted-3); cursor: default; }
+
+/* ── the reason behind a screening-1 vote ── */
+/* Hidden until Alt+click: the three buttons are meant to be pressed at a
+   glance, and a text box open on every row would argue otherwise. */
+.vote-reason { margin-top: 6px; text-align: left; }
+.vote-reason textarea {
+  width: 100%; font-size: 12px; padding: 4px 7px; line-height: 1.45;
+  background: var(--bg); border: 1px solid var(--warn); border-radius: 6px;
+  color: var(--text); font-family: inherit; resize: none;
+}
+.vote-reason textarea:focus { outline: none; }
+.vote-reason-actions { display: flex; gap: 4px; justify-content: flex-end; margin-top: 4px; }

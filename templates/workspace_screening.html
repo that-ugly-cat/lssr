@@ -149,7 +149,9 @@
   </span>
   <a class="btn btn-small" href="/w/{{ ws.id }}/screening/export.xlsx" style="float:right;">Export to Excel ↓</a>
 </div>
-<p class="muted small" style="margin-top:0;">✅ include · 🤔 maybe · ❌ exclude · ⚠️ conflict · ❓ pending — cast your own vote on the right. <strong>maybe</strong> parks a record: it doesn't go to full text until someone moves it to include/exclude. Screening is blind: you see the other reviewers' votes only after you've voted, or once an adjudicator has closed the record. Conflicts are resolved by the owner. <strong>≠ divergent</strong> lists every record where at least one voice differs from another, the model's included — <strong>conflict</strong> only ever means two humans disagreeing, so a record the model reads differently, or parks as <em>maybe</em>, never appears there.</p>
+<p class="muted small" style="margin-top:0;">✅ include · 🤔 maybe · ❌ exclude · ⚠️ conflict · ❓ pending — cast your own vote on the right. <strong>maybe</strong> parks a record: it doesn't go to full text until someone moves it to include/exclude. Screening is blind: you see the other reviewers' votes only after you've voted, or once an adjudicator has closed the record. Conflicts are resolved by the owner.</p>
+<p class="muted small" style="margin-top:0;"><strong>Alt+click a vote button to say why.</strong> A plain click votes and leaves any reason you wrote before untouched; Alt+click opens a box first, and the vote is cast when you save it — Enter saves, Shift+Enter breaks the line, Esc closes without voting. Worth doing on the records where the decision is not obvious from the abstract: the reason travels into the conflict, into the export and into whatever the next reader makes of it.</p>
+<p class="muted small" style="margin-top:0;"> <strong>≠ divergent</strong> lists every record where at least one voice differs from another, the model's included — <strong>conflict</strong> only ever means two humans disagreeing, so a record the model reads differently, or parks as <em>maybe</em>, never appears there.</p>
 
 <form method="get" class="filter-bar">
   <input type="hidden" name="decision" value="{{ f.decision }}">
@@ -252,6 +254,18 @@
           </form>
           {% endif %}
         </div>
+        {#- Hidden until Alt+click. Pre-filled with your own reason when you
+            have one, minus the placeholder the route writes for a vote cast
+            without an argument — showing "manual vote" back to somebody as if
+            they had typed it would be a small lie. -#}
+        {% set myreason = myrows[0].reason if myrows and myrows[0].reason != 'manual vote' else '' %}
+        <div class="vote-reason" hidden>
+          <textarea rows="2" maxlength="600" placeholder="why — which criterion, and what makes this one different">{{ myreason }}</textarea>
+          <div class="vote-reason-actions">
+            <button type="button" class="btn btn-small vote-reason-cancel">Cancel</button>
+            <button type="button" class="btn btn-small btn-primary vote-reason-save">Vote</button>
+          </div>
+        </div>
         {% if is_owner and r.screen1_decision == 'conflict' %}
         <div style="margin-top:6px; display:flex; gap:4px; justify-content:flex-end; align-items:center;">
           <span class="muted small">resolve:</span>
@@ -289,6 +303,7 @@
 <script src="/static/js/poller.js?v=3"></script>
 <script src="/static/js/inplace.js?v=4"></script>
 <script src="/static/js/earmark.js?v=1"></script>
+<script src="/static/js/votereason.js?v=2"></script>
 <script>
 poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status', 'scr-prog', 'scr-fill');
 
@@ -322,6 +337,7 @@ const live = inplace({
   afterRedraw: () => sizeEarmarkNotes(),
 });
 wireEarmarks('scr-table');
+wireVoteReasons('scr-table');
 
 // Collapsible exclusion-criteria rail; remembers its state.
 const critTab = document.getElementById('crit-tab');

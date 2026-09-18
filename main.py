@@ -1693,7 +1693,7 @@ def _from_script(request: Request) -> bool:
 @app.post("/w/{ws_id}/records/{rid}/screen1/vote")
 async def vote_screen1(ws_id: int, rid: int, request: Request,
                        decision: str = Form(...), reason: str = Form(""),
-                       back: str = Form("pending"),
+                       set_reason: str = Form(""), back: str = Form("pending"),
                        user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """The current reviewer's independent screen-1 vote. 'clear' retracts it."""
     ws = _load_ws(db, user, ws_id)
@@ -1711,8 +1711,22 @@ async def vote_screen1(ws_id: int, rid: int, request: Request,
                 db.delete(row)
                 db.flush()
         else:
+            # Changing your mind with a plain click must not wipe an argument
+            # you wrote earlier, so "leave it alone" and "blank it" have to be
+            # different messages — and they cannot be told apart by looking at
+            # `reason`, because an empty form field arrives here as None just
+            # like an absent one. Hence the separate flag: `set_reason` present
+            # means the box was used and `reason` is the new text, empty or
+            # not. Measured, not assumed: reason= and no reason at all were
+            # indistinguishable at the route.
+            mine = (db.query(ScreenDecision)
+                      .filter(ScreenDecision.record_id == rec.id,
+                              ScreenDecision.stage == "screen1",
+                              ScreenDecision.reviewer_kind == "user",
+                              ScreenDecision.reviewer_id == user.id).first())
+            text = reason if set_reason else (mine.reason if mine else None)
             upsert_screen_decision(db, rec, "screen1", "user", user.id, decision,
-                                   reason.strip() or "manual vote")
+                                   (text or "").strip() or "manual vote")
         recompute_record_screen1(db, ws, rec)
         db.commit()
     if _from_script(request):
