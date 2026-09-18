@@ -8,9 +8,10 @@ extraction says about study design. Those questions arrive in a conversation,
 and until now the only way to answer them was to open the app, pick a tab and
 count by eye. This is the same corpus, readable from where the questions are.
 
-**One verb writes, and the rest reads.** That verb is vote_screen1, and the
-promise the first version made still holds for everything else: no extraction,
-no adjudication, no step marked done, no review created or deleted. The reason
+**Two verbs write, and the rest reads.** They are vote_screen1 and
+set_earmark, and the promise the first version made still holds for everything
+else: no extraction, no adjudication, no step marked done, no review created or
+deleted. The reason
 writes were refused wholesale was that a screening decision carries a reviewer's
 name and belongs to a person doing the reading, so a surface where a model could
 cast one turns the reviewer into an editor of its own output. That objection was
@@ -23,6 +24,14 @@ which always carries `[via MCP]`, and in the capability: writing belongs to the
 key, not to the person, so a key minted before this existed still cannot vote
 and a leaked reader still cannot corrupt a corpus. Screening 2 is not here,
 because in the app it happens in the same act as the extraction.
+
+The second verb is cheaper and needed less argument. An earmark decides
+nothing: it moves no count, enters no export, and comes off in one click. It is
+here because the notes it holds were already being written — folded into the
+reason text of votes, where an observation about a record ends up filed as a
+reason for a decision it was not. It still needs a writing key, because the
+mark is visible to the whole review and a read-only key that could annotate
+seven hundred records is not read-only in any sense worth the name.
 
 The consequence worth saying out loud: blinding. The web app hides other
 reviewers' votes until you have cast yours; this surface shows them all, which
@@ -85,11 +94,15 @@ mcp = MCPServer(
         "records yourself. search_records is lexical, not semantic — no hit "
         "means those words are not in the title, abstract or authors, never "
         "that the corpus lacks the topic. "
-        "Everything reads except vote_screen1, which casts a title-and-abstract "
-        "vote in the key owner's name: read get_protocol first, because a vote "
-        "not argued from the written criteria is noise in somebody's review, "
-        "and confirm with the user before the first one. Extraction, "
-        "adjudication, screening 2 and marking a step done stay in the web app."
+        "Two verbs write and the rest read. vote_screen1 casts a "
+        "title-and-abstract vote in the key owner's name: read get_protocol "
+        "first, because a vote not argued from the written criteria is noise "
+        "in somebody's review, and confirm with the user before the first one. "
+        "set_earmark writes a note in the margin of a record, which the whole "
+        "team reads and which decides nothing — that is where an observation "
+        "about a record belongs, and a verdict is not one. Both need a key "
+        "minted with writing enabled. Extraction, adjudication, screening 2 "
+        "and marking a step done stay in the web app."
     ),
 )
 
@@ -915,6 +928,77 @@ def get_synthesis(review: str) -> dict:
                 "prisma": compute_prisma(db, ws.id),
                 "blocks": [{"heading": b.heading, "narrative": b.narrative}
                            for b in blocks]}
+    except (LookupError, PermissionError) as e:
+        return _fail(str(e))
+    finally:
+        db.close()
+
+
+@mcp.tool()
+def set_earmark(review: str, record_id: int, note: str = "", on: bool = True) -> dict:
+    """
+    Put the caller's earmark on a record, change its note, or take it off.
+
+    An earmark is the margin of the shared copy: a dot on a record, one per
+    reviewer, with an optional line of why. Everyone in the review sees
+    everyone's; this writes only the caller's own. It **decides nothing** — no
+    screening decision, no PRISMA number, no extracted field, and it appears in
+    no export. That is what makes it the right place for the things a vote's
+    reason keeps being asked to carry: *this is the same study as 3286 under a
+    different DOI*, *the abstract on this record belongs to another paper*,
+    *the results of this protocol are already in the pool as 3257*.
+
+    note: one line, at most 280 characters. Longer is cut rather than refused,
+        and the answer says so. Write what a colleague could not work out on
+        their own; a verdict belongs in the vote, where it is counted and
+        attributed.
+    on: False takes the caller's earmark off the record, note and all.
+
+    **The call describes the end state, not a change to it.** `note` is written
+    exactly as given, so omitting it on a record you have already annotated
+    clears that note rather than leaving it alone. Read the record first if you
+    mean to keep what is there.
+
+    One record per call, like the vote. Not because a wrong note is expensive —
+    it is one click to clear — but because each of these is about *this* paper,
+    and a verb that took a list would mostly be used to write the same sentence
+    on records that did not each earn it.
+
+    Needs a key minted with writing enabled. An earmark cannot corrupt a review,
+    but it is visible to the whole team, and a leaked read-only key that could
+    write on seven hundred records is no longer a read-only key.
+
+    Unlike a vote, the note carries no `[via MCP]` marker. A vote's provenance
+    is part of a decision record somebody will have to defend; a margin note is
+    signed with its author's name, decides nothing, and has 280 characters to
+    say something in.
+    """
+    from models import EARMARK_NOTE_MAX, set_earmark as _set
+    text = (note or "").strip()
+    db = SessionLocal()
+    try:
+        user = auth.require_write()
+        ws = auth.mcp_review(db, review)
+        r = (db.query(Record).filter(Record.id == int(record_id),
+                                     Record.workspace_id == ws.id).first())
+        if r is None:
+            return _fail(f"No record {record_id} in '{ws.name}'")
+        row = _set(db, r, user.id, bool(on), text)
+        db.commit()
+        marks = earmarks_by_record(db, ws.id, [r.id]).get(r.id, [])
+        return {
+            "review": ws.name,
+            "record": r.id,
+            # Echoed so a misread id shows up as the wrong paper rather than as
+            # a note that quietly landed somewhere else.
+            "title": r.title,
+            "earmarked": row is not None,
+            "note": row.note if row else None,
+            "truncated": len(text) > EARMARK_NOTE_MAX,
+            "others": [{"reviewer": (m.user.name if m.user else "a reviewer"),
+                        "note": m.note}
+                       for m in marks if m.user_id != user.id],
+        }
     except (LookupError, PermissionError) as e:
         return _fail(str(e))
     finally:

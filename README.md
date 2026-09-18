@@ -172,21 +172,25 @@ model client (Claude Code, Claude Desktop) at `https://your-host/mcp` with an
 same key in the path for clients that cannot send custom headers. That URL *is*
 the credential: one key per client, revocable on its own.
 
-Thirteen tools, one or two per pipeline step: the reviews you can reach and the
+Fourteen tools, one or two per pipeline step: the reviews you can reach and the
 state of one (configuration, progress, live PRISMA, what the LLM steps have
 cost), its iterations and imports, its queries per database, its criteria and
 extraction schema, a lexical record search carrying the same filters as the UI
 (including `divergent`, `modelonly` and `empty`), one record with every vote and
 every extraction row, the full text in slices, how retrieval went, what is still
 contested, the distribution of any extracted field, and the synthesis. Twelve of
-them read. The thirteenth, `vote_screen1`, casts or retracts one
-title-and-abstract vote.
+them read. The other two write: `vote_screen1` casts or retracts one
+title-and-abstract vote, and `set_earmark` writes the caller's note in the
+margin of one record — a note the whole review reads and that decides nothing.
 
 **Writing is a capability of the key, not of the person.** A key is minted to
-read, and casting votes is a checkbox ticked at that moment and never afterwards:
+read, and writing is a checkbox ticked at that moment and never afterwards:
 a reviewer who votes daily in the browser still cannot vote through a key that
 was not minted for it, and the keys handed out before the verb existed stayed
-readers without anyone revisiting them. The property the read-only version
+readers without anyone revisiting them. The earmark rides on that same
+capability rather than on one of its own — it cannot corrupt a review, but it
+is visible to the whole team, and a read-only key that could annotate seven
+hundred records is not read-only in any sense worth the name. The property the read-only version
 bought is worth keeping in the part that still holds — a leaked reader exposes a
 corpus and cannot corrupt one — and the blast radius of a leaked writer is one
 stage of one review, recoverable, because extraction, adjudication, screening 2
@@ -197,7 +201,10 @@ with a review out of reach reported as "no review" rather than "forbidden".
 The vote itself is an ordinary `user` row signed with the key owner's name,
 resolved by the same `resolve_screen1` and counted in the same PRISMA. Its
 reason always carries `[via MCP]`, so the provenance is visible in the screening
-table and in the export rather than inferred from a timestamp.
+table and in the export rather than inferred from a timestamp. An earmark
+carries no such marker, deliberately: a vote's provenance is part of a decision
+somebody will have to defend, while a margin note is signed with its author's
+name, decides nothing, and has 280 characters to say something in.
 
 **Every reviewer's vote is readable here**, while the web app hides them until
 you have voted. That was harmless while nothing here could vote, and it is the
