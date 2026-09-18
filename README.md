@@ -59,7 +59,7 @@ expose read-only public links to its dashboard and published synthesis.
    rule; the column beside it is for casting a vote, not for reading one.
 
    An **earmark ⚑** is the margin of the shared copy: a dot on a record, one
-   per reviewer, with an optional line of why. Everyone sees everyone's, only
+   per reviewer, with an optional note of a line or two saying why. Everyone sees everyone's, only
    your own is yours to write, and it counts nowhere — no PRISMA number, no
    decision, no export column. It hangs off the record rather than the stage,
    so the same mark is there at screening and again at assessment. Unlike the

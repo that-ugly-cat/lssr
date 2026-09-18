@@ -211,6 +211,7 @@
 {% block scripts %}
 <script src="/static/js/poller.js?v=3"></script>
 <script src="/static/js/inplace.js?v=2"></script>
+<script src="/static/js/earmark.js?v=1"></script>
 <script>
 function applyConditionals(root) {
   const fieldVal = (key) => {
@@ -267,38 +268,6 @@ document.querySelectorAll('.overlay-top').forEach(o =>
 
 poller('as-form', 'as-status', 'as-btn', '/w/{{ ws.id }}/assessment/status', 'as-prog', 'as-fill');
 
-// ── the earmark ──
-//
-// The dot paints before the round trip: a marker meant to be used carelessly
-// cannot make you wait to see that it worked. The redraw that follows keeps
-// the ⚑ count on the filter tabs honest, and the server's answer is what the
-// row ends up drawn from.
-//
-// The note posts on Enter or on leaving the field — `change` fires on blur
-// only when the value actually differs, so clicking away without typing
-// costs nothing.
-function wireEarmarks(rootId) {
-  const root = document.getElementById(rootId);
-  if (!root) return;
-  root.addEventListener('click', (e) => {
-    const btn = e.target.closest('.earmark-form .earmark');
-    if (!btn) return;
-    const on = btn.classList.toggle('on');
-    // The note field lives beside the dot and is shown with it. Clearing the
-    // dot deletes the row server-side, so the text goes too — leaving it in a
-    // hidden input would put it back on screen next time, unsaved.
-    const scope = btn.closest('td, .review-head');
-    const note = scope && scope.querySelector('.earmark-note');
-    if (note) {
-      note.hidden = !on;
-      if (!on) note.querySelector('input[name="note"]').value = '';
-    }
-  });
-  root.addEventListener('change', (e) => {
-    const input = e.target;
-    if (input.matches('.earmark-note input[name="note"]')) input.form.requestSubmit();
-  });
-}
 
 
 // Saving a review and adjudicating redraw in place. This page had the most to
@@ -332,6 +301,7 @@ const live = inplace({
     return inplace.voteMessage(data.vote, data, 'Review saved') + tail;
   },
   onDone: (kind) => { if (kind === 'review') closeReview(); },
+  afterRedraw: () => sizeEarmarkNotes(),
 });
 wireEarmarks('as-table');
 // The modal is rebuilt from the server on every open, so its dot and its note

@@ -948,8 +948,9 @@ def set_earmark(review: str, record_id: int, note: str = "", on: bool = True) ->
     different DOI*, *the abstract on this record belongs to another paper*,
     *the results of this protocol are already in the pool as 3257*.
 
-    note: one line, at most 280 characters. Longer is cut rather than refused,
-        and the answer says so. Write what a colleague could not work out on
+    note: at most 280 characters, one line or two — newlines are kept, blank
+        lines collapsed. Longer is cut rather than refused, and the answer
+        says so in `truncated`. Write what a colleague could not work out on
         their own; a verdict belongs in the vote, where it is counted and
         attributed.
     on: False takes the caller's earmark off the record, note and all.

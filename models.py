@@ -766,8 +766,11 @@ class Earmark(Base):
     workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False)
     record_id    = Column(Integer, ForeignKey("records.id"), nullable=False)
     user_id      = Column(Integer, ForeignKey("users.id"), nullable=False)
-    # One line. A margin note that grows into a paragraph is a document, and a
-    # document about a record belongs in the vote's reason or in the synthesis.
+    # Short, and at most 280 characters. Line breaks are allowed, because a
+    # note is sometimes two lines — a pairing and what to do about it — but
+    # blank lines are collapsed on the way in: a margin note that grows into a
+    # laid-out paragraph is a document, and a document about a record belongs
+    # in the vote's reason or in the synthesis.
     note         = Column(String, nullable=True)
     created_at   = Column(DateTime, default=datetime.utcnow)
     updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -826,7 +829,12 @@ def set_earmark(db, record, user_id: int, on: bool | None = None,
         row = Earmark(workspace_id=record.workspace_id, record_id=record.id, user_id=user_id)
         db.add(row)
     if note is not None:
-        note = note.strip()[:EARMARK_NOTE_MAX]
+        # Line breaks are kept — a note is sometimes two lines — but only as
+        # breaks: runs of blank lines collapse to one break and trailing
+        # spaces go, so a field that was pasted into cannot turn a margin note
+        # into a document with its own layout.
+        lines = [ln.strip() for ln in (note or "").replace("\r\n", "\n").split("\n")]
+        note = "\n".join(ln for ln in lines if ln)[:EARMARK_NOTE_MAX].strip()
         row.note = note or None
     row.updated_at = datetime.utcnow()
     db.flush()

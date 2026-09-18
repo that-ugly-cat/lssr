@@ -32,10 +32,13 @@
 <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/earmark" class="earmark-note"
       {{ '' if my_mark else 'hidden' }}>
   <input type="hidden" name="on" value="1">
-  {#- Saved on Enter, or on leaving the field — and `change` fires on blur only
-      when the value actually differs, so simply clicking away posts nothing. -#}
-  <input type="text" name="note" value="{{ my_mark.note or '' }}" maxlength="280"
-         placeholder="why, if it helps — everyone sees this">
+  {#- A textarea and not an input, because a note is sometimes two lines — but
+      one row high to start with, grown by earmark.js only as far as what is
+      actually typed. Enter saves, Shift+Enter breaks the line; leaving the
+      field saves too, and `change` fires on blur only when the value differs,
+      so clicking away without typing posts nothing. -#}
+  <textarea name="note" rows="1" maxlength="280"
+            placeholder="why, if it helps — everyone sees this">{{ my_mark.note or '' }}</textarea>
 </form>
 {% endmacro %}
 
@@ -46,7 +49,7 @@
 {% if theirs %}
 <div class="earmark-others">
   {%- for m in theirs %}
-  <div><span class="earmark on">⚑</span> {{ m.user.name if m.user else 'a reviewer' }}{% if m.note %} — <em>{{ m.note }}</em>{% endif %}</div>
+  <div><span class="earmark on">⚑</span> {{ m.user.name if m.user else 'a reviewer' }}{% if m.note %} — <em class="earmark-note-text">{{ m.note }}</em>{% endif %}</div>
   {%- endfor %}
 </div>
 {% endif %}

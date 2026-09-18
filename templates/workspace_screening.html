@@ -288,41 +288,10 @@
 {% block scripts %}
 <script src="/static/js/poller.js?v=3"></script>
 <script src="/static/js/inplace.js?v=2"></script>
+<script src="/static/js/earmark.js?v=1"></script>
 <script>
 poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status', 'scr-prog', 'scr-fill');
 
-// ── the earmark ──
-//
-// The dot paints before the round trip: a marker meant to be used carelessly
-// cannot make you wait to see that it worked. The redraw that follows keeps
-// the ⚑ count on the filter tabs honest, and the server's answer is what the
-// row ends up drawn from.
-//
-// The note posts on Enter or on leaving the field — `change` fires on blur
-// only when the value actually differs, so clicking away without typing
-// costs nothing.
-function wireEarmarks(rootId) {
-  const root = document.getElementById(rootId);
-  if (!root) return;
-  root.addEventListener('click', (e) => {
-    const btn = e.target.closest('.earmark-form .earmark');
-    if (!btn) return;
-    const on = btn.classList.toggle('on');
-    // The note field lives beside the dot and is shown with it. Clearing the
-    // dot deletes the row server-side, so the text goes too — leaving it in a
-    // hidden input would put it back on screen next time, unsaved.
-    const scope = btn.closest('td, .review-head');
-    const note = scope && scope.querySelector('.earmark-note');
-    if (note) {
-      note.hidden = !on;
-      if (!on) note.querySelector('input[name="note"]').value = '';
-    }
-  });
-  root.addEventListener('change', (e) => {
-    const input = e.target;
-    if (input.matches('.earmark-note input[name="note"]')) input.form.requestSubmit();
-  });
-}
 
 
 // Voting and adjudicating redraw in place. #scr-form is in the list because the
@@ -347,6 +316,9 @@ const live = inplace({
     if (kind === 'adjudicate') return d === 'clear' ? 'Ruling withdrawn' : `Resolved: ${d}`;
     return inplace.voteMessage(d, data);
   },
+  // The note fields that come back from a redraw are new elements one row
+  // high; a two-line note would hide its second line until the next reload.
+  afterRedraw: () => sizeEarmarkNotes(),
 });
 wireEarmarks('scr-table');
 

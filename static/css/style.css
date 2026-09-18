@@ -681,3 +681,17 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
   color: var(--muted-2);
   user-select: all;
 }
+
+/* A note is one line most of the time and two when it needs to be: the field
+   is a textarea sized by earmark.js to what is actually in it, never taller
+   than a few lines, and it never offers a resize grip — the cap is 280
+   characters and a box you can drag open would promise otherwise. */
+.earmark-note textarea {
+  width: 100%; max-width: 46rem; font-size: 12px; padding: 3px 7px;
+  background: var(--bg); border: 1px dashed var(--border); border-radius: 6px;
+  color: var(--text); font-family: inherit; line-height: 1.45;
+  resize: none; overflow-y: auto; display: block;
+}
+.earmark-note textarea:focus { border-style: solid; border-color: var(--warn); outline: none; }
+/* Somebody else's note keeps the breaks its author put in it. */
+.earmark-note-text { white-space: pre-line; }
