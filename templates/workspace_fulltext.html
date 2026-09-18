@@ -173,7 +173,7 @@
 
 {% block scripts %}
 <script src="/static/js/poller.js?v=3"></script>
-<script src="/static/js/inplace.js?v=2"></script>
+<script src="/static/js/inplace.js?v=4"></script>
 <script>
 poller('ft-fetch-form', 'ft-fetch-status', 'ft-fetch-btn', '/w/{{ ws.id }}/fulltext/fetch/status', 'ft-fetch-prog', 'ft-fetch-fill');
 poller('ft-conv-form', 'ft-conv-status', 'ft-conv-btn', '/w/{{ ws.id }}/fulltext/convert/status', 'ft-conv-prog', 'ft-conv-fill');
@@ -185,6 +185,7 @@ inplace({
   regions: ['ft-counts', 'ft-fetch-form', 'ft-conv-form', 'ft-filters', 'ft-table'],
   jobs: [['ft-fetch-status', 'ft-fetch-btn'], ['ft-conv-status', 'ft-conv-btn']],
   roots: ['ft-table'],
+  lastTouch: 'ft-filters',
   match: (action) => (action.endsWith('/fulltext/upload') ? 'upload' : null),
   // A markdown, text or Word file is already the full text and lands
   // converted; a PDF is only stored, and needs the convert pass to become

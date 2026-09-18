@@ -210,7 +210,7 @@
 
 {% block scripts %}
 <script src="/static/js/poller.js?v=3"></script>
-<script src="/static/js/inplace.js?v=2"></script>
+<script src="/static/js/inplace.js?v=4"></script>
 <script src="/static/js/earmark.js?v=1"></script>
 <script>
 function applyConditionals(root) {
@@ -279,6 +279,7 @@ const live = inplace({
   regions: ['as-form', 'as-filters', 'as-table'],
   jobs: [['as-status', 'as-btn']],
   roots: ['as-table', 'review-body'],
+  lastTouch: 'as-filters',
   match: (action) => (action.endsWith('/screen2/adjudicate') ? 'adjudicate'
                     : action.endsWith('/earmark') ? 'earmark'
                     : action.endsWith('/review') ? 'review' : null),

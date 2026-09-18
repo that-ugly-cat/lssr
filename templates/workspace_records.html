@@ -200,7 +200,7 @@
 <form method="post" action="/w/{{ ws.id }}/records/undo-delete" id="undo-form" style="display:none;">
   <input type="hidden" name="token">
 </form>
-<script src="/static/js/inplace.js?v=2"></script>
+<script src="/static/js/inplace.js?v=4"></script>
 <script>
 // ── the confirmation, and the notice ──
 //
@@ -230,6 +230,7 @@ function toastConfirm(message, onConfirm) {
 const live = inplace({
   regions: ['rec-pool', 'rec-table'],
   roots: ['rec-table', 'add-rec', 'edit-rec'],
+  lastTouch: 'rec-pool',
   // Deleting is not listed: it is confirmed first, and then handed to
   // live.act() by hand. Importing is not listed either — it rewrites the whole
   // pool and nobody is working row by row while they do it, so the plain

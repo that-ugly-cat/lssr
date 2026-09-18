@@ -86,6 +86,7 @@ function inplace(opts) {
           if (btn && pollerBusy(statusId)) btn.disabled = true;
         }
         flashRow(flashRid);
+        if (opts.lastTouch) markLastTouch();
         // Whatever the page holds that the server never saw — a set of ticked
         // checkboxes, say — is restored here, after the new rows are in.
         if (opts.afterRedraw) opts.afterRedraw();
@@ -104,6 +105,86 @@ function inplace(opts) {
     void row.offsetWidth;              // restart the animation on a second act
     row.classList.add('row-flash');
   }
+
+
+  // ── where you were ──
+  //
+  // The last row you acted on here, kept so that coming back to a list of
+  // five hundred does not mean finding your place by eye. Every action on
+  // every one of these tables already funnels through act() below, which
+  // knows the record — so this needs no route, no column and no per-page
+  // wiring beyond naming where to hang the chip.
+  //
+  // It lives in this browser and nowhere else. That is the whole bargain: a
+  // bookmark for yourself is not worth a table, it must never be visible to
+  // anybody else, and on a different machine it simply starts empty rather
+  // than lying. Every access is wrapped, because private windows and blocked
+  // site data make localStorage throw rather than return nothing.
+  const TOUCH_KEY = 'lssr-last:' + location.pathname;
+
+  function readTouch() {
+    try {
+      const raw = localStorage.getItem(TOUCH_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  function rememberTouch(rid) {
+    if (!rid) return;
+    try {
+      localStorage.setItem(TOUCH_KEY, JSON.stringify({ id: String(rid), at: Date.now() }));
+    } catch (e) { /* nothing to do, and nothing worth saying */ }
+  }
+
+  function lastRow() {
+    const t = readTouch();
+    return t && document.querySelector(`tr[data-rid="${t.id}"]`);
+  }
+
+  // The chip is rebuilt when missing, not created once: every page hangs it
+  // off its filter bar, and every one of those bars is a redrawn region — so
+  // the first action on the page would otherwise sweep it away.
+  function ensureChip() {
+    let chip = document.getElementById('last-touch');
+    if (chip) return chip;
+    const anchor = document.getElementById(opts.lastTouch);
+    if (!anchor) return null;
+    chip = document.createElement('button');
+    chip.type = 'button';
+    chip.id = 'last-touch';
+    chip.className = 'last-touch';
+    chip.hidden = true;
+    chip.addEventListener('click', () => {
+      const row = lastRow();
+      if (!row) return;
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      flashRow(readTouch().id);
+    });
+    anchor.append(chip);
+    return chip;
+  }
+
+  // Re-applied after every redraw: the rows that come back are new elements.
+  function markLastTouch() {
+    const t = readTouch();
+    document.querySelectorAll('tr.row-last').forEach((r) => r.classList.remove('row-last'));
+    const chip = ensureChip();
+    if (!t) { if (chip) chip.hidden = true; return; }
+    const row = lastRow();
+    if (row) row.classList.add('row-last');
+    if (!chip) return;
+    chip.hidden = false;
+    chip.textContent = '↩ #' + t.id;
+    chip.classList.toggle('muted', !row);
+    // Said rather than guessed at: a chip that scrolls nowhere is worse than
+    // one that explains why it cannot.
+    chip.title = row
+      ? 'The last record you acted on here — click to go back to it'
+      : 'The last record you acted on here is not in the current filter';
+  }
+
+  if (opts.lastTouch) markLastTouch();
+
 
   // ── posting a form in place ──
   //
@@ -124,10 +205,23 @@ function inplace(opts) {
     }).then((r) => (r.ok ? r.json() : Promise.reject(r)));
   }
 
+  // Which record a form is about, when the form is not inside its row. The
+  // edit and add forms live in a modal and the review form lives in another,
+  // so closest('tr') finds nothing for exactly the actions most worth
+  // remembering. The id is in the action either way.
+  function ridFromAction(action) {
+    const m = /\/(?:records|assessment)\/(\d+)\//.exec(action || '');
+    return m ? m[1] : null;
+  }
+
   // Post, report, redraw — the whole cycle, with the fallbacks in one place.
   function act(form, kind, rid) {
     const row = form.closest('tr');
-    const flashRid = rid || (row && row.dataset.rid);
+    const flashRid = rid || (row && row.dataset.rid)
+                         || ridFromAction(form.getAttribute('action'));
+    // Remembered before the round trip, not after: what makes this the row you
+    // were on is that you acted on it, whatever the server then answers.
+    rememberTouch(flashRid);
     if (row) row.classList.add('row-busy');
     return post(form)
       .then((data) => {

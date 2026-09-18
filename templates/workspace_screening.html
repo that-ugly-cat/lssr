@@ -287,7 +287,7 @@
 
 {% block scripts %}
 <script src="/static/js/poller.js?v=3"></script>
-<script src="/static/js/inplace.js?v=2"></script>
+<script src="/static/js/inplace.js?v=4"></script>
 <script src="/static/js/earmark.js?v=1"></script>
 <script>
 poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status', 'scr-prog', 'scr-fill');
@@ -301,6 +301,7 @@ const live = inplace({
   regions: ['scr-summary', 'scr-form', 'scr-dryrun', 'scr-filters', 'scr-table'],
   jobs: [['scr-status', 'scr-btn']],
   roots: ['scr-table'],
+  lastTouch: 'scr-filters',
   match: (action) => (action.endsWith('/screen1/vote') ? 'vote'
                     : action.endsWith('/screen1/adjudicate') ? 'adjudicate'
                     : action.endsWith('/earmark') ? 'earmark' : null),

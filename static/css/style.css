@@ -695,3 +695,22 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
 .earmark-note textarea:focus { border-style: solid; border-color: var(--warn); outline: none; }
 /* Somebody else's note keeps the breaks its author put in it. */
 .earmark-note-text { white-space: pre-line; }
+
+/* ── where you were ── */
+/* The last row you acted on in this table, kept in this browser only. A left
+   edge and a breath of background: it has to survive being scrolled past
+   without competing with ≠, ⚑ and the decision badges, which carry meaning
+   about the record rather than about you. */
+.row-last > td { background: var(--card-hover); }
+.row-last > td:first-child { box-shadow: inset 3px 0 0 var(--accent-light); }
+
+/* The way back to it, beside the filters. */
+.last-touch {
+  margin-left: 10px; padding: 1px 8px; border-radius: 99px; cursor: pointer;
+  font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none;
+  background: none; color: var(--accent-light);
+  border: 1px solid var(--border);
+}
+.last-touch:hover { border-color: var(--accent-light); }
+/* Shown but inert when that record is not in the filter being looked at. */
+.last-touch.muted { color: var(--muted-3); cursor: default; }
