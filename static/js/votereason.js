@@ -77,6 +77,15 @@ function wireVoteReasons(rootId) {
     cast(ta.closest('tr'));
   });
 
+  // A reason runs to a few hundred characters — the median on one real review
+  // is 664 — so each is clamped to two lines and opens on a click. Clamped
+  // rather than hidden: two lines is usually enough to know whether you need
+  // the rest.
+  root.addEventListener('click', (e) => {
+    const reason = e.target.closest('.reason');
+    if (reason) reason.classList.toggle('open');
+  });
+
   root.addEventListener('click', (e) => {
     if (e.target.matches('.vote-reason .vote-reason-save')) cast(e.target.closest('tr'));
     if (e.target.matches('.vote-reason .vote-reason-cancel')) {

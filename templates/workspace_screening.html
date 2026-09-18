@@ -193,7 +193,31 @@
         {% if r.abstract %}
         <details class="abstract-toggle"><summary class="muted small">abstract</summary><div class="small" style="margin-top:4px; max-width:75ch;">{{ r.abstract }}</div></details>
         {% else %}<div class="muted small" style="font-style:italic;">no abstract</div>{% endif %}
-        {% if r.screen1_reason %}<div class="muted small rationale">{{ r.screen1_reason }}</div>{% endif %}
+        {#- Every reason, said by whom, instead of the one resolved reason with
+            no name on it. The model's is always shown: it is a pre-screener,
+            not a blinded reviewer, and its decision is already on the row. A
+            person's follows the same rule as their vote — and that matters
+            more here than for the vote itself, because a colleague's argument
+            read before you decide is the whole of what blinding is for.
+            It also closed a hole that opened the day this review dropped to
+            one reviewer: from then on the resolved reason WAS the human's, and
+            it was printed to everybody, ungated. -#}
+        {% set reasons = votes.get(r.id, []) | selectattr('reason') | rejectattr('reason', 'equalto', 'manual vote') | list %}
+        {% if reasons %}
+        <div class="reasons">
+          {%- for v in reasons %}
+          {%- if v.reviewer_kind == 'model' or r.id in revealed %}
+          {%- set who = ('model' if v.reviewer_kind == 'model'
+                    else 'model, dry run' if v.reviewer_kind == 'shadow'
+                    else ((v.reviewer.name if v.reviewer else 'a reviewer')
+                          + (' (adjudicated)' if v.reviewer_kind == 'adjudicator' else ''))) %}
+          <div class="reason{{ ' reason-shadow' if v.reviewer_kind == 'shadow' }}">
+            <span class="reason-who">{{ who }}:</span> <span class="reason-text">{{ v.reason }}</span>
+          </div>
+          {%- endif %}
+          {%- endfor %}
+        </div>
+        {% endif %}
       </td>
       {#- The settled decision *and* the voices behind it. Both live here: the
           right-hand column is for casting a vote, not for reading one. The two
@@ -303,7 +327,7 @@
 <script src="/static/js/poller.js?v=3"></script>
 <script src="/static/js/inplace.js?v=4"></script>
 <script src="/static/js/earmark.js?v=1"></script>
-<script src="/static/js/votereason.js?v=2"></script>
+<script src="/static/js/votereason.js?v=3"></script>
 <script>
 poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status', 'scr-prog', 'scr-fill');
 
