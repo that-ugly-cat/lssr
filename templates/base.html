@@ -4,7 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{% block title %}LSSR{% endblock %}</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=27">
+  <link rel="stylesheet" href="/static/css/style.css?v=28">
+  <script>
+    // Runs before the first paint, so a user who chose light never sees a dark
+    // frame. Kept inline and tiny on purpose: an external file would load too
+    // late. The toggle itself is in theme.js.
+    (function () {
+      try {
+        if (window.localStorage.getItem("lssr-theme") === "light") {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      } catch (e) {}
+    })();
+  </script>
   {% block head %}{% endblock %}
 </head>
 <body>
@@ -16,12 +28,14 @@
     <a href="/profile">Profile</a>
     {% if user.is_admin %}<a href="/admin">Admin</a>{% endif %}
     <a href="/logout" class="btn-link">Log out</a>
+    <button type="button" class="theme-toggle" aria-label="Switch theme" title="Switch theme" aria-pressed="false"><span class="theme-icon-dark" aria-hidden="true">&#9788;</span><span class="theme-icon-light" aria-hidden="true">&#9790;</span></button>
   </nav>
 </header>
 {% endif %}
 <main class="container">
 {% block body %}{% endblock %}
 </main>
+<script src="/static/js/theme.js?v=1"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
