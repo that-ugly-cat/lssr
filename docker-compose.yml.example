@@ -30,3 +30,17 @@ services:
 #       external: true
 #
 # then set PAPER2MD_URL=http://paper2md:8000 in .env.
+
+# ── Pin the default network's subnet, if this app sits behind a gate ──────────
+# The gateway of a compose project's default network is the address the app sees
+# as the source of proxied requests, and gated borant apps carry it in
+# BORANT_TRUSTED_PROXY. Docker hands those subnets out in creation order, so a
+# restart in a different order changes the gateway silently — and the app then
+# refuses the gate's identity headers with a 503 that reads like a broken gate
+# and is an IP address. Pinning settles it:
+#
+#   networks:
+#     default:
+#       ipam:
+#         config:
+#           - subnet: 10.200.101.0/24   # any free /24 in your Docker pool
