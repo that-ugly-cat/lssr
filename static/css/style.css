@@ -46,8 +46,8 @@
   --card-hover: #eef1f6;
   --text: #1a202c;
   --muted: #4a5568;
-  --muted-2: #667085;
-  --muted-3: #6b7280;  /* table headers and 11px labels: needs 4.5:1 on white */
+  --muted-2: #5f6a7c;  /* 4.75:1 on --chip-bg, the darkest surface it lands on */
+  --muted-3: #656b76;  /* table headers, 11px labels: 4.65:1 on --chip-bg */
   --border: #d8dee9;
   --primary: #0a3c8a;
   --primary-hover: #0d4fa8;
