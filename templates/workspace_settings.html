@@ -4,7 +4,7 @@
 {% include "_ws_tabs.html" %}
 
 <div class="cards-label">Review details</div>
-<div class="card">
+<div class="card live-region" id="set-details">
   <form method="post" action="/w/{{ ws.id }}/settings/details">
     <label>Description <textarea name="description" rows="2" {{ '' if is_owner else 'disabled' }}>{{ ws.description or '' }}</textarea></label>
     <label>Research question(s) <textarea name="research_question" rows="3" {{ '' if is_owner else 'disabled' }}>{{ ws.research_question or '' }}</textarea></label>
@@ -15,7 +15,7 @@
 </div>
 
 <div class="cards-label">Screening / assessment model</div>
-<div class="card">
+<div class="card live-region" id="set-model">
   <form method="post" action="/w/{{ ws.id }}/settings/model" class="inline-form">
     <select name="screening_model" {{ '' if is_owner else 'disabled' }}>
       {% for m in models %}
@@ -28,7 +28,7 @@
 </div>
 
 <div class="cards-label">Reviewers per stage</div>
-<div class="card">
+<div class="card live-region" id="set-reviewers">
   <form method="post" action="/w/{{ ws.id }}/settings/screening" class="inline-form">
     <label>Screening 1 — independent human votes to settle a record
       <input type="number" name="reviewers_required" min="1" max="10"
@@ -72,7 +72,7 @@
 </div>
 
 <div class="cards-label">Members (reviewers)</div>
-<div class="card">
+<div class="card live-region" id="set-members">
   <table class="table">
     <thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead>
     <tbody>
@@ -113,7 +113,7 @@
 ] %}
 {% for kind, heading, items in sets %}
 <div class="cards-label">{{ heading }}</div>
-<div class="card">
+<div class="card live-region" id="set-crit-{{ kind }}">
   {% for c in items %}
   <div class="cb-card">
     <div class="cb-card-head">
@@ -150,7 +150,7 @@
 {% endfor %}
 
 <div class="cards-label">Extraction fields (step 9 — structured data extraction)</div>
-<div class="card">
+<div class="card live-region" id="set-fields">
   <p class="muted small" style="margin-top:0;">
     The form filled per included full text, by the LLM and reviewers. Builtin
     fields (country, study year, study type, methodology) are seeded and editable.
@@ -250,4 +250,83 @@
   </form>
 </div>
 {% endif %}
+
+{#- Outside every section, so a redraw cannot sweep away the notice of the save
+    that caused it. -#}
+<div id="toast-host">
+  <div class="toast hidden" id="toast" role="status" aria-live="polite">
+    <span class="toasttext"></span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/inplace.js?v=5"></script>
+<script>
+// Every settings form saves in place and redraws only its own section: the
+// page is a set of separate forms, and a full redraw would throw away what is
+// typed, unsaved, in the others. Within the redrawn section the same holds,
+// so a field edited but not saved is put back after the swap.
+// The delete-review form is not intercepted: it leaves the page.
+const SECTIONS = ['set-details', 'set-model', 'set-reviewers', 'set-members',
+                  'set-crit-exclusion', 'set-crit-inclusion', 'set-fields'];
+const LABELS = [
+  [/\/settings\/details$/, 'Details saved'],
+  [/\/settings\/model$/, 'Model saved'],
+  [/\/settings\/screening$/, 'Reviewer settings saved'],
+  [/\/members\/add$/, 'Member added'],
+  [/\/members\/\d+\/remove$/, 'Member removed'],
+  [/\/criteria\/add$/, 'Criterion added'],
+  [/\/criteria\/\d+\/edit$/, 'Criterion saved'],
+  [/\/criteria\/\d+\/delete$/, 'Criterion deleted'],
+  [/\/fields\/add$/, 'Field added'],
+  [/\/fields\/\d+\/delete$/, 'Field deleted'],
+  [/\/fields\/\d+\/move$/, 'Field moved'],
+];
+let submitted = null;   // the form just saved: its own values come from the server
+let dirty = [];         // [formAction, name, value] of unsaved edits elsewhere
+
+function snapshotDirty(ids) {
+  dirty = [];
+  for (const id of ids) {
+    const sec = document.getElementById(id);
+    if (!sec) continue;
+    sec.querySelectorAll('input, textarea, select').forEach((el) => {
+      const form = el.form;
+      if (!form || form === submitted || !el.name) return;
+      const changed = el.type === 'checkbox' ? el.checked !== el.defaultChecked
+        : el.tagName === 'SELECT' ? [...el.options].some((o) => o.selected !== o.defaultSelected)
+        : el.value !== el.defaultValue;
+      if (changed) dirty.push([form.getAttribute('action'), el.name,
+                               el.type === 'checkbox' ? el.checked : el.value]);
+    });
+  }
+}
+
+function restoreDirty() {
+  for (const [action, name, value] of dirty) {
+    const form = document.querySelector(`form[action="${action}"]`);
+    const el = form && form.elements[name];
+    if (!el || el instanceof RadioNodeList) continue;
+    if (el.type === 'checkbox') el.checked = value; else el.value = value;
+  }
+  dirty = [];
+}
+
+inplace({
+  regions: SECTIONS,
+  roots: SECTIONS,
+  match: (action) => {
+    const hit = LABELS.find(([re]) => re.test(action));
+    return hit ? hit[1] : null;
+  },
+  message: (kind, form) => { submitted = form; return kind; },
+  regionsFor: (kind, form) => {
+    const sec = form.closest('.live-region');
+    return sec ? [sec.id] : null;
+  },
+  beforeRedraw: snapshotDirty,
+  afterRedraw: () => { restoreDirty(); submitted = null; },
+});
+</script>
 {% endblock %}

@@ -1329,10 +1329,18 @@ async def settings_page(ws_id: int, request: Request, member_error: int = 0,
     })
 
 
+def _settings_done(request: Request, ws_id: int):
+    """What a settings form gets back: JSON when the page posted it itself and
+    will redraw the section in place, the old redirect otherwise."""
+    if _from_script(request):
+        return JSONResponse({"ok": True})
+    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+
+
 # ── Extraction fields (step 9 schema) ───────────────────────────────────────
 
 @app.post("/w/{ws_id}/fields/add")
-async def add_field(ws_id: int, label: str = Form(...), description: str = Form(""),
+async def add_field(ws_id: int, request: Request, label: str = Form(...), description: str = Form(""),
                     field_type: str = Form("text"), options: str = Form(""),
                     show_if_key: str = Form(""), show_if_values: str = Form(""),
                     user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1358,11 +1366,11 @@ async def add_field(ws_id: int, label: str = Form(...), description: str = Form(
     log_protocol_change(db, ws.id, user.id, "web", "field", "add", key,
                         None, field_snapshot(new))
     db.commit()
-    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+    return _settings_done(request, ws_id)
 
 
 @app.post("/w/{ws_id}/fields/{fid}/delete")
-async def delete_field(ws_id: int, fid: int, user: User = Depends(get_current_user),
+async def delete_field(ws_id: int, request: Request, fid: int, user: User = Depends(get_current_user),
                        db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     _require_owner(ws, user)
@@ -1374,11 +1382,11 @@ async def delete_field(ws_id: int, fid: int, user: User = Depends(get_current_us
                             field_snapshot(f), None)
         db.delete(f)
         db.commit()
-    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+    return _settings_done(request, ws_id)
 
 
 @app.post("/w/{ws_id}/fields/{fid}/move")
-async def move_field(ws_id: int, fid: int, dir: str = Form(...),
+async def move_field(ws_id: int, request: Request, fid: int, dir: str = Form(...),
                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     _require_owner(ws, user)
@@ -1390,22 +1398,22 @@ async def move_field(ws_id: int, fid: int, dir: str = Form(...),
         if 0 <= swap < len(fields):
             fields[idx].position, fields[swap].position = fields[swap].position, fields[idx].position
             db.commit()
-    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+    return _settings_done(request, ws_id)
 
 
 @app.post("/w/{ws_id}/settings/model")
-async def set_model(ws_id: int, screening_model: str = Form(...),
+async def set_model(ws_id: int, request: Request, screening_model: str = Form(...),
                     user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     _require_owner(ws, user)
     if screening_model in PRICING:
         ws.screening_model = screening_model
         db.commit()
-    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+    return _settings_done(request, ws_id)
 
 
 @app.post("/w/{ws_id}/settings/details")
-async def set_details(ws_id: int, description: str = Form(""), research_question: str = Form(""),
+async def set_details(ws_id: int, request: Request, description: str = Form(""), research_question: str = Form(""),
                       user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     _require_owner(ws, user)
@@ -1416,11 +1424,11 @@ async def set_details(ws_id: int, description: str = Form(""), research_question
                         {"research_question": ws.research_question,
                          "description": ws.description})
     db.commit()
-    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+    return _settings_done(request, ws_id)
 
 
 @app.post("/w/{ws_id}/settings/screening")
-async def set_screening_config(ws_id: int, reviewers_required: int = Form(...),
+async def set_screening_config(ws_id: int, request: Request, reviewers_required: int = Form(...),
                                reviewers_required_2: str = Form(""),
                                dry_run_enabled: str = Form(""),
                                user: User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -1455,11 +1463,11 @@ async def set_screening_config(ws_id: int, reviewers_required: int = Form(...),
                                            Record.is_removed == False).all():  # noqa: E712
             recompute_record_screen2(db, ws, rec)
     db.commit()
-    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+    return _settings_done(request, ws_id)
 
 
 @app.post("/w/{ws_id}/members/add")
-async def add_member(ws_id: int, email: str = Form(...),
+async def add_member(ws_id: int, request: Request, email: str = Form(...),
                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     if not (ws.owner_id == user.id or user.is_admin):
@@ -1467,6 +1475,8 @@ async def add_member(ws_id: int, email: str = Form(...),
     target = db.query(User).filter(User.email == email.strip().lower(),
                                    User.is_active == True).first()  # noqa: E712
     if not target:
+        if _from_script(request):
+            return JSONResponse({"error": "no active user with that email"}, status_code=400)
         return RedirectResponse(f"/w/{ws_id}/settings?member_error=1", status_code=302)
     if target.id != ws.owner_id:
         exists = db.query(WorkspaceMember).filter(
@@ -1474,11 +1484,11 @@ async def add_member(ws_id: int, email: str = Form(...),
         if not exists:
             db.add(WorkspaceMember(workspace_id=ws.id, user_id=target.id))
             db.commit()
-    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+    return _settings_done(request, ws_id)
 
 
 @app.post("/w/{ws_id}/members/{uid}/remove")
-async def remove_member(ws_id: int, uid: int,
+async def remove_member(ws_id: int, request: Request, uid: int,
                         user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     if not (ws.owner_id == user.id or user.is_admin):
@@ -1488,11 +1498,11 @@ async def remove_member(ws_id: int, uid: int,
     if m:
         db.delete(m)
         db.commit()
-    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+    return _settings_done(request, ws_id)
 
 
 @app.post("/w/{ws_id}/criteria/add")
-async def add_criterion(ws_id: int, kind: str = Form(...), label: str = Form(...),
+async def add_criterion(ws_id: int, request: Request, kind: str = Form(...), label: str = Form(...),
                         description: str = Form(""), user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
@@ -1509,11 +1519,11 @@ async def add_criterion(ws_id: int, kind: str = Form(...), label: str = Form(...
     log_protocol_change(db, ws.id, user.id, "web", "criterion", "add",
                         f"{kind} {c.position + 1}", None, criterion_snapshot(c))
     db.commit()
-    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+    return _settings_done(request, ws_id)
 
 
 @app.post("/w/{ws_id}/criteria/{cid}/edit")
-async def edit_criterion(ws_id: int, cid: int, label: str = Form(...),
+async def edit_criterion(ws_id: int, request: Request, cid: int, label: str = Form(...),
                          description: str = Form(""), user: User = Depends(get_current_user),
                          db: Session = Depends(get_db)):
     """Change a criterion's wording in place. Without this the only way to reword
@@ -1531,11 +1541,11 @@ async def edit_criterion(ws_id: int, cid: int, label: str = Form(...),
     log_protocol_change(db, ws.id, user.id, "web", "criterion", "edit",
                         f"{c.kind} {c.position + 1}", before, criterion_snapshot(c))
     db.commit()
-    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+    return _settings_done(request, ws_id)
 
 
 @app.post("/w/{ws_id}/criteria/{cid}/delete")
-async def delete_criterion(ws_id: int, cid: int, user: User = Depends(get_current_user),
+async def delete_criterion(ws_id: int, request: Request, cid: int, user: User = Depends(get_current_user),
                            db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     _require_owner(ws, user)
@@ -1549,7 +1559,7 @@ async def delete_criterion(ws_id: int, cid: int, user: User = Depends(get_curren
         log_protocol_change(db, ws.id, user.id, "web", "criterion", "delete",
                             f"{kind} {before['number']}", before, None)
         db.commit()
-    return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
+    return _settings_done(request, ws_id)
 
 
 # ── Screening 1 (step 5) ────────────────────────────────────────────────────

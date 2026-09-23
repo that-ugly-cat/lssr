@@ -113,7 +113,7 @@ mcp = MCPServer(
         "team reads and which decides nothing — that is where an observation "
         "about a record belongs, and a verdict is not one. The protocol verbs "
         "(update_criterion, add_criterion, update_field, add_field, "
-        "update_details) belong to the review's owner: confirm the exact "
+        "move_field, update_details) belong to the review's owner: confirm the exact "
         "wording with the user before writing, since every vote is argued from "
         "that text; nothing is deleted from here, and protocol_history shows "
         "what each change replaced. All writes need a key minted with writing "
@@ -1089,7 +1089,9 @@ def _clean_list(items) -> list:
 def _show_if(db, ws, own_key: str | None, field: str, values):
     """Validate a show_if pair; returns (key, values), or (None, None) to clear."""
     field = (field or "").strip()
-    if not field:
+    # "none" as well as "": some clients cannot send an empty string, and
+    # dropping the parameter means "leave it" rather than "clear it"
+    if not field or field.lower() == "none":
         return None, None
     if field == own_key:
         raise ValueError("A field cannot be shown conditionally on itself.")
@@ -1212,7 +1214,8 @@ def update_field(review: str, key: str, label: str = "", help: str | None = None
         renamed, which is the same thing): the answer names it and says how
         many rows use it. Adding options and reordering them is always fine.
     show_if_field / show_if_values: ask this field only when another field
-        holds one of these values. show_if_field="" removes the condition.
+        holds one of these values. show_if_field="none" (or "")
+        removes the condition.
 
     The type of a field cannot be changed here: values extracted as one type
     do not become another.
@@ -1309,6 +1312,55 @@ def add_field(review: str, label: str, type: str, help: str = "",
         db.commit()
         return {"review": ws.name, "added": after}
     except (LookupError, PermissionError, ValueError) as e:
+        db.rollback()
+        return _fail(str(e))
+    finally:
+        db.close()
+
+
+@mcp.tool()
+def move_field(review: str, key: str, position: int = 0, after: str = "") -> dict:
+    """
+    Move one extraction field to another place in the form. Owner only,
+    writing key.
+
+    Give either `position` (1 = first, as get_protocol lists the fields) or
+    `after`, the key of the field it should follow; `after` is usually what
+    you mean ("put causal_design after methodology_time") and survives other
+    fields being added in between.
+
+    Only the order of the form changes: no value, key or definition moves, so
+    this is not logged as a protocol change. Criteria have no equivalent on
+    purpose: their order is their number, and reasons cite the number.
+    """
+    from models import ensure_extraction_fields
+    if not position and not (after or "").strip():
+        return _fail("Give a position (1 = first) or the key of the field to follow.")
+    db = SessionLocal()
+    try:
+        user, ws = _owner_review(db, review)
+        ensure_extraction_fields(db, ws)
+        fields = workspace_extraction_fields(db, ws)
+        f = _field(db, ws, key)
+        rest = [x for x in fields if x.id != f.id]
+        if (after or "").strip():
+            anchor = _field(db, ws, after.strip())
+            if anchor.id == f.id:
+                return _fail("A field cannot follow itself.")
+            idx = next(i for i, x in enumerate(rest) if x.id == anchor.id) + 1
+        else:
+            if not 1 <= int(position) <= len(fields):
+                return _fail(f"position must be between 1 and {len(fields)}.")
+            idx = int(position) - 1
+        before = [x.key for x in fields]
+        rest.insert(idx, f)
+        for i, x in enumerate(rest):
+            x.position = i
+        db.commit()
+        order = [x.key for x in rest]
+        return {"review": ws.name, "moved": f.key, "changed": order != before,
+                "position": order.index(f.key) + 1, "order": order}
+    except (LookupError, PermissionError) as e:
         db.rollback()
         return _fail(str(e))
     finally:

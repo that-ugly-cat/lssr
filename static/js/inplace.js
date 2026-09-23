@@ -18,6 +18,8 @@
 //     roots:   ['scr-table'],                  // where row forms are listened for
 //     match:   (action) => action.endsWith('/vote') ? 'vote' : null,
 //     message: (kind, form, data) => '…',
+//     regionsFor: (kind, form) => ['…'],       // optional: redraw only these
+//     beforeRedraw / afterRedraw: (ids) => {}, // optional: around the swap
 //   });
 //
 // Regions are swapped by innerHTML, never replaced: the container node keeps
@@ -65,15 +67,21 @@ function inplace(opts) {
   // record out of the filter being looked at. Re-fetching the current URL keeps
   // the filter, the search and the sort exactly as they are, so the counts
   // cannot drift away from the rows they count.
-  function redraw(flashRid) {
+  //
+  // `only` narrows it to some regions. Settings needs that: it is a page of
+  // separate forms, and redrawing all of them after one save would throw away
+  // whatever is typed, unsaved, in the others.
+  function redraw(flashRid, only) {
+    const ids = only && only.length ? only : regions;
     return fetch(location.href, { headers: { 'X-Requested-With': 'fetch' } })
       .then((r) => (r.ok ? r.text() : Promise.reject(r)))
       .then((html) => {
         const fresh = new DOMParser().parseFromString(html, 'text/html');
         // An expired session answers with the login page, and pasting that into
         // the table would be a silent lie. Reload, and let the app say so.
-        if (regions.length && !fresh.getElementById(regions[0])) return location.reload();
-        for (const id of regions) {
+        if (ids.length && !fresh.getElementById(ids[0])) return location.reload();
+        if (opts.beforeRedraw) opts.beforeRedraw(ids);
+        for (const id of ids) {
           const from = fresh.getElementById(id);
           const here = document.getElementById(id);
           if (from && here) here.innerHTML = from.innerHTML;
@@ -89,7 +97,7 @@ function inplace(opts) {
         if (opts.lastTouch) markLastTouch();
         // Whatever the page holds that the server never saw — a set of ticked
         // checkboxes, say — is restored here, after the new rows are in.
-        if (opts.afterRedraw) opts.afterRedraw();
+        if (opts.afterRedraw) opts.afterRedraw(ids);
       });
   }
 
@@ -234,7 +242,8 @@ function inplace(opts) {
         // Past this line the action is recorded, so a redraw that fails must
         // not fall through to the retry below and post it a second time.
         // Reload instead: the state is on the server, only the picture is old.
-        return redraw(flashRid).catch(() => location.reload());
+        const only = opts.regionsFor ? opts.regionsFor(kind, form) : null;
+        return redraw(flashRid, only).catch(() => location.reload());
       })
       .catch((err) => {
         if (err instanceof Error) throw err;   // a bug here, not a failed POST
