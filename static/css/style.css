@@ -827,3 +827,8 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
 }
 .vote-reason textarea:focus { outline: none; }
 .vote-reason-actions { display: flex; gap: 4px; justify-content: flex-end; margin-top: 4px; }
+
+/* full text: the hand-search flag on a row */
+.unfound-form { display: flex; gap: 4px; align-items: center; margin-top: 4px; }
+.unfound-form input[type=text] { margin-top: 0; padding: 3px 6px; max-width: 14rem; }
+.unfound { margin-top: 4px; white-space: normal; }

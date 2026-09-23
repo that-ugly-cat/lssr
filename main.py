@@ -1938,16 +1938,36 @@ async def fulltext_page(ws_id: int, request: Request, status: str = "all",
     status_nav = [("all", "all", len(all_included))] + [
         (k, lbl, sum(1 for r in all_included if r.full_text_status == k))
         for k, lbl in _FT_STATUS_LABELS]
+    # The two lists the hand search works from, crossing the ladder's status
+    # with the human flag: what is still to be looked for, and what somebody
+    # looked for and did not find. Records excluded at screening 2 are in
+    # neither: nobody needs their full text.
+    def _missing(r):
+        return r.full_text_status != "converted" and r.screen2_decision != "exclude"
+    hand_nav = [
+        ("tofind", "to find by hand", sum(1 for r in all_included
+                                          if _missing(r) and not r.full_text_unfound_at)),
+        ("unfound", "searched, not found", sum(1 for r in all_included
+                                               if _missing(r) and r.full_text_unfound_at)),
+    ]
 
     tq = base
     if status in ("converted", "fetched", "url", "failed", "none"):
         tq = tq.filter(Record.full_text_status == status)
+    elif status in ("tofind", "unfound"):
+        tq = tq.filter(Record.full_text_status != "converted",
+                       Record.screen2_decision != "exclude")
+        tq = tq.filter(Record.full_text_unfound_at.is_(None) if status == "tofind"
+                       else Record.full_text_unfound_at.isnot(None))
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
     records = tq.limit(500).all()
+    unfound_by = {u.id: u.name for u in db.query(User).filter(
+        User.id.in_({r.full_text_unfound_by for r in records if r.full_text_unfound_by} or {-1}))}
 
     return render(request, "workspace_fulltext.html", {
         "user": user, "ws": ws, "tab": "fulltext", "steps_done": workspace_steps_done(ws),
         "records": records, "ft": ft, "status": status, "status_nav": status_nav,
+        "hand_nav": hand_nav, "unfound_by": unfound_by,
         "dbs_present": _dbs_present(db, ws.id),
         "filters": {"status": status, "q": q, "source": source, "rtype": rtype,
                     "yf": yf, "yt": yt, "sort": sort, "order": order},
@@ -2028,6 +2048,38 @@ async def upload_fulltext(ws_id: int, rid: int, request: Request, file: UploadFi
         # and a PDF whose text turns out to belong to another paper is flagged
         # later, by the convert pass, not here.
         return JSONResponse({"status": rec.full_text_status})
+    return RedirectResponse(f"/w/{ws_id}/fulltext", status_code=302)
+
+
+@app.post("/w/{ws_id}/records/{rid}/fulltext/unfound")
+async def mark_fulltext_unfound(ws_id: int, rid: int, request: Request,
+                                action: str = Form("set"), note: str = Form(""),
+                                user: User = Depends(get_current_user),
+                                db: Session = Depends(get_db)):
+    """"I looked for this full text and did not find it", or its retraction.
+
+    Any member may say it: the hand search is shared work. It decides nothing:
+    the record stays pending at screening 2 and PRISMA counts it as not
+    retrieved, which is what it is. What the flag adds is that the absence was
+    looked into, by whom and where, so the search can stop and the report can
+    say what was tried."""
+    ws = _load_ws(db, user, ws_id)
+    rec = db.query(Record).filter(Record.id == rid, Record.workspace_id == ws.id).first()
+    if not rec:
+        raise HTTPException(404, "Record not found")
+    if action == "clear":
+        import fulltext
+        fulltext.clear_unfound(rec)
+    else:
+        if rec.full_text_status == "converted":
+            raise HTTPException(400, "This record already has its full text")
+        from datetime import datetime
+        rec.full_text_unfound_at = datetime.utcnow()
+        rec.full_text_unfound_by = user.id
+        rec.full_text_unfound_note = note.strip() or None
+    db.commit()
+    if _from_script(request):
+        return JSONResponse({"unfound": rec.full_text_unfound_at is not None})
     return RedirectResponse(f"/w/{ws_id}/fulltext", status_code=302)
 
 
@@ -2243,6 +2295,9 @@ async def review_fragment(ws_id: int, rid: int, request: Request,
         "is_owner": is_owner,
         "other_extractions": other_extractions,
         "has_final": _vals("final", None) is not None,
+        "unfound_by": (db.get(User, rec.full_text_unfound_by).name
+                       if rec.full_text_unfound_by and db.get(User, rec.full_text_unfound_by)
+                       else None),
     })
 
 
@@ -2287,6 +2342,20 @@ async def save_review(ws_id: int, rid: int, request: Request,
     if decision in ("include", "exclude", "maybe"):
         upsert_screen_decision(db, rec, "screen2", "user", user.id, decision,
                                (form.get("screen2_reason") or "").strip() or "full-text review")
+        recompute_record_screen2(db, ws, rec)
+    elif decision == "clear":
+        # Retract your own full-text vote, as the ✕ does at screening 1. Without
+        # it a vote cast by mistake could only be turned into another vote — an
+        # exclusion for a full text never found became a maybe at best, and
+        # stayed counted as assessed.
+        from models import ScreenDecision
+        for row in (db.query(ScreenDecision)
+                      .filter(ScreenDecision.record_id == rec.id,
+                              ScreenDecision.stage == "screen2",
+                              ScreenDecision.reviewer_kind == "user",
+                              ScreenDecision.reviewer_id == user.id).all()):
+            db.delete(row)
+        db.flush()
         recompute_record_screen2(db, ws, rec)
     db.commit()
     if _from_script(request):

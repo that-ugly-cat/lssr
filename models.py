@@ -369,6 +369,15 @@ class Record(Base):
     full_text_path   = Column(String, nullable=True)
     full_text_md     = Column(Text, nullable=True)
     full_text_note   = Column(Text, nullable=True)     # retrieval warnings: discarded candidates, title mismatch
+    # A person looked for the full text and did not find it. Kept apart from
+    # full_text_status on purpose: that column belongs to the automatic ladder,
+    # which retries none/failed/url on every run and would overwrite a human
+    # verdict, while this one says who searched, when and where — the trace a
+    # "reports not retrieved" box in PRISMA has to be able to stand on. It
+    # stops meaning anything once a full text arrives, and is cleared then.
+    full_text_unfound_at   = Column(DateTime, nullable=True)
+    full_text_unfound_by   = Column(Integer, ForeignKey("users.id"), nullable=True)
+    full_text_unfound_note = Column(Text, nullable=True)
     # Settled screening verdicts (steps 5, 8). Not the source of truth: the votes
     # live in ScreenDecision, and recompute_record_screen1/2 recache the outcome
     # here after every vote. Everything that has to filter, count or export by
@@ -977,6 +986,9 @@ def init_db():
             "ALTER TABLE records ADD COLUMN full_text_status VARCHAR DEFAULT 'none'",
             "ALTER TABLE records ADD COLUMN full_text_url VARCHAR",
             "ALTER TABLE records ADD COLUMN full_text_note TEXT",
+            "ALTER TABLE records ADD COLUMN full_text_unfound_at DATETIME",
+            "ALTER TABLE records ADD COLUMN full_text_unfound_by INTEGER",
+            "ALTER TABLE records ADD COLUMN full_text_unfound_note TEXT",
             "ALTER TABLE workspaces ADD COLUMN primary_db VARCHAR DEFAULT 'pubmed'",
             "ALTER TABLE workspaces ADD COLUMN year_from INTEGER",
             "ALTER TABLE workspaces ADD COLUMN year_to INTEGER",

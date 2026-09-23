@@ -691,6 +691,12 @@ def fulltext_status(review: str, limit: int = 30) -> dict:
     one is the retrieval ladder's own account of what it tried — candidates
     discarded, titles that did not match, a publisher refusing without an
     institutional token.
+
+    `searched_not_found` is the human side: records somebody looked for by hand
+    and marked as not found, with who, when and where they looked. They are
+    still missing and still pending; `still_to_find` is the rest of the missing
+    ones, the hand-search worklist. Records excluded at screening 2 are in
+    neither, since nobody needs their full text.
     """
     db = SessionLocal()
     try:
@@ -698,6 +704,13 @@ def fulltext_status(review: str, limit: int = 30) -> dict:
         sought = _live(db, ws.id).filter(Record.screen1_decision == "include").all()
         counts = Counter(r.full_text_status or "none" for r in sought)
         missing = [r for r in sought if r.full_text_status != "converted"]
+        wanted = [r for r in missing if r.screen2_decision != "exclude"]
+        unfound = [r for r in wanted if r.full_text_unfound_at]
+        names = {}
+        from models import User
+        for uid in {r.full_text_unfound_by for r in unfound if r.full_text_unfound_by}:
+            u = db.get(User, uid)
+            names[uid] = u.name if u else None
         n = max(1, min(int(limit or 30), 200))
         return {
             "review": ws.name,
@@ -705,10 +718,17 @@ def fulltext_status(review: str, limit: int = 30) -> dict:
             "by_status": dict(counts),
             "converted": counts.get("converted", 0),
             "missing": len(missing),
+            "searched_not_found": len(unfound),
+            "still_to_find": len(wanted) - len(unfound),
             "missing_records": [{
                 "id": r.id, "title": r.title, "year": r.year, "doi": r.doi,
                 "status": r.full_text_status, "url": r.full_text_url,
                 "note": r.full_text_note, "screen2": r.screen2_decision,
+                "searched_not_found": ({
+                    "by": names.get(r.full_text_unfound_by),
+                    "at": _d(r.full_text_unfound_at),
+                    "where": r.full_text_unfound_note,
+                } if r.full_text_unfound_at else None),
             } for r in missing[:n]],
         }
     except (LookupError, PermissionError) as e:

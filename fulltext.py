@@ -398,6 +398,7 @@ def convert_stored_pdf(db, rec, paper2md_url: str) -> str:
         raise RuntimeError(f"paper2md conversion failed: {exc}") from exc
     rec.full_text_md = md
     rec.full_text_status = "converted"
+    clear_unfound(rec)
     if (rec.title or "").strip() and not title_matches(md, rec.title):
         rec.full_text_note = ("check this PDF: its text does not match this "
                               "record's title")
@@ -436,12 +437,21 @@ def docx_to_markdown(docx_bytes: bytes) -> str:
     return "\n\n".join(out).strip()
 
 
+def clear_unfound(rec):
+    """A full text has arrived, so "searched, not found" no longer holds.
+    Called wherever a record gains a full text, by hand or by the ladder."""
+    rec.full_text_unfound_at = None
+    rec.full_text_unfound_by = None
+    rec.full_text_unfound_note = None
+
+
 def ingest_upload(db, workspace_id: int, rec, filename: str, data: bytes) -> str:
     """Manual full-text upload of pdf / docx / md / txt. A PDF is stored for the
     convert pass; the text formats already are the full text, so they go straight
     to converted."""
     name = (filename or "").lower()
     if name.endswith(".pdf") or data[:4] == b"%PDF":
+        clear_unfound(rec)     # found, even if it still has to be converted
         store_uploaded_pdf(db, workspace_id, rec, data)
         return "fetched"
     if name.endswith(".docx") or data[:2] == b"PK":   # docx is a zip
@@ -455,6 +465,7 @@ def ingest_upload(db, workspace_id: int, rec, filename: str, data: bytes) -> str
     rec.full_text_path = None
     rec.full_text_status = "converted"
     rec.full_text_note = None      # the human chose this file
+    clear_unfound(rec)
     db.commit()
     return "converted"
 
@@ -632,6 +643,7 @@ def _fetch_record(db, workspace_id: int, rec, email: str, keys: dict,
         rec.full_text_url = url
         rec.full_text_status = "converted"
         rec.full_text_note = "; ".join(sorted(own)) or None
+        clear_unfound(rec)
         db.commit()
         return True
 

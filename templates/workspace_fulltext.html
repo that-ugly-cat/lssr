@@ -59,8 +59,14 @@
     {% for key, lbl, n in status_nav %}
     {{ '·' if not loop.first else '' }} <a href="/w/{{ ws.id }}/fulltext?status={{ key }}" class="{{ '' if status==key else 'muted' }}">{{ lbl }} ({{ n }})</a>
     {% endfor %}
+    <span class="muted">|</span>
+    {% for key, lbl, n in hand_nav %}
+    {{ '·' if not loop.first else '' }} <a href="/w/{{ ws.id }}/fulltext?status={{ key }}" class="{{ '' if status==key else 'muted' }}"
+       title="{{ 'Missing full texts nobody has marked as searched yet: the hand-search worklist' if key == 'tofind' else 'Somebody looked and did not find it. Stays pending; PRISMA reports it as not retrieved' }}">{{ lbl }} ({{ n }})</a>
+    {% endfor %}
   </span>
 </div>
+<p class="muted small" style="margin-top:0;"><strong>to find by hand</strong> is the worklist for the manual search: missing full texts nobody has marked yet. When you have looked and cannot find one, mark it <strong>searched, not found</strong> and say where you looked: the record stays pending (do not exclude it at screening 2), PRISMA reports it as not retrieved, and the note is what the report can cite. Uploading a full text later clears the mark.</p>
 <p class="muted small" style="margin-top:0;">Filter the included pool by full-text status: <strong>converted</strong> (ready for assessment) · <strong>PDF only</strong> (needs converting) · <strong>OA link</strong> / <strong>not found</strong> / <strong>—</strong> (no full text yet). The Fetch/Convert buttons above act on the whole pool, minus the records you have already excluded at screening 2.</p>
 
 <form method="get" class="filter-bar">
@@ -103,6 +109,23 @@
         {% else %}<span class="muted">—</span>{% endif %}
         {% if r.full_text_note %}
         <div class="muted" style="font-size:10px; white-space:normal; max-width:22rem; margin-top:3px;">⚠ {{ r.full_text_note }}</div>
+        {% endif %}
+        {% if r.full_text_status != 'converted' and r.full_text_unfound_at %}
+        <div class="unfound small">
+          <span class="badge badge-danger">searched, not found</span>
+          <span class="muted">{{ unfound_by.get(r.full_text_unfound_by, 'someone') }}, {{ r.full_text_unfound_at.strftime('%Y-%m-%d') }}</span>
+          {% if r.full_text_unfound_note %}<div class="muted" style="white-space:normal; max-width:22rem;">{{ r.full_text_unfound_note }}</div>{% endif %}
+          <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/fulltext/unfound" style="display:inline;">
+            <input type="hidden" name="action" value="clear">
+            <button class="btn btn-small" type="submit" title="Take the mark off: the record goes back to the list still to find">undo</button>
+          </form>
+        </div>
+        {% elif r.full_text_status != 'converted' and r.screen2_decision != 'exclude' %}
+        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/fulltext/unfound" class="unfound-form">
+          <input type="hidden" name="action" value="set">
+          <input type="text" name="note" placeholder="where you looked (library, ILL, authors…)" style="font-size:11px;">
+          <button class="btn btn-small" type="submit">Searched, not found</button>
+        </form>
         {% endif %}
         {% if r.full_text_status != 'converted' %}
         <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/fulltext/upload" enctype="multipart/form-data" style="margin-top:4px;">
@@ -173,7 +196,7 @@
 
 {% block scripts %}
 <script src="/static/js/poller.js?v=3"></script>
-<script src="/static/js/inplace.js?v=4"></script>
+<script src="/static/js/inplace.js?v=5"></script>
 <script>
 poller('ft-fetch-form', 'ft-fetch-status', 'ft-fetch-btn', '/w/{{ ws.id }}/fulltext/fetch/status', 'ft-fetch-prog', 'ft-fetch-fill');
 poller('ft-conv-form', 'ft-conv-status', 'ft-conv-btn', '/w/{{ ws.id }}/fulltext/convert/status', 'ft-conv-prog', 'ft-conv-fill');
@@ -186,11 +209,16 @@ inplace({
   jobs: [['ft-fetch-status', 'ft-fetch-btn'], ['ft-conv-status', 'ft-conv-btn']],
   roots: ['ft-table'],
   lastTouch: 'ft-filters',
-  match: (action) => (action.endsWith('/fulltext/upload') ? 'upload' : null),
+  match: (action, form) => (action.endsWith('/fulltext/upload') ? 'upload'
+    : action.endsWith('/fulltext/unfound')
+      ? (form.elements.action.value === 'clear' ? 'unfound-clear' : 'unfound')
+      : null),
   // A markdown, text or Word file is already the full text and lands
   // converted; a PDF is only stored, and needs the convert pass to become
   // readable — which is a second step, so it gets said rather than assumed.
-  message: (kind, form, data) => (data.status === 'converted'
+  message: (kind, form, data) => (kind === 'unfound' ? 'Marked: searched, not found'
+    : kind === 'unfound-clear' ? 'Mark removed: back on the list to find'
+    : data.status === 'converted'
     ? 'Full text uploaded and converted'
     : 'PDF uploaded — run “2 · Convert” to turn it into text'),
 });

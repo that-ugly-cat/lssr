@@ -23,12 +23,25 @@
   <div class="review-text">
     {% if rec.full_text_md %}{{ rec.full_text_md | markdown }}
     {% else %}
-    <p class="muted">No converted full text for this record.</p>
+    <p class="muted">No full text in LSSR for this record.</p>
+    {% if rec.full_text_unfound_at %}
+    <p class="small flash flash-error" style="display:block;">
+      Searched and not found{% if unfound_by %} by {{ unfound_by }}{% endif %},
+      {{ rec.full_text_unfound_at.strftime('%Y-%m-%d') }}{% if rec.full_text_unfound_note %}: {{ rec.full_text_unfound_note }}{% endif %}.
+      Leave it pending: PRISMA reports it as not retrieved.
+    </p>
+    {% endif %}
     <p class="muted small">
-      You can still decide. If you have the paper elsewhere, judge it from that and
-      record your decision here. If it cannot be obtained at all, <strong>exclude</strong>
-      it and say so in the reason — an unreachable report is a decided record, not a
-      pending one, and leaving it pending hides it from every count.
+      {#- This used to say the opposite: exclude what cannot be obtained, because a
+          pending record was invisible. It is visible now — the Full text tab lists
+          what was searched and not found — and an exclusion here would count the
+          record twice in PRISMA, as not retrieved and as assessed. -#}
+      <strong>If you found the paper elsewhere, upload it first</strong> (Full text tab), then
+      decide: a record assessed without its full text in LSSR is counted in PRISMA both as
+      not retrieved and as assessed. <strong>If it cannot be found, do not exclude it</strong>:
+      mark it <em>searched, not found</em> in the Full text tab and leave it pending.
+      Exclude only for what the text shows, including a retrieved document that turns out
+      unreadable or not the paper the record describes.
       {% if rec.full_text_url %}<br>Open-access link on file:
       <a href="{{ rec.full_text_url }}" target="_blank" rel="noopener">{{ rec.full_text_url | truncate(70) }}</a>{% endif %}
       {% if rec.doi %}<br>DOI: <a href="https://doi.org/{{ rec.doi }}" target="_blank" rel="noopener">{{ rec.doi }}</a>{% endif %}
@@ -58,6 +71,12 @@
         <input type="radio" name="screen2_decision" value="{{ d }}" {{ 'checked' if mydec == d else '' }}> {{ em }}
       </label>
       {% endfor %}
+      {#- Only once you have voted: there is nothing to retract before. -#}
+      {% if my_vote %}
+      <label class="rev-radio" title="Remove your screening-2 vote; the record goes back to where the other votes leave it">
+        <input type="radio" name="screen2_decision" value="clear"> ✕ retract my vote
+      </label>
+      {% endif %}
     </div>
     <input type="text" name="screen2_reason" value="{{ my_vote.reason if my_vote and my_vote.reason != 'full-text review' else '' }}" placeholder="reason (optional)" style="width:100%; margin-top:6px;">
 
