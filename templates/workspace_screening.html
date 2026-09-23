@@ -124,27 +124,11 @@
 </div>
 
 {% set f = filters %}
-{#- every filter but sort, order and page, so each link that changes one of
-    those keeps the rest -#}
-{% macro fq() -%}
-decision={{ f.decision }}&q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f.rtype }}&yf={{ f.yf }}&yt={{ f.yt }}&adj={{ f.adj }}{% for i in f.rv %}&rv={{ i }}{% endfor %}
-{%- endmacro %}
+{% import "_listnav.html" as nav with context %}
 {% macro sorth(field, label) %}
   {%- set no = 'asc' if (f.sort == field and f.order == 'desc') else 'desc' -%}
-  <a class="th-sort" href="?{{ fq() }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
+  <a class="th-sort" href="?{{ nav.fq() }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
 {%- endmacro %}
-{% macro pager() %}
-{% if n_pages > 1 %}
-<div class="pager small">
-  {% if page > 1 %}<a href="?{{ fq() }}&sort={{ f.sort }}&order={{ f.order }}&page={{ page - 1 }}">← prev</a>{% else %}<span class="muted">← prev</span>{% endif %}
-  {% for p in range(1, n_pages + 1) %}
-  {% if p == page %}<strong>{{ p }}</strong>{% else %}<a href="?{{ fq() }}&sort={{ f.sort }}&order={{ f.order }}&page={{ p }}">{{ p }}</a>{% endif %}
-  {% endfor %}
-  {% if page < n_pages %}<a href="?{{ fq() }}&sort={{ f.sort }}&order={{ f.order }}&page={{ page + 1 }}">next →</a>{% else %}<span class="muted">next →</span>{% endif %}
-  <span class="muted">· records {{ (page - 1) * page_size + 1 }}–{{ [page * page_size, matched_n]|min }} of {{ matched_n }}</span>
-</div>
-{% endif %}
-{% endmacro %}
 
 <div class="cards-label" id="scr-filters">
   Records
@@ -186,30 +170,12 @@ decision={{ f.decision }}&q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f
   </select>
   <input type="number" name="yf" value="{{ f.yf }}" placeholder="year ≥" style="max-width:100px;">
   <input type="number" name="yt" value="{{ f.yt }}" placeholder="year ≤" style="max-width:100px;">
-  {#- a <details> of checkboxes rather than <select multiple>: it submits the
-      same repeated rv= with the plain GET form, and nobody has to know about
-      Ctrl+click -#}
-  {% if rv_choices %}
-  <details class="multi-select">
-    <summary>{% if f.rv %}voted by {{ f.rv|length }}{% else %}any reviewer{% endif %}</summary>
-    <div class="multi-select-menu">
-      <p class="muted small">Records every checked reviewer voted on.</p>
-      {% for u in rv_choices %}
-      <label class="check-row"><input type="checkbox" name="rv" value="{{ u.id }}" {{ 'checked' if u.id in f.rv }}> {{ u.name or u.email }}{% if u.id == user.id %} (you){% endif %}</label>
-      {% endfor %}
-    </div>
-  </details>
-  {% endif %}
-  <select name="adj">
-    <option value="">adjudicated or not</option>
-    <option value="yes" {{ 'selected' if f.adj == 'yes' }}>adjudicated only</option>
-    <option value="no" {{ 'selected' if f.adj == 'no' }}>not adjudicated</option>
-  </select>
+  {{ nav.vote_filters() }}
   <button class="btn btn-small" type="submit">Filter</button>
   <a class="btn btn-small" href="/w/{{ ws.id }}/screening?decision={{ f.decision }}">Clear</a>
 </form>
 
-{{ pager() }}
+{{ nav.pager() }}
 <table class="table" id="scr-table">
   <thead><tr><th class="nowrap">{{ sorth('id','#') }}</th><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Decision &amp; reviewers</th><th class="ta-right">Your vote</th></tr></thead>
   <tbody>
@@ -345,7 +311,7 @@ decision={{ f.decision }}&q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f
     {% endfor %}
   </tbody>
 </table>
-{{ pager() }}
+{{ nav.pager() }}
 
 {% include "_step_done.html" %}
 

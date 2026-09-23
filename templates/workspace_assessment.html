@@ -59,9 +59,10 @@
 </div>
 
 {% set f = filters %}
+{% import "_listnav.html" as nav with context %}
 {% macro sorth(field, label) %}
   {%- set no = 'asc' if (f.sort == field and f.order == 'desc') else 'desc' -%}
-  <a class="th-sort" href="?decision={{ f.decision }}&q={{ f.q|urlencode }}&source={{ f.source }}&rtype={{ f.rtype }}&yf={{ f.yf }}&yt={{ f.yt }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
+  <a class="th-sort" href="?{{ nav.fq() }}&sort={{ field }}&order={{ no }}">{{ label }}{% if f.sort == field %} {{ '▾' if f.order == 'desc' else '▴' }}{% endif %}</a>
 {%- endmacro %}
 
 <div class="cards-label" id="as-filters">
@@ -97,10 +98,12 @@
   </select>
   <input type="number" name="yf" value="{{ f.yf }}" placeholder="year ≥" style="max-width:100px;">
   <input type="number" name="yt" value="{{ f.yt }}" placeholder="year ≤" style="max-width:100px;">
+  {{ nav.vote_filters() }}
   <button class="btn btn-small" type="submit">Filter</button>
   <a class="btn btn-small" href="/w/{{ ws.id }}/assessment?decision={{ f.decision }}">Clear</a>
 </form>
 
+{{ nav.pager() }}
 <table class="table" id="as-table">
   <thead><tr><th class="nowrap">{{ sorth('id','#') }}</th><th class="nowrap">{{ sorth('year','Year') }}</th><th>{{ sorth('title','Title') }}</th><th>Full text</th><th>Screen 2</th><th class="ta-right">Review</th></tr></thead>
   <tbody>
@@ -161,6 +164,7 @@
     {% endfor %}
   </tbody>
 </table>
+{{ nav.pager() }}
 
 {% include "_step_done.html" %}
 
