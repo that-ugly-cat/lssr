@@ -17,7 +17,7 @@ import os
 import re
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import (
     FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response,
 )
@@ -228,6 +228,10 @@ def _user_publisher_keys(user: User) -> dict:
                 value = ""
         keys[name] = value or os.environ.get(env, "").strip()
     return keys
+
+
+# Rows per page on the screening table.
+SCREEN_PAGE_SIZE = 1000
 
 
 def _apply_record_filters(query, q: str, source: str, rtype: str, yf: str, yt: str,
@@ -1459,6 +1463,7 @@ async def delete_criterion(ws_id: int, cid: int, user: User = Depends(get_curren
 async def screening_page(ws_id: int, request: Request, decision: str = "pending",
                          q: str = "", source: str = "", rtype: str = "",
                          yf: str = "", yt: str = "", sort: str = "year", order: str = "desc",
+                         rv: list[int] = Query([]), adj: str = "", page: int = 1,
                          user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
 
@@ -1538,8 +1543,53 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         # the dry run's whole point: walk the records where the model, run again
         # under the criteria as they stand, would not have voted as a reviewer did.
         tq = tq.filter(Record.id.in_(shadow_stats["disagree_ids"] or [-1]))
+    # Who voted, as a filter. Several names mean records every one of them voted
+    # on, not any of them: the question it answers is "where can I compare these
+    # people", which is where agreement and conflict live.
+    # The blind rule reaches this too. Knowing *which* records a colleague voted
+    # on is less than knowing how, but it is still more than a reviewer sees on
+    # the rows ("1/2 reviewed", no name), so only the owner may filter by
+    # somebody else; everyone else gets themselves, i.e. "records I voted on".
+    # Enforced here and not only by what the dropdown offers, since the ids
+    # travel in the URL.
+    rv_owner_ids = {ws.owner_id} if ws.owner_id else set()
+    member_ids = {m.user_id for m in
+                  db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == ws.id)}
+    if is_owner:
+        allowed = rv_owner_ids | member_ids
+    else:
+        allowed = {user.id}
+    rv_sel = sorted({i for i in rv if i in allowed})
+    for uid in rv_sel:
+        tq = tq.filter(Record.id.in_(
+            db.query(ScreenDecision.record_id)
+              .filter(ScreenDecision.workspace_id == ws.id,
+                      ScreenDecision.stage == "screen1",
+                      ScreenDecision.reviewer_kind == "user",
+                      ScreenDecision.reviewer_id == uid)
+              .scalar_subquery()))
+    rv_choices = (db.query(User).filter(User.id.in_(allowed)).all() if allowed else [])
+    rv_choices.sort(key=lambda u: (u.name or u.email or "").lower())
+    # Orthogonal to the decision links, so "exclude, adjudicated" is one view.
+    # screen1_by is the right column here, unlike for "has a person voted": it
+    # caches who settled the record, and an adjudication is exactly that.
+    if adj == "yes":
+        tq = tq.filter(Record.screen1_by == "adjudicator")
+    elif adj == "no":
+        # a pending record has screen1_by NULL, and `!= 'adjudicator'` alone
+        # drops NULLs in SQL — it lost exactly the records nobody had touched
+        from sqlalchemy import or_
+        tq = tq.filter(or_(Record.screen1_by.is_(None), Record.screen1_by != "adjudicator"))
+    else:
+        adj = ""
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
-    records = tq.limit(500).all()
+    # Paged rather than cut. The old flat limit of 500 dropped the tail of a
+    # 710-record review from the "all" view without a word, and Ctrl+F — the
+    # obvious way to look for something on the page — could not see it.
+    matched_n = tq.count()
+    n_pages = max(1, -(-matched_n // SCREEN_PAGE_SIZE))
+    page = min(max(page, 1), n_pages)
+    records = tq.offset((page - 1) * SCREEN_PAGE_SIZE).limit(SCREEN_PAGE_SIZE).all()
 
     # per-record screen-1 votes, for the reviewer table (blind) + adjudication.
     rec_ids = [r.id for r in records]
@@ -1614,7 +1664,11 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         "is_owner": is_owner,
         "dbs_present": _dbs_present(db, ws.id),
         "filters": {"decision": decision, "q": q, "source": source, "rtype": rtype,
-                    "yf": yf, "yt": yt, "sort": sort, "order": order},
+                    "yf": yf, "yt": yt, "sort": sort, "order": order,
+                    "rv": rv_sel, "adj": adj},
+        "rv_choices": rv_choices,
+        "page": page, "n_pages": n_pages, "matched_n": matched_n,
+        "page_size": SCREEN_PAGE_SIZE,
         "n_exclusion": len(workspace_criteria(db, ws, "exclusion")),
         "exclusion_criteria": workspace_criteria(db, ws, "exclusion"),
         "has_key": bool(_user_api_key(user)),

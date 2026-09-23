@@ -402,6 +402,24 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
   margin: 10px 0;
 }
 .filter-bar select { max-width: 200px; }
+/* a dropdown of checkboxes that looks like the selects beside it */
+.multi-select { position: relative; }
+.multi-select > summary {
+  list-style: none; cursor: pointer; font-size: 14px; color: var(--text);
+  padding: 8px 10px; margin-top: 4px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg); white-space: nowrap;
+}
+.multi-select > summary::-webkit-details-marker { display: none; }
+.multi-select > summary::after { content: ' ▾'; color: var(--muted); }
+.multi-select[open] > summary { border-color: var(--accent); }
+.multi-select-menu {
+  position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 220px;
+  padding: 8px 12px; background: var(--card); border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+.multi-select-menu p { margin: 0 0 6px; }
+.multi-select-menu .check-row { display: flex; gap: 6px; align-items: center; margin: 4px 0; white-space: nowrap; }
+.pager { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 
 /* ── inline spinner ── */
 .spinner {
