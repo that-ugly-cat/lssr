@@ -6,22 +6,23 @@
 <div class="cards-label">Review details</div>
 <div class="card">
   <form method="post" action="/w/{{ ws.id }}/settings/details">
-    <label>Description <textarea name="description" rows="2">{{ ws.description or '' }}</textarea></label>
-    <label>Research question(s) <textarea name="research_question" rows="3">{{ ws.research_question or '' }}</textarea></label>
-    <button class="btn btn-small" type="submit" style="margin-top:8px;">Save details</button>
+    <label>Description <textarea name="description" rows="2" {{ '' if is_owner else 'disabled' }}>{{ ws.description or '' }}</textarea></label>
+    <label>Research question(s) <textarea name="research_question" rows="3" {{ '' if is_owner else 'disabled' }}>{{ ws.research_question or '' }}</textarea></label>
+    {% if is_owner %}<button class="btn btn-small" type="submit" style="margin-top:8px;">Save details</button>{% endif %}
   </form>
-  <p class="muted small">Shown at the top of the public link page, and used as context for the LLM steps.</p>
+  <p class="muted small">Shown at the top of the public link page, and used as context for the LLM steps.
+    {% if not is_owner %}The protocol (details, model, criteria, extraction fields) is changed by the review's owner.{% endif %}</p>
 </div>
 
 <div class="cards-label">Screening / assessment model</div>
 <div class="card">
   <form method="post" action="/w/{{ ws.id }}/settings/model" class="inline-form">
-    <select name="screening_model">
+    <select name="screening_model" {{ '' if is_owner else 'disabled' }}>
       {% for m in models %}
       <option value="{{ m }}" {{ 'selected' if ws.screening_model == m else '' }}>{{ m }}</option>
       {% endfor %}
     </select>
-    <button class="btn btn-small" type="submit">Save model</button>
+    {% if is_owner %}<button class="btn btn-small" type="submit">Save model</button>{% endif %}
   </form>
   <p class="muted small">Haiku is cheapest and fine for title/abstract screening; Sonnet/Opus for harder judgment.</p>
 </div>
@@ -117,25 +118,34 @@
   <div class="cb-card">
     <div class="cb-card-head">
       <div class="cb-card-title muted small">{{ kind }} {{ loop.index }}</div>
+      {% if is_owner %}
       <form method="post" action="/w/{{ ws.id }}/criteria/{{ c.id }}/delete">
         <button class="btn btn-danger btn-small" type="submit">Delete</button>
       </form>
+      {% endif %}
     </div>
+    {% if is_owner %}
     <form method="post" action="/w/{{ ws.id }}/criteria/{{ c.id }}/edit">
       <label>Label <input type="text" name="label" value="{{ c.label }}" required></label>
       <label>Description / guidance <textarea name="description" rows="3">{{ c.description or '' }}</textarea></label>
       <button class="btn btn-small" type="submit">Save changes</button>
     </form>
+    {% else %}
+    <strong>{{ c.label }}</strong>
+    {% if c.description %}<p class="small" style="margin:4px 0 0; white-space:pre-wrap;">{{ c.description }}</p>{% endif %}
+    {% endif %}
   </div>
   {% else %}
   <p class="muted small" style="margin-top:0;">None yet.</p>
   {% endfor %}
+  {% if is_owner %}
   <form method="post" action="/w/{{ ws.id }}/criteria/add" style="margin-top:10px;">
     <input type="hidden" name="kind" value="{{ kind }}">
     <label>Label <input type="text" name="label" required></label>
     <label>Description / guidance <textarea name="description" rows="2"></textarea></label>
     <button class="btn btn-small" type="submit">Add {{ kind }} criterion</button>
   </form>
+  {% endif %}
 </div>
 {% endfor %}
 
@@ -165,11 +175,15 @@
           {% if f.show_if_key %}<div class="muted">shown if <code>{{ f.show_if_key }}</code> ∈ {{ f.show_if_values()|join(', ') }}</div>{% endif %}
         </td>
         <td class="ta-right nowrap">
+          {% if is_owner %}
           <form method="post" action="/w/{{ ws.id }}/fields/{{ f.id }}/move" style="display:inline;"><input type="hidden" name="dir" value="up"><button class="btn btn-small" type="submit" {{ 'disabled' if loop.first else '' }}>↑</button></form>
           <form method="post" action="/w/{{ ws.id }}/fields/{{ f.id }}/move" style="display:inline;"><input type="hidden" name="dir" value="down"><button class="btn btn-small" type="submit" {{ 'disabled' if loop.last else '' }}>↓</button></form>
+          {% endif %}
         </td>
         <td class="ta-right">
+          {% if is_owner %}
           <form method="post" action="/w/{{ ws.id }}/fields/{{ f.id }}/delete"><button class="btn btn-danger btn-small" type="submit">Delete</button></form>
+          {% endif %}
         </td>
       </tr>
       {% else %}
@@ -178,6 +192,7 @@
     </tbody>
   </table>
 
+  {% if is_owner %}
   <form method="post" action="/w/{{ ws.id }}/fields/add" id="field-add" style="margin-top:12px;">
     <div class="inline-form">
       <label style="flex:2;">Label <input type="text" name="label" required></label>
@@ -202,6 +217,7 @@
     </div>
     <button class="btn btn-small" type="submit" style="margin-top:8px;">Add field</button>
   </form>
+  {% endif %}
 </div>
 {% if is_owner %}
 <div class="cards-label" style="color:var(--danger);">Danger zone</div>

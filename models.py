@@ -445,6 +445,64 @@ class ExtractionField(Base):
             return []
 
 
+class ProtocolChange(Base):
+    """One edit to what a review is read against: a criterion, an extraction
+    field, or the research question and description.
+
+    Before this, rewording a criterion overwrote it and the old text was gone.
+    That is the one thing a review may not lose: a protocol amended while the
+    screening runs is normal, but the report has to say what changed and when,
+    and the reviewers who voted under the old wording have to be able to find
+    it. Written by both the web app and the MCP surface (`via`), so the history
+    does not depend on which door the edit came through. Append-only; nothing
+    reads it to decide anything.
+
+    `before` and `after` are snapshots, not diffs: a criterion as it read, a
+    field as it was defined. Null on the side that did not exist (an add has no
+    before, a delete no after)."""
+    __tablename__ = "protocol_changes"
+    id           = Column(Integer, primary_key=True)
+    workspace_id = Column(Integer, ForeignKey("workspaces.id"), nullable=False, index=True)
+    user_id      = Column(Integer, ForeignKey("users.id"), nullable=True)
+    via          = Column(String, nullable=False)   # web | mcp
+    target       = Column(String, nullable=False)   # criterion | field | details
+    action       = Column(String, nullable=False)   # add | edit | delete
+    ref          = Column(String, nullable=True)    # "inclusion 2", a field key
+    before_json  = Column(Text, nullable=True)
+    after_json   = Column(Text, nullable=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+
+
+def criterion_snapshot(c: "Criterion") -> dict:
+    # position is 0-based and recompacted after every mutation, so +1 is the
+    # number the settings page shows and reviewers cite
+    return {"kind": c.kind, "number": (c.position or 0) + 1,
+            "label": c.label, "description": c.description}
+
+
+def field_snapshot(f: "ExtractionField") -> dict:
+    return {"key": f.key, "label": f.label, "help": f.help, "type": f.field_type,
+            "options": f.options(),
+            "show_if": ({"field": f.show_if_key, "values": f.show_if_values()}
+                        if f.show_if_key else None)}
+
+
+def log_protocol_change(db, workspace_id: int, user_id, via: str, target: str,
+                        action: str, ref: str | None, before=None, after=None):
+    """Append one ProtocolChange. No commit: it rides in the caller's
+    transaction, so an edit that rolls back leaves no entry behind. An edit
+    that changed nothing is not logged."""
+    if action == "edit" and before == after:
+        return
+    db.add(ProtocolChange(
+        workspace_id=workspace_id, user_id=user_id, via=via, target=target,
+        action=action, ref=ref,
+        before_json=json.dumps(before, ensure_ascii=False) if before is not None else None,
+        after_json=json.dumps(after, ensure_ascii=False) if after is not None else None))
+
+
 class Extraction(Base):
     """A record's extraction values, per reviewer. reviewer_kind: model (LLM
     draft) | user (a reviewer's own) | final (owner-curated, authoritative)."""

@@ -8,10 +8,10 @@ extraction says about study design. Those questions arrive in a conversation,
 and until now the only way to answer them was to open the app, pick a tab and
 count by eye. This is the same corpus, readable from where the questions are.
 
-**Two verbs write, and the rest reads.** They are vote_screen1 and
-set_earmark, and the promise the first version made still holds for everything
-else: no extraction, no adjudication, no step marked done, no review created or
-deleted. The reason
+**A few verbs write, and the rest reads.** They are vote_screen1, set_earmark
+and the protocol verbs at the bottom of this file, and the promise the first
+version made still holds for everything else: no extraction, no adjudication,
+no step marked done, no review created or deleted. The reason
 writes were refused wholesale was that a screening decision carries a reviewer's
 name and belongs to a person doing the reading, so a surface where a model could
 cast one turns the reviewer into an editor of its own output. That objection was
@@ -32,6 +32,17 @@ reason text of votes, where an observation about a record ends up filed as a
 reason for a decision it was not. It still needs a writing key, because the
 mark is visible to the whole review and a read-only key that could annotate
 seven hundred records is not read-only in any sense worth the name.
+
+The protocol verbs came third, for a plainer reason: rewording a criterion or
+correcting an extraction field's help was being done by copying text out of a
+conversation into the settings page, one field at a time. They add and edit
+criteria and fields and rewrite the research question; they never delete,
+because deleting a criterion renumbers the ones every reason cites and deleting
+a field discards what was extracted into it. They belong to the review's owner
+and not to every member, and every change is logged with the text it replaced
+(protocol_changes), from this surface and from the web app alike, because a
+protocol amended mid-review has to be reported and the old wording is exactly
+what used to be lost.
 
 The consequence worth saying out loud: blinding. The web app hides other
 reviewers' votes until you have cast yours; this surface shows them all, which
@@ -94,15 +105,20 @@ mcp = MCPServer(
         "records yourself. search_records is lexical, not semantic — no hit "
         "means those words are not in the title, abstract or authors, never "
         "that the corpus lacks the topic. "
-        "Two verbs write and the rest read. vote_screen1 casts a "
+        "A few verbs write and the rest read. vote_screen1 casts a "
         "title-and-abstract vote in the key owner's name: read get_protocol "
         "first, because a vote not argued from the written criteria is noise "
         "in somebody's review, and confirm with the user before the first one. "
         "set_earmark writes a note in the margin of a record, which the whole "
         "team reads and which decides nothing — that is where an observation "
-        "about a record belongs, and a verdict is not one. Both need a key "
-        "minted with writing enabled. Extraction, adjudication, screening 2 "
-        "and marking a step done stay in the web app."
+        "about a record belongs, and a verdict is not one. The protocol verbs "
+        "(update_criterion, add_criterion, update_field, add_field, "
+        "update_details) belong to the review's owner: confirm the exact "
+        "wording with the user before writing, since every vote is argued from "
+        "that text; nothing is deleted from here, and protocol_history shows "
+        "what each change replaced. All writes need a key minted with writing "
+        "enabled. Extraction, adjudication, screening 2, deleting criteria or "
+        "fields, and marking a step done stay in the web app."
     ),
 )
 
@@ -434,9 +450,11 @@ def get_protocol(review: str) -> dict:
     try:
         ws = auth.mcp_review(db, review)
 
+        # `number` is what the settings page shows and what reasons cite, and
+        # what update_criterion takes
         def crit(kind):
-            return [{"label": c.label, "description": c.description}
-                    for c in workspace_criteria(db, ws, kind)]
+            return [{"number": i + 1, "label": c.label, "description": c.description}
+                    for i, c in enumerate(workspace_criteria(db, ws, kind))]
         fields = []
         for f in workspace_extraction_fields(db, ws):
             fields.append({
@@ -748,7 +766,7 @@ def list_conflicts(review: str, stage: str = "screen1", wide: bool = True,
 @mcp.tool()
 def vote_screen1(review: str, record_id: int, decision: str, reason: str = "") -> dict:
     """
-    Cast or retract one title-and-abstract vote. The only tool here that writes.
+    Cast or retract one title-and-abstract vote.
 
     decision: include, exclude, maybe, or `clear` to retract the vote you
         already cast. Retracting only ever removes your own row; an
@@ -999,6 +1017,367 @@ def set_earmark(review: str, record_id: int, note: str = "", on: bool = True) ->
             "others": [{"reviewer": (m.user.name if m.user else "a reviewer"),
                         "note": m.note}
                        for m in marks if m.user_id != user.id],
+        }
+    except (LookupError, PermissionError) as e:
+        return _fail(str(e))
+    finally:
+        db.close()
+
+
+# ── Protocol: criteria, extraction fields, research question ─────────────────
+#
+# The owner's, and only through a writing key: the protocol is what everybody
+# else's votes are argued from, so a member who can read it may not reword it
+# here. Nothing is deleted from this surface. Deleting a criterion renumbers
+# the rest, and every reason that cites "criterion 4" starts pointing at
+# another one; deleting a field throws away what was extracted into it. Both
+# are done in the web app, with the protocol in front of you.
+#
+# Every change is logged in protocol_changes with its before and after, the
+# same log the web app writes, and protocol_history reads it back.
+
+CRITERION_KINDS = ("exclusion", "inclusion")
+FIELD_TYPES = ("text", "textarea", "number", "select", "multiselect")
+
+
+def _owner_review(db, review: str):
+    """(user, ws) for a protocol write: a writing key, and the owner of the
+    review or an admin. Raises PermissionError otherwise."""
+    user = auth.require_write()
+    ws = auth.mcp_review(db, review)
+    if not (ws.owner_id == user.id or user.is_admin):
+        raise PermissionError(
+            f"Only the owner of '{ws.name}' can change its protocol. Members can "
+            "read it with get_protocol.")
+    return user, ws
+
+
+def _criterion(db, ws, kind: str, number: int):
+    rows = workspace_criteria(db, ws, kind)
+    if not 1 <= int(number) <= len(rows):
+        raise LookupError(f"'{ws.name}' has {len(rows)} {kind} criteria; there is "
+                          f"no number {number}. get_protocol lists them.")
+    return rows[int(number) - 1]
+
+
+def _field(db, ws, key: str):
+    from models import ensure_extraction_fields
+    ensure_extraction_fields(db, ws)
+    for f in workspace_extraction_fields(db, ws):
+        if f.key == key:
+            return f
+    raise LookupError(f"No extraction field '{key}' in '{ws.name}'. get_protocol "
+                      "lists the keys.")
+
+
+def _option_use(db, ws, key: str) -> Counter:
+    """How many extraction rows hold each value of one field: every row, every
+    reviewer, the model's drafts included, since removing an option strands the
+    value wherever it sits."""
+    used = Counter()
+    for e in db.query(Extraction).filter(Extraction.workspace_id == ws.id).all():
+        v = e.values().get(key)
+        for x in (v if isinstance(v, list) else [v] if v not in (None, "") else []):
+            used[str(x)] += 1
+    return used
+
+
+def _clean_list(items) -> list:
+    return [str(x).strip() for x in (items or []) if str(x).strip()]
+
+
+def _show_if(db, ws, own_key: str | None, field: str, values):
+    """Validate a show_if pair; returns (key, values), or (None, None) to clear."""
+    field = (field or "").strip()
+    if not field:
+        return None, None
+    if field == own_key:
+        raise ValueError("A field cannot be shown conditionally on itself.")
+    parent = _field(db, ws, field)
+    vals = _clean_list(values)
+    if not vals:
+        raise ValueError("show_if_values is needed with show_if_field: which "
+                         f"values of '{field}' reveal this field?")
+    if parent.options():
+        unknown = [v for v in vals if v not in parent.options()]
+        if unknown:
+            raise ValueError(f"{unknown} are not options of '{field}': "
+                             f"{parent.options()}")
+    return parent.key, vals
+
+
+@mcp.tool()
+def update_criterion(review: str, kind: str, number: int, label: str = "",
+                     description: str | None = None) -> dict:
+    """
+    Reword one screening criterion in place. Owner only, writing key.
+
+    kind: exclusion (screening 1) or inclusion (screening 2).
+    number: as get_protocol shows it, starting at 1. The criterion keeps its
+        number and its place: only the words change.
+    label: the new short name; empty leaves it as it is.
+    description: the new full text, which reviewers and the model screen
+        against. Omit to leave it; an empty string clears it.
+
+    Votes already cast are not touched and are not re-read: a vote argued from
+    the old wording stays argued from the old wording. That is why the change
+    is logged with the text it replaced (protocol_history), and why a reworded
+    criterion usually deserves a look at the records it decided.
+    """
+    from models import criterion_snapshot, log_protocol_change
+    kind = (kind or "").strip().lower()
+    if kind not in CRITERION_KINDS:
+        return _fail("kind must be exclusion or inclusion")
+    if not (label or "").strip() and description is None:
+        return _fail("Nothing to change: give a label, a description, or both.")
+    db = SessionLocal()
+    try:
+        user, ws = _owner_review(db, review)
+        c = _criterion(db, ws, kind, number)
+        before = criterion_snapshot(c)
+        if (label or "").strip():
+            c.label = label.strip()
+        if description is not None:
+            c.description = description.strip() or None
+        after = criterion_snapshot(c)
+        log_protocol_change(db, ws.id, user.id, "mcp", "criterion", "edit",
+                            f"{kind} {after['number']}", before, after)
+        db.commit()
+        return {"review": ws.name, "changed": before != after,
+                "before": before, "after": after}
+    except (LookupError, PermissionError) as e:
+        db.rollback()
+        return _fail(str(e))
+    finally:
+        db.close()
+
+
+@mcp.tool()
+def add_criterion(review: str, kind: str, label: str, description: str = "") -> dict:
+    """
+    Add a screening criterion at the end of its list. Owner only, writing key.
+
+    kind: exclusion (screening 1) or inclusion (screening 2).
+    description: the full text reviewers and the model will screen against.
+        Worth writing properly: a criterion whose description only repeats its
+        label gives the pre-screener nothing to decide with.
+
+    Records already screened are not re-screened against it; the answer says
+    how many were decided without it.
+    """
+    from models import Criterion, criterion_snapshot, log_protocol_change, recompact_criteria
+    kind = (kind or "").strip().lower()
+    if kind not in CRITERION_KINDS:
+        return _fail("kind must be exclusion or inclusion")
+    if not (label or "").strip():
+        return _fail("A criterion needs a label.")
+    db = SessionLocal()
+    try:
+        user, ws = _owner_review(db, review)
+        c = Criterion(workspace_id=ws.id, kind=kind, label=label.strip(),
+                      description=(description or "").strip() or None,
+                      position=len(workspace_criteria(db, ws, kind)))
+        db.add(c)
+        db.flush()
+        recompact_criteria(db, ws.id, kind)
+        after = criterion_snapshot(c)
+        log_protocol_change(db, ws.id, user.id, "mcp", "criterion", "add",
+                            f"{kind} {after['number']}", None, after)
+        db.commit()
+        col = Record.screen1_decision if kind == "exclusion" else Record.screen2_decision
+        decided = _live(db, ws.id).filter(col != "pending").count()
+        return {"review": ws.name, "added": after,
+                "already_decided_without_it": decided}
+    except (LookupError, PermissionError) as e:
+        db.rollback()
+        return _fail(str(e))
+    finally:
+        db.close()
+
+
+@mcp.tool()
+def update_field(review: str, key: str, label: str = "", help: str | None = None,
+                 options: list[str] | None = None, show_if_field: str | None = None,
+                 show_if_values: list[str] | None = None) -> dict:
+    """
+    Correct one extraction field in place. Owner only, writing key.
+
+    key: the field's key from get_protocol. It never changes, so values already
+        extracted stay attached.
+    label: new display name; empty leaves it.
+    help: the guidance reviewers see and the model drafts from. Omit to leave
+        it; an empty string clears it.
+    options: the complete new list, for select and multiselect fields. An
+        option that some extraction already holds cannot be removed (or
+        renamed, which is the same thing): the answer names it and says how
+        many rows use it. Adding options and reordering them is always fine.
+    show_if_field / show_if_values: ask this field only when another field
+        holds one of these values. show_if_field="" removes the condition.
+
+    The type of a field cannot be changed here: values extracted as one type
+    do not become another.
+    """
+    from models import field_snapshot, log_protocol_change
+    if (not (label or "").strip() and help is None and options is None
+            and show_if_field is None):
+        return _fail("Nothing to change.")
+    db = SessionLocal()
+    try:
+        user, ws = _owner_review(db, review)
+        f = _field(db, ws, key)
+        before = field_snapshot(f)
+        if options is not None:
+            if f.field_type not in ("select", "multiselect"):
+                return _fail(f"'{key}' is a {f.field_type} field and has no options.")
+            new = _clean_list(options)
+            if not new:
+                return _fail("A select field needs at least one option.")
+            if len(set(new)) != len(new):
+                return _fail("The option list has duplicates.")
+            used = _option_use(db, ws, f.key)
+            stranded = {o: used[o] for o in f.options() if o not in new and used[o]}
+            if stranded:
+                return _fail(f"These options are in use and would be stranded: "
+                             f"{stranded} (rows per option). Keep them in the list, "
+                             "or re-extract those records first.")
+            f.options_json = json.dumps(new, ensure_ascii=False)
+        if (label or "").strip():
+            f.label = label.strip()
+        if help is not None:
+            f.help = help.strip() or None
+        if show_if_field is not None:
+            k, vals = _show_if(db, ws, f.key, show_if_field, show_if_values)
+            f.show_if_key = k
+            f.show_if_values_json = json.dumps(vals, ensure_ascii=False) if vals else None
+        after = field_snapshot(f)
+        log_protocol_change(db, ws.id, user.id, "mcp", "field", "edit", f.key, before, after)
+        db.commit()
+        return {"review": ws.name, "changed": before != after,
+                "before": before, "after": after}
+    except (LookupError, PermissionError, ValueError) as e:
+        db.rollback()
+        return _fail(str(e))
+    finally:
+        db.close()
+
+
+@mcp.tool()
+def add_field(review: str, label: str, type: str, help: str = "",
+              options: list[str] | None = None, show_if_field: str = "",
+              show_if_values: list[str] | None = None) -> dict:
+    """
+    Add an extraction field at the end of the form. Owner only, writing key.
+
+    type: text, textarea, number, select or multiselect.
+    options: required for select and multiselect, ignored otherwise.
+    help: what the reviewer should put there. The model drafts extractions from
+        it too, so it is the field's real definition.
+    show_if_field / show_if_values: optional condition, as in update_field.
+
+    The key is derived from the label and returned; it is what update_field
+    and extraction_summary take.
+    """
+    from models import (ExtractionField, ensure_extraction_fields, field_snapshot,
+                        log_protocol_change, slug_field_key)
+    type = (type or "").strip().lower()
+    if type not in FIELD_TYPES:
+        return _fail(f"type must be one of {', '.join(FIELD_TYPES)}")
+    if not (label or "").strip():
+        return _fail("A field needs a label.")
+    opts = _clean_list(options) if type in ("select", "multiselect") else []
+    if type in ("select", "multiselect") and not opts:
+        return _fail(f"A {type} field needs options.")
+    if len(set(opts)) != len(opts):
+        return _fail("The option list has duplicates.")
+    db = SessionLocal()
+    try:
+        user, ws = _owner_review(db, review)
+        ensure_extraction_fields(db, ws)
+        existing = workspace_extraction_fields(db, ws)
+        key = slug_field_key(label, {f.key for f in existing})
+        k, vals = _show_if(db, ws, key, show_if_field, show_if_values)
+        f = ExtractionField(
+            workspace_id=ws.id, key=key, label=label.strip(),
+            help=(help or "").strip() or None, field_type=type,
+            options_json=json.dumps(opts, ensure_ascii=False) if opts else None,
+            show_if_key=k,
+            show_if_values_json=json.dumps(vals, ensure_ascii=False) if vals else None,
+            builtin=False, position=max((x.position for x in existing), default=-1) + 1)
+        db.add(f)
+        after = field_snapshot(f)
+        log_protocol_change(db, ws.id, user.id, "mcp", "field", "add", key, None, after)
+        db.commit()
+        return {"review": ws.name, "added": after}
+    except (LookupError, PermissionError, ValueError) as e:
+        db.rollback()
+        return _fail(str(e))
+    finally:
+        db.close()
+
+
+@mcp.tool()
+def update_details(review: str, research_question: str | None = None,
+                   description: str | None = None) -> dict:
+    """
+    Rewrite the research question or the description of a review. Owner only,
+    writing key.
+
+    Omit a parameter to leave it as it is. The model reads the research
+    question at every screening and assessment step, and the description is
+    what the public page shows, so this is a protocol change like any other
+    and is logged as one.
+    """
+    from models import log_protocol_change
+    if research_question is None and description is None:
+        return _fail("Nothing to change.")
+    db = SessionLocal()
+    try:
+        user, ws = _owner_review(db, review)
+        before = {"research_question": ws.research_question, "description": ws.description}
+        if research_question is not None:
+            ws.research_question = research_question.strip() or None
+        if description is not None:
+            ws.description = description.strip() or None
+        after = {"research_question": ws.research_question, "description": ws.description}
+        log_protocol_change(db, ws.id, user.id, "mcp", "details", "edit", None, before, after)
+        db.commit()
+        return {"review": ws.name, "changed": before != after,
+                "before": before, "after": after}
+    except (LookupError, PermissionError) as e:
+        db.rollback()
+        return _fail(str(e))
+    finally:
+        db.close()
+
+
+@mcp.tool()
+def protocol_history(review: str, limit: int = 50) -> dict:
+    """
+    Every recorded change to the protocol, newest first: who, when, through
+    which door (web or mcp), and the criterion or field as it read before and
+    after.
+
+    The log starts on the day it was built. Edits made before then overwrote
+    the old text without a trace, so a short history is not evidence that the
+    protocol never changed.
+    """
+    from models import ProtocolChange
+    db = SessionLocal()
+    try:
+        ws = auth.mcp_review(db, review)
+        rows = (db.query(ProtocolChange)
+                  .filter(ProtocolChange.workspace_id == ws.id)
+                  .order_by(ProtocolChange.created_at.desc(), ProtocolChange.id.desc())
+                  .limit(max(1, min(int(limit), 500))).all())
+        return {
+            "review": ws.name,
+            "changes": [{
+                "at": _d(r.created_at),
+                "by": r.user.name if r.user else None,
+                "via": r.via, "target": r.target, "action": r.action, "ref": r.ref,
+                "before": json.loads(r.before_json) if r.before_json else None,
+                "after": json.loads(r.after_json) if r.after_json else None,
+            } for r in rows],
         }
     except (LookupError, PermissionError) as e:
         return _fail(str(e))

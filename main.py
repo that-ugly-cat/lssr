@@ -35,7 +35,7 @@ from models import (
     DECIDING_KINDS,
     DATABASES, DB_LABELS, HARVEST_DBS, PIPELINE_STEPS, PRICING, SOURCE_DBS, Criterion,
     Import, PublicShare, RawReference, Record, SessionLocal, User, Workspace, WorkspaceMember,
-    can_access,
+    can_access, criterion_snapshot, field_snapshot, log_protocol_change,
     current_iteration, db_label, db_search_url, get_db, get_query, init_db,
     earmarks_by_record, my_earmark_ids, set_earmark,
     human_voted_subq, new_share_token, recompact_criteria, screen2_required,
@@ -191,6 +191,15 @@ def _load_ws(db: Session, user: User, ws_id: int) -> Workspace:
     if not ws or not can_access(db, user, ws):
         raise HTTPException(404, "Workspace not found")
     return ws
+
+
+def _require_owner(ws: Workspace, user: User):
+    """The protocol (criteria, extraction fields, research question, model) is
+    the owner's: every vote is argued from it, so a member who reads it may not
+    reword it. Same rule as the MCP protocol verbs, which is the point: two
+    doors to one protocol must not have two different locks."""
+    if not (ws.owner_id == user.id or user.is_admin):
+        raise HTTPException(403, "Owner required")
 
 
 def _user_api_key(user: User) -> str | None:
@@ -1328,6 +1337,7 @@ async def add_field(ws_id: int, label: str = Form(...), description: str = Form(
                     show_if_key: str = Form(""), show_if_values: str = Form(""),
                     user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
+    _require_owner(ws, user)
     from models import ExtractionField, slug_field_key, workspace_extraction_fields
     if field_type not in ("text", "textarea", "number", "select", "multiselect") or not label.strip():
         raise HTTPException(400, "Invalid field")
@@ -1337,13 +1347,16 @@ async def add_field(ws_id: int, label: str = Form(...), description: str = Form(
         if field_type in ("select", "multiselect") else []
     sivals = [v.strip() for v in show_if_values.split(",") if v.strip()]
     pos = max((f.position for f in existing), default=-1) + 1
-    db.add(ExtractionField(
+    new = ExtractionField(
         workspace_id=ws.id, key=key, label=label.strip(), help=description.strip() or None,
         field_type=field_type,
         options_json=json.dumps(opts) if opts else None,
         show_if_key=show_if_key.strip() or None,
         show_if_values_json=json.dumps(sivals) if sivals else None,
-        builtin=False, position=pos))
+        builtin=False, position=pos)
+    db.add(new)
+    log_protocol_change(db, ws.id, user.id, "web", "field", "add", key,
+                        None, field_snapshot(new))
     db.commit()
     return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
 
@@ -1352,10 +1365,13 @@ async def add_field(ws_id: int, label: str = Form(...), description: str = Form(
 async def delete_field(ws_id: int, fid: int, user: User = Depends(get_current_user),
                        db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
+    _require_owner(ws, user)
     from models import ExtractionField
     f = db.query(ExtractionField).filter(ExtractionField.id == fid,
                                          ExtractionField.workspace_id == ws.id).first()
     if f:
+        log_protocol_change(db, ws.id, user.id, "web", "field", "delete", f.key,
+                            field_snapshot(f), None)
         db.delete(f)
         db.commit()
     return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
@@ -1365,6 +1381,7 @@ async def delete_field(ws_id: int, fid: int, user: User = Depends(get_current_us
 async def move_field(ws_id: int, fid: int, dir: str = Form(...),
                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
+    _require_owner(ws, user)
     from models import workspace_extraction_fields
     fields = workspace_extraction_fields(db, ws)
     idx = next((i for i, f in enumerate(fields) if f.id == fid), None)
@@ -1380,6 +1397,7 @@ async def move_field(ws_id: int, fid: int, dir: str = Form(...),
 async def set_model(ws_id: int, screening_model: str = Form(...),
                     user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
+    _require_owner(ws, user)
     if screening_model in PRICING:
         ws.screening_model = screening_model
         db.commit()
@@ -1390,8 +1408,13 @@ async def set_model(ws_id: int, screening_model: str = Form(...),
 async def set_details(ws_id: int, description: str = Form(""), research_question: str = Form(""),
                       user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
+    _require_owner(ws, user)
+    before = {"research_question": ws.research_question, "description": ws.description}
     ws.description = description.strip() or None
     ws.research_question = research_question.strip() or None
+    log_protocol_change(db, ws.id, user.id, "web", "details", "edit", None, before,
+                        {"research_question": ws.research_question,
+                         "description": ws.description})
     db.commit()
     return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
 
@@ -1473,14 +1496,18 @@ async def add_criterion(ws_id: int, kind: str = Form(...), label: str = Form(...
                         description: str = Form(""), user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
+    _require_owner(ws, user)
     if kind not in ("exclusion", "inclusion") or not label.strip():
         raise HTTPException(400, "Invalid criterion")
     pos = db.query(Criterion).filter(Criterion.workspace_id == ws.id,
                                      Criterion.kind == kind).count()
-    db.add(Criterion(workspace_id=ws.id, kind=kind, label=label.strip(),
-                     description=description.strip() or None, position=pos))
+    c = Criterion(workspace_id=ws.id, kind=kind, label=label.strip(),
+                  description=description.strip() or None, position=pos)
+    db.add(c)
     db.flush()
     recompact_criteria(db, ws.id, kind)
+    log_protocol_change(db, ws.id, user.id, "web", "criterion", "add",
+                        f"{kind} {c.position + 1}", None, criterion_snapshot(c))
     db.commit()
     return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
 
@@ -1492,13 +1519,17 @@ async def edit_criterion(ws_id: int, cid: int, label: str = Form(...),
     """Change a criterion's wording in place. Without this the only way to reword
     one was to delete it and add it back, which lost its position and its id."""
     ws = _load_ws(db, user, ws_id)
+    _require_owner(ws, user)
     c = db.query(Criterion).filter(Criterion.id == cid, Criterion.workspace_id == ws.id).first()
     if not c:
         raise HTTPException(404, "No such criterion")
     if not label.strip():
         raise HTTPException(400, "Label required")
+    before = criterion_snapshot(c)
     c.label = label.strip()
     c.description = description.strip() or None
+    log_protocol_change(db, ws.id, user.id, "web", "criterion", "edit",
+                        f"{c.kind} {c.position + 1}", before, criterion_snapshot(c))
     db.commit()
     return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
 
@@ -1507,12 +1538,16 @@ async def edit_criterion(ws_id: int, cid: int, label: str = Form(...),
 async def delete_criterion(ws_id: int, cid: int, user: User = Depends(get_current_user),
                            db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
+    _require_owner(ws, user)
     c = db.query(Criterion).filter(Criterion.id == cid, Criterion.workspace_id == ws.id).first()
     if c:
         kind = c.kind
+        before = criterion_snapshot(c)
         db.delete(c)
         db.flush()
         recompact_criteria(db, ws.id, kind)
+        log_protocol_change(db, ws.id, user.id, "web", "criterion", "delete",
+                            f"{kind} {before['number']}", before, None)
         db.commit()
     return RedirectResponse(f"/w/{ws_id}/settings", status_code=302)
 
