@@ -779,6 +779,26 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
 
         client = anthropic.Anthropic(api_key=api_key)
 
+        # The review's own coded fields (select/multiselect, not the builtin
+        # bibliographic ones) travel with each study's free text, so a claim
+        # about the direction of an effect can be held to the value the
+        # reviewers coded rather than to the model's reading of a note.
+        from models import field_visible
+        coded_fields = [f for f in structured_fields
+                        if f.field_type in ("select", "multiselect") and not f.builtin]
+
+        def coded_for(rec):
+            vals = extracted.get(rec.id, {})
+            parts = []
+            for f in coded_fields:
+                if not field_visible(f, vals):
+                    continue
+                v = vals.get(f.key)
+                v = ", ".join(str(x) for x in v if x not in (None, "")) if isinstance(v, list) else v
+                if v not in (None, ""):
+                    parts.append(f"{f.label}: {v}")
+            return "; ".join(parts)
+
         def items_for(fld, recs):
             items = []
             for rec in recs:
@@ -787,7 +807,7 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
                     val = ", ".join(str(v) for v in val)
                 val = (val or "").strip() if isinstance(val, str) else ""
                 if val and val.lower() != "not addressed":
-                    items.append({"token": tokens[rec.id], "finding": val})
+                    items.append({"token": tokens[rec.id], "finding": val, "coded": coded_for(rec)})
             return items
 
         # Every paragraph to write, as (field index, group or None, theme, items).
