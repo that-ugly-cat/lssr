@@ -107,7 +107,9 @@ mcp = MCPServer(
         "that the corpus lacks the topic. dry_run reads the model's non-deciding "
         "votes (a re-read of voted records, or a pilot on untouched ones) and "
         "their agreement with people, flagging votes cast under criteria that "
-        "have since changed. "
+        "have since changed. draft_agreement does the same for the full-text "
+        "step: the model's screening-2 drafts and extractions against what "
+        "people decided and extracted, field by field. "
         "A few verbs write and the rest read. vote_screen1 casts a "
         "title-and-abstract vote in the key owner's name: read get_protocol "
         "first, because a vote not argued from the written criteria is noise "
@@ -896,6 +898,152 @@ def dry_run(review: str, subset: str = "all", decision: str = "", limit: int = 5
                                           for h in humans.get(rid, [])])
                         for rid in page if rid in recs],
         }
+    except (LookupError, PermissionError) as e:
+        return _fail(str(e))
+    finally:
+        db.close()
+
+
+def _norm_value(v):
+    """One extraction value in a form two readers can be compared on: case and
+    surrounding space do not count, a multiselect is a set, a number is a number."""
+    if v is None or v == "" or v == []:
+        return None
+    if isinstance(v, list):
+        return frozenset(str(x).strip().casefold() for x in v if str(x).strip())
+    s = str(v).strip()
+    try:
+        return float(s)
+    except ValueError:
+        return s.casefold()
+
+
+@mcp.tool()
+def draft_agreement(review: str, field: str = "", limit: int = 50) -> dict:
+    """
+    How the model's full-text drafts compare with what people decided and
+    extracted — the read-out of a screening-2 pilot.
+
+    The model drafts a screening-2 decision and, when it includes, an
+    extraction that pre-fills the review form. Both stay stored beside the
+    reviewer's own, so agreement can be computed on every record a person has
+    reviewed after a draft existed.
+
+    `decisions` is the matrix draft -> human over those records. `fields`
+    gives, for each select, multiselect and number field, how often the
+    draft and the person's extraction agree, on the records both included and
+    where at least one of them filled the field (a multiselect agrees only
+    when the sets are equal). Free-text fields cannot be compared by equality
+    and are listed as not compared. The person's extraction is the owner's
+    `final` row when there is one, else the reviewer's latest.
+
+    field: a field key to list the records where draft and person differ on
+        it, with both values. Without it, `decision_differs` lists the records
+        where the decisions differ.
+
+    Read with the caveat the pilot carries by design: the reviewer saw the
+    draft pre-filled before deciding, so agreement is an upper bound. `stale`
+    counts drafts made before the last change to the inclusion criteria, the
+    extraction fields or the research question.
+    """
+    from models import Extraction, ProtocolChange, workspace_extraction_fields
+    db = SessionLocal()
+    try:
+        ws = auth.mcp_review(db, review)
+        fields = workspace_extraction_fields(db, ws)
+        by_key = {f.key: f for f in fields}
+        if field and field not in by_key:
+            return _fail(f"No extraction field '{field}'. Keys: {', '.join(by_key)}")
+        pool = {r.id: r for r in _live(db, ws.id).filter(Record.screen1_decision == "include")}
+        votes = (db.query(ScreenDecision)
+                   .filter(ScreenDecision.workspace_id == ws.id,
+                           ScreenDecision.stage == "screen2",
+                           ScreenDecision.record_id.in_(list(pool))).all())
+        draft = {v.record_id: v for v in votes if v.reviewer_kind == "model"}
+        human = {}
+        for v in votes:
+            if v.reviewer_kind in ("user", "adjudicator"):
+                cur = human.get(v.record_id)
+                # an adjudicator's ruling is what the record settled on
+                if cur is None or v.reviewer_kind == "adjudicator":
+                    human[v.record_id] = v
+        both = sorted(set(draft) & set(human))
+
+        ext = {}
+        for e in db.query(Extraction).filter(Extraction.workspace_id == ws.id,
+                                             Extraction.record_id.in_(both)).all():
+            ext.setdefault(e.record_id, []).append(e)
+
+        def pair(rid):
+            rows = ext.get(rid, [])
+            m = next((e.values() for e in rows if e.reviewer_kind == "model"), None)
+            fin = [e for e in rows if e.reviewer_kind == "final"]
+            users = [e for e in rows if e.reviewer_kind == "user"]
+            h = (fin[0].values() if fin else
+                 max(users, key=lambda e: e.updated_at or datetime.min).values() if users else None)
+            return m, h
+
+        last_change = (db.query(func.max(ProtocolChange.created_at))
+                         .filter(ProtocolChange.workspace_id == ws.id,
+                                 or_(ProtocolChange.target.in_(["details", "field"]),
+                                     (ProtocolChange.target == "criterion")
+                                     & ProtocolChange.ref.like("inclusion%")))
+                         .scalar())
+        stale = sum(1 for rid in both
+                    if last_change and (draft[rid].updated_at or draft[rid].created_at) < last_change)
+
+        matrix = Counter(f"{draft[r].decision}->{human[r].decision}" for r in both)
+        agree_dec = sum(1 for r in both if draft[r].decision == human[r].decision)
+
+        comparable = [f for f in fields if f.field_type in ("select", "multiselect", "number")]
+        per_field, diffs = {}, []
+        both_incl = [r for r in both if draft[r].decision == "include" and human[r].decision == "include"]
+        for f in comparable:
+            agree = differ = 0
+            for rid in both_incl:
+                m, h = pair(rid)
+                if m is None or h is None:
+                    continue
+                mv, hv = _norm_value(m.get(f.key)), _norm_value(h.get(f.key))
+                if mv is None and hv is None:
+                    continue
+                if mv == hv:
+                    agree += 1
+                else:
+                    differ += 1
+                    if f.key == field:
+                        diffs.append({"id": rid, "title": pool[rid].title,
+                                      "draft": m.get(f.key), "human": h.get(f.key)})
+            n = agree + differ
+            per_field[f.key] = {"label": f.label, "compared": n, "agree": agree,
+                                "pct": round(100.0 * agree / n, 1) if n else None}
+        n = max(1, min(int(limit or 50), 200))
+        out = {
+            "review": ws.name,
+            "drafted": len(draft), "reviewed_after_draft": len(both),
+            "stale_drafts": stale, "criteria_last_changed": _d(last_change),
+            "decisions": {"agree": agree_dec, "of": len(both),
+                          "pct": round(100.0 * agree_dec / len(both), 1) if both else None,
+                          "matrix": dict(sorted(matrix.items())),
+                          "matrix_reads": "draft -> human"},
+            "fields_compared_on": len(both_incl),
+            "fields": dict(sorted(per_field.items(),
+                                  key=lambda kv: (kv[1]["pct"] is None, kv[1]["pct"] or 0))),
+            "not_compared": [f.key for f in fields if f not in comparable],
+        }
+        if field:
+            if by_key[field].field_type not in ("select", "multiselect", "number"):
+                return _fail(f"'{field}' is free text: it cannot be compared by equality")
+            out["field_differs"] = {"field": field, "records": diffs[:n], "matched": len(diffs)}
+        else:
+            dd = [r for r in both if draft[r].decision != human[r].decision]
+            out["decision_differs"] = {
+                "matched": len(dd),
+                "records": [{"id": r, "title": pool[r].title,
+                             "draft": draft[r].decision, "draft_reason": draft[r].reason,
+                             "human": human[r].decision, "human_reason": human[r].reason}
+                            for r in dd[:n]]}
+        return out
     except (LookupError, PermissionError) as e:
         return _fail(str(e))
     finally:

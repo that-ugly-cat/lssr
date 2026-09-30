@@ -2209,6 +2209,10 @@ async def assessment_page(ws_id: int, request: Request, decision: str = "all",
         e = assessment.estimate_cost(model, system, len(recs),
                                      sum(len(r.full_text_md or "") for r in recs))
         return "$0.00" if e <= 0 else ("<$0.01" if e < 0.01 else f"${e:.2f}")
+    # the pilot's price for the whole pending pool; the page scales it by the
+    # percentage (linear in records and characters, as on screening 1)
+    est_ready_full = assessment.estimate_cost(model, system, len(ready_recs),
+                                              sum(len(r.full_text_md or "") for r in ready_recs))
     return render(request, "workspace_assessment.html", {
         "user": user, "ws": ws, "tab": "assessment", "steps_done": workspace_steps_done(ws),
         "records": records, "votes": votes, "my_reviewed": my_reviewed,
@@ -2222,6 +2226,7 @@ async def assessment_page(ws_id: int, request: Request, decision: str = "all",
         "page_size": SCREEN_PAGE_SIZE,
         "n_converted": n_converted, "n_fields": n_fields,
         "ready": ready, "drafted": drafted, "est": _fmt(ready_recs), "est_redraft": _fmt(redraft_recs),
+        "est_ready_full": est_ready_full,
         "model": model,
         "has_key": bool(_user_api_key(user)),
         "n_inclusion": len(workspace_criteria(db, ws, "inclusion")),
@@ -2231,7 +2236,8 @@ async def assessment_page(ws_id: int, request: Request, decision: str = "all",
 
 
 @app.post("/w/{ws_id}/assessment/run")
-async def run_assessment(ws_id: int, rerun: str = Form(""),
+async def run_assessment(ws_id: int, rerun: str = Form(""), sample: str = Form(""),
+                         sample_pct: int = Form(10),
                          user: User = Depends(get_current_user),
                          db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
@@ -2242,7 +2248,10 @@ async def run_assessment(ws_id: int, rerun: str = Form(""),
     job = assessment.get_job(ws.id)
     if job and job.get("status") == "running":
         raise HTTPException(409, "Assessment already in progress")
-    assessment.start_assessment(ws.id, api_key, user.id, rerun=bool(rerun))
+    if sample and not 1 <= sample_pct <= 100:
+        raise HTTPException(400, "The sample must be between 1% and 100% of the pending full texts")
+    assessment.start_assessment(ws.id, api_key, user.id, rerun=bool(rerun) and not sample,
+                                sample_pct=sample_pct if sample else None)
     return RedirectResponse(f"/w/{ws_id}/assessment", status_code=302)
 
 

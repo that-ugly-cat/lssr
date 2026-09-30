@@ -147,7 +147,15 @@ def assess_record(client, system_prompt: str, full_text: str, model: str):
 
 # ── Background job ─────────────────────────────────────────────────────────────
 
-def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = False):
+def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = False,
+         sample_pct: int | None = None):
+    """sample_pct: draft only a random share of the pending records — a pilot.
+    The drafts are ordinary ones (provisional, pre-filling the review form);
+    what makes it a pilot is that people review those records before the rest
+    is drafted, and draft_agreement then compares the two. A second sample
+    widens the first, because a drafted record is no longer pending."""
+    import math
+    import random
     from models import (Record, ScreenDecision, SessionLocal, UserCostLog, Workspace,
                         calc_cost, ensure_extraction_fields, recompute_record_screen2,
                         upsert_extraction, upsert_screen_decision, workspace_criteria,
@@ -174,11 +182,15 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
                        Record.is_removed == False,                # noqa: E712
                        Record.screen1_decision == "include",
                        Record.full_text_status == "converted"))
-        if not rerun:
+        if not rerun or sample_pct:
             q = q.filter(Record.screen2_decision == "pending")
         targets = [r for r in q.all() if r.id not in human_ids]
+        if sample_pct and targets:
+            pct = min(100, max(1, int(sample_pct)))
+            targets = random.sample(targets, max(1, math.ceil(len(targets) * pct / 100)))
         total = len(targets)
-        _set(workspace_id, {"status": "running", "message": f"Drafting {total} full texts…",
+        what = f"a {sample_pct}% sample: {total}" if sample_pct else str(total)
+        _set(workspace_id, {"status": "running", "message": f"Drafting {what} full texts…",
                             "total": total, "done": 0, "included": 0, "excluded": 0,
                             "maybe": 0, "cost_usd": 0.0})
         if total == 0:
@@ -240,10 +252,11 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
         db.close()
 
 
-def start_assessment(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = False):
+def start_assessment(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = False,
+                     sample_pct: int | None = None):
     # Mark running synchronously so the reloaded page's first status poll never
     # races the job's own setup and sees 'idle' (which stops the poller). Re-draft
     # scans every record, so its setup is slow enough to lose that race otherwise.
     _set(workspace_id, {"status": "running", "message": "Starting…", "total": 0, "done": 0})
-    threading.Thread(target=_run, args=(workspace_id, api_key, user_id, rerun),
+    threading.Thread(target=_run, args=(workspace_id, api_key, user_id, rerun, sample_pct),
                      daemon=True).start()

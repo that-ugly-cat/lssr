@@ -41,6 +41,21 @@
       </button>
       <span class="muted small">est. {{ est }}</span>
     </span>
+    {% if ready > 1 %}
+    <span style="display:inline-flex; flex-direction:column; align-items:flex-start;">
+      <span style="display:inline-flex; gap:6px; align-items:center;">
+        <button class="btn" type="submit" name="sample" value="1"
+          {{ 'disabled' if (n_inclusion == 0 or not has_key) else '' }}
+          title="A pilot: draft only a random share of the pending full texts, review those, and compare the drafts with your decisions and extractions before drafting the rest">
+          🌓 Draft a sample
+        </button>
+        <input type="number" name="sample_pct" id="sample-pct" value="10" min="1" max="100" step="1"
+               style="width:4.5em;" aria-label="Sample size, percent of pending full texts"> %
+      </span>
+      <span class="muted small" id="sample-est"
+            data-pool="{{ ready }}" data-full="{{ est_ready_full }}">of {{ ready }} pending</span>
+    </span>
+    {% endif %}
     {% if drafted > 0 %}
     <span style="display:inline-flex; flex-direction:column; align-items:flex-start;">
       <button class="btn" type="submit" name="rerun" value="1"
@@ -272,6 +287,23 @@ document.querySelectorAll('.overlay-top').forEach(o =>
 
 poller('as-form', 'as-status', 'as-btn', '/w/{{ ws.id }}/assessment/status', 'as-prog', 'as-fill');
 
+// The pilot's price follows the percentage: the server quotes the whole pending
+// pool, and the estimate is linear. Looked up by id each time: a redraw
+// replaces the form.
+function sampleEst() {
+  const input = document.getElementById('sample-pct');
+  const out = document.getElementById('sample-est');
+  if (!input || !out) return;
+  const pool = +out.dataset.pool, full = +out.dataset.full;
+  const pct = Math.min(100, Math.max(1, Math.round(+input.value || 0)));
+  const n = Math.max(1, Math.ceil(pool * pct / 100));
+  const cost = full * n / pool;
+  const fmt = cost <= 0 ? '$0.00' : cost < 0.01 ? '<$0.01' : '$' + cost.toFixed(2);
+  out.textContent = `${n} of ${pool} pending · est. ${fmt}`;
+}
+document.addEventListener('input', (e) => { if (e.target.id === 'sample-pct') sampleEst(); });
+sampleEst();
+
 
 
 // Saving a review and adjudicating redraw in place. This page had the most to
@@ -306,7 +338,7 @@ const live = inplace({
     return inplace.voteMessage(data.vote, data, 'Review saved') + tail;
   },
   onDone: (kind) => { if (kind === 'review') closeReview(); },
-  afterRedraw: () => sizeEarmarkNotes(),
+  afterRedraw: () => { sizeEarmarkNotes(); sampleEst(); },
 });
 wireEarmarks('as-table');
 // The modal is rebuilt from the server on every open, so its dot and its note
