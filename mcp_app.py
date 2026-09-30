@@ -104,7 +104,10 @@ mcp = MCPServer(
         "database, so they are exact: prefer extraction_summary to counting "
         "records yourself. search_records is lexical, not semantic — no hit "
         "means those words are not in the title, abstract or authors, never "
-        "that the corpus lacks the topic. "
+        "that the corpus lacks the topic. dry_run reads the model's non-deciding "
+        "votes (a re-read of voted records, or a pilot on untouched ones) and "
+        "their agreement with people, flagging votes cast under criteria that "
+        "have since changed. "
         "A few verbs write and the rest read. vote_screen1 casts a "
         "title-and-abstract vote in the key owner's name: read get_protocol "
         "first, because a vote not argued from the written criteria is noise "
@@ -777,6 +780,122 @@ def list_conflicts(review: str, stage: str = "screen1", wide: bool = True,
                 "reviewers_required": required,
                 "matched": total, "returned": len(hits),
                 "records": [dict(_brief(r), votes=votes.get(r.id, [])) for r in hits]}
+    except (LookupError, PermissionError) as e:
+        return _fail(str(e))
+    finally:
+        db.close()
+
+
+DRY_RUN_SETS = ("all", "unvoted", "differs", "agrees")
+
+
+@mcp.tool()
+def dry_run(review: str, subset: str = "all", decision: str = "", limit: int = 50,
+            offset: int = 0) -> dict:
+    """
+    The screening-1 dry run: what the model said on records where its vote
+    counts for nothing, and how that compares with what people voted.
+
+    A dry-run (shadow) vote comes from one of two buttons in the web app: a
+    re-read of records people have voted on, or a pilot on a random share of
+    records nobody has touched, to be voted on afterwards. Either way it never
+    decides a record, never enters PRISMA, and never makes a record divergent;
+    it measures. This tool is how that measurement is read without opening
+    the database.
+
+    subset: all (every record with a dry-run vote) · unvoted (the pilot still
+        waiting for a human vote) · differs (a person voted otherwise) ·
+        agrees (a person voted the same).
+    decision: include, exclude or maybe — filters on the dry-run vote.
+
+    `agreement` pairs each dry-run vote with each human vote on the same
+    record, so a record voted by two people counts twice. `stale` counts the
+    dry-run votes cast before the last change to the exclusion criteria or the
+    research question: they were argued from a text that no longer stands, so
+    an agreement that mixes them with fresh ones measures two protocols at
+    once. Each record carries its own `stale` flag. Re-reading voted records
+    under the current text is the web app's dry run on voted records.
+    """
+    from models import ProtocolChange, shadow_agreement
+    db = SessionLocal()
+    try:
+        ws = auth.mcp_review(db, review)
+        if subset not in DRY_RUN_SETS:
+            return _fail(f"subset must be one of {', '.join(DRY_RUN_SETS)}")
+        if decision and decision not in ("include", "exclude", "maybe"):
+            return _fail("decision must be include, exclude or maybe")
+        shadow = {v.record_id: v for v in
+                  db.query(ScreenDecision)
+                    .filter(ScreenDecision.workspace_id == ws.id,
+                            ScreenDecision.stage == "screen1",
+                            ScreenDecision.reviewer_kind == "shadow").all()}
+        live_ids = {rid for (rid,) in _live(db, ws.id).with_entities(Record.id)
+                                                    .filter(Record.id.in_(list(shadow)))}
+        shadow = {rid: v for rid, v in shadow.items() if rid in live_ids}
+        humans = {}
+        for v in (db.query(ScreenDecision)
+                    .filter(ScreenDecision.workspace_id == ws.id,
+                            ScreenDecision.stage == "screen1",
+                            ScreenDecision.reviewer_kind.in_(["user", "adjudicator"]),
+                            ScreenDecision.record_id.in_(list(shadow))).all()):
+            humans.setdefault(v.record_id, []).append(v)
+        last_change = (db.query(func.max(ProtocolChange.created_at))
+                         .filter(ProtocolChange.workspace_id == ws.id,
+                                 or_(ProtocolChange.target == "details",
+                                     (ProtocolChange.target == "criterion")
+                                     & ProtocolChange.ref.like("exclusion%")))
+                         .scalar())
+
+        def is_stale(v) -> bool:
+            at = v.updated_at or v.created_at
+            return bool(last_change and at and at < last_change)
+
+        matrix, stats = shadow_agreement(db, ws.id, "screen1")
+
+        def keep(rid) -> bool:
+            s, hs = shadow[rid], humans.get(rid, [])
+            if decision and s.decision != decision:
+                return False
+            if subset == "unvoted":
+                return not hs
+            if subset == "differs":
+                return any(h.decision != s.decision for h in hs)
+            if subset == "agrees":
+                return any(h.decision == s.decision for h in hs)
+            return True
+
+        ids = sorted((rid for rid in shadow if keep(rid)), reverse=True)
+        off = max(0, int(offset or 0))
+        n = max(1, min(int(limit or 50), 200))
+        page = ids[off:off + n]
+        recs = {r.id: r for r in db.query(Record).filter(Record.id.in_(page)).all()}
+        return {
+            "review": ws.name,
+            "enabled": bool(ws.dry_run_enabled),
+            "dry_run_votes": len(shadow),
+            "by_decision": dict(Counter(v.decision for v in shadow.values())),
+            "unvoted": sum(1 for rid in shadow if not humans.get(rid)),
+            "stale": sum(1 for v in shadow.values() if is_stale(v)),
+            "criteria_last_changed": _d(last_change),
+            "agreement": {
+                "pairs": stats["pairs"], "agree": stats["agree"],
+                "disagree": stats["disagree"], "pct": stats["pct"],
+                "matrix": {f"{s}->{h}": len(v) for (s, h), v in sorted(matrix.items())},
+                "matrix_reads": "dry run -> human",
+            },
+            "subset": subset, "matched": len(ids), "offset": off, "returned": len(page),
+            "records": [dict(_brief(recs[rid]),
+                             dry_run={"decision": shadow[rid].decision,
+                                      "reason": shadow[rid].reason,
+                                      "at": _d(shadow[rid].updated_at or shadow[rid].created_at),
+                                      "stale": is_stale(shadow[rid])},
+                             human_votes=[{"reviewer": (h.reviewer.name if h.reviewer
+                                                        else h.reviewer_kind),
+                                           "kind": h.reviewer_kind,
+                                           "decision": h.decision, "reason": h.reason}
+                                          for h in humans.get(rid, [])])
+                        for rid in page if rid in recs],
+        }
     except (LookupError, PermissionError) as e:
         return _fail(str(e))
     finally:
