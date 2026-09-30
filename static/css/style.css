@@ -702,7 +702,8 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
 /* synthesis charts: one per structured field, a grid of small bar charts */
 .syn-charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px 28px; margin-top: 12px; }
 .syn-chart-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-.syn-chart .pub-bar-row { grid-template-columns: minmax(130px, 50%) 1fr 30px; }
+.syn-chart .pub-bar-row { grid-template-columns: minmax(130px, 45%) 1fr 72px; }
+.syn-chart .pub-bar-n { white-space: nowrap; }
 .syn-chart .pub-bar-label { white-space: normal; line-height: 1.25; }  /* long values wrap rather than truncate */
 .syn-chart .pub-bar-val.is-missing { background: var(--muted-3); }
 .syn-chart .pub-bar-label.is-missing { font-style: italic; }

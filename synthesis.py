@@ -584,7 +584,7 @@ def _bar_rows(counts, order, answered) -> str:
         rows.append(f'<div class="pub-bar-row" title="{tip}">'
                     f'<span class="pub-bar-label{miss}">{escape(label)}</span>'
                     f'<span class="pub-bar-track"><span class="pub-bar-val{miss}" style="width:{width}%"></span></span>'
-                    f'<span class="pub-bar-n">{n}</span></div>')
+                    f'<span class="pub-bar-n">{n} <span class="pub-bar-pct">({pct}%)</span></span></div>')
     return '<div class="pub-bars">' + "".join(rows) + "</div>"
 
 
