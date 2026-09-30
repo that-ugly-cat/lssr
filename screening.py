@@ -150,14 +150,21 @@ def screen_record(client, system_prompt: str, title: str, abstract: str,
 
 # ── Background job ─────────────────────────────────────────────────────────────
 
-def _run(workspace_id: int, api_key: str, user_id: int | None, mode: str = "pending"):
+def _run(workspace_id: int, api_key: str, user_id: int | None, mode: str = "pending",
+         sample_pct: int = 10):
     """mode: 'pending' (untouched records), 'rerun' (those plus the model's own
-    past calls), or 'shadow' (a dry run over records people have voted on, which
-    writes a non-deciding row and changes no decision)."""
-    from models import (Record, SessionLocal, UserCostLog, Workspace,
+    past calls), 'shadow' (a dry run over records people have voted on), or
+    'sample' (a dry run over a random sample_pct% of the records nobody has
+    touched yet — a pilot to vote on afterwards, so the agreement is measured
+    before the model decides anything). Both dry-run modes write a
+    non-deciding row and change no decision."""
+    import math
+    import random
+    from models import (Record, ScreenDecision, SessionLocal, UserCostLog, Workspace,
                         calc_cost, human_voted_subq, recompute_record_screen1,
                         upsert_screen_decision, workspace_criteria)
     import anthropic
+    dry = mode in ("shadow", "sample")
 
     db = SessionLocal()
     try:
@@ -171,6 +178,17 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, mode: str = "pend
             # the mirror image of the other two modes: exactly the records the
             # model is otherwise forbidden to touch.
             q = q.filter(Record.id.in_(human))
+        elif mode == "sample":
+            # untouched records that carry no dry-run row yet: a second pilot
+            # widens the sample instead of re-reading the first one. Re-reading
+            # voted records under new criteria is what 'shadow' is for.
+            shadowed = (db.query(ScreenDecision.record_id)
+                          .filter(ScreenDecision.workspace_id == workspace_id,
+                                  ScreenDecision.stage == "screen1",
+                                  ScreenDecision.reviewer_kind == "shadow")
+                          .scalar_subquery())
+            q = q.filter(~Record.id.in_(human), ~Record.id.in_(shadowed),
+                         Record.screen1_decision == "pending")
         else:
             # records any human already voted on (or an adjudicator resolved) are
             # the humans' call — the model never overrides them.
@@ -180,6 +198,9 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, mode: str = "pend
                 q = q.filter(Record.screen1_decision == "pending")
             # re-run also re-screens the model's own past calls, never human ones
         pending = q.all()
+        if mode == "sample" and pending:
+            pct = min(100, max(1, int(sample_pct or 10)))
+            pending = random.sample(pending, max(1, math.ceil(len(pending) * pct / 100)))
         total = len(pending)
         _set(workspace_id, {"status": "running", "message": f"Screening {total} records…",
                             "total": total, "done": 0, "included": 0, "excluded": 0, "maybe": 0,
@@ -214,7 +235,7 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, mode: str = "pend
                 except Exception as exc:
                     decision, reason, i, o = "maybe", f"screening error: {exc}", 0, 0
                 rec = db.query(Record).filter(Record.id == rec_id).first()
-                if mode == "shadow":
+                if dry:
                     # a non-deciding row, and no recompute: the published
                     # decision on these records must come out of the run
                     # byte-identical to how it went in.
@@ -241,13 +262,13 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, mode: str = "pend
         # its own step, so a dry run never inflates what screening 1 cost. The
         # cost breakdown groups by this string, so a new value just lists itself.
         db.add(UserCostLog(user_id=user_id, workspace_id=workspace_id,
-                           step="screen1_shadow" if mode == "shadow" else "screen1",
+                           step="screen1_shadow" if dry else "screen1",
                            input_tokens=tin, output_tokens=tout, cost_usd=cost))
         db.commit()
         verdicts = f"{included} included, {excluded} excluded, {maybe} maybe"
         _set(workspace_id, {"status": "done",
                             "message": (f"Dry run done — nothing was decided. The model said {verdicts}."
-                                        if mode == "shadow" else f"Done. {verdicts}."),
+                                        if dry else f"Done. {verdicts}."),
                             "total": total, "done": total, "included": included,
                             "excluded": excluded, "maybe": maybe, "cost_usd": round(cost, 4)})
     except Exception as exc:
@@ -256,9 +277,10 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, mode: str = "pend
         db.close()
 
 
-def start_screen1(workspace_id: int, api_key: str, user_id: int | None, mode: str = "pending"):
+def start_screen1(workspace_id: int, api_key: str, user_id: int | None, mode: str = "pending",
+                  sample_pct: int = 10):
     # Mark running synchronously so the reloaded page's first status poll never
     # races the job's own setup and sees 'idle' (which stops the poller).
     _set(workspace_id, {"status": "running", "message": "Starting…", "total": 0, "done": 0})
-    threading.Thread(target=_run, args=(workspace_id, api_key, user_id, mode),
+    threading.Thread(target=_run, args=(workspace_id, api_key, user_id, mode, sample_pct),
                      daemon=True).start()

@@ -76,6 +76,21 @@
       <span class="muted small">est. {{ est_shadow }}</span>
     </span>
     {% endif %}
+    {% if ws.dry_run_enabled and sample_pool_n > 0 %}
+    <span style="display:inline-flex; flex-direction:column; align-items:flex-start;">
+      <span style="display:inline-flex; gap:6px; align-items:center;">
+        <button class="btn" type="submit" name="mode" value="sample"
+          {{ 'disabled' if (n_exclusion == 0 or not has_key) else '' }}
+          title="A pilot: the model reads a random sample of the records nobody has touched and writes votes that count for nothing. Vote on the same records yourself and the agreement fills in, before the model has decided a single record">
+          🌓 Dry run on a sample of pending
+        </button>
+        <input type="number" name="sample_pct" id="sample-pct" value="10" min="1" max="100" step="1"
+               style="width:4.5em;" aria-label="Sample size, percent of pending records"> %
+      </span>
+      <span class="muted small" id="sample-est"
+            data-pool="{{ sample_pool_n }}" data-full="{{ est_sample_full }}">of {{ sample_pool_n }} untouched</span>
+    </span>
+    {% endif %}
     <span class="muted small">{{ model }} pre-screens. Records a human has voted on ({{ manual_n }}) are the reviewers' call — never re-screened.{% if ws.dry_run_enabled %} The <strong>dry run</strong> is the exception that proves it: it reads exactly those records and writes a vote that counts for nothing, to answer whether the model would agree with the reviewers under today's criteria.{% endif %}</span>
   </form>
   <div class="progress-wrap" id="scr-prog" style="display:none;">
@@ -89,8 +104,10 @@
 <div class="cards-label">🌓 Dry run — would the model agree with the reviewers?</div>
 <div class="card">
   <p class="muted small" style="margin-top:0;">
-    {{ model }} screened the {{ shadow.shadow_n }} records people had already voted on, under the
-    exclusion criteria as they stand now. <strong>Nothing here decided anything</strong>: these votes
+    {{ model }} has a dry-run vote on {{ shadow.shadow_n }} records, cast under the exclusion
+    criteria as they stood at the time; the pairs below are the ones a reviewer has voted on too.{% if sample_todo_n %}
+    {{ sample_todo_n }} sampled records still wait for a human vote —
+    <a href="/w/{{ ws.id }}/screening?decision=shadow_unvoted">vote on them →</a>{% endif %} <strong>Nothing here decided anything</strong>: these votes
     are stored apart, they never resolve a record, never enter the PRISMA counts and never make a
     record divergent. Each pair below is one dry-run answer against one reviewer's answer.
   </p>
@@ -133,7 +150,7 @@
 <div class="cards-label" id="scr-filters">
   Records
   <span style="font-weight:400; text-transform:none; letter-spacing:0;">
-    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict','divergent','modelonly','shadow_disagrees'] else 'muted' }}">all ({{ counts.total }})</a>
+    · <a href="/w/{{ ws.id }}/screening?decision=all" class="{{ '' if decision not in ['pending','include','exclude','maybe','conflict','divergent','earmarked','modelonly','shadow_disagrees','shadow_unvoted'] else 'muted' }}">all ({{ counts.total }})</a>
     {% for d in ['pending','include','maybe','exclude','conflict'] %}
     · <a href="/w/{{ ws.id }}/screening?decision={{ d }}" class="{{ '' if decision==d else 'muted' }}">{{ d }} ({{ counts[d] }})</a>
     {% endfor %}
@@ -146,6 +163,10 @@
     {% if ws.dry_run_enabled and shadow.disagree %}
     · <a href="/w/{{ ws.id }}/screening?decision=shadow_disagrees" class="{{ '' if decision=='shadow_disagrees' else 'muted' }}"
          title="Records where the dry run would not have voted as a reviewer did. Nothing here is in dispute — the dry run decides nothing">🌓 dry run differs ({{ shadow.disagree }})</a>
+    {% endif %}
+    {% if ws.dry_run_enabled and sample_todo_n %}
+    · <a href="/w/{{ ws.id }}/screening?decision=shadow_unvoted" class="{{ '' if decision=='shadow_unvoted' else 'muted' }}"
+         title="Records the dry-run pilot sampled that nobody has voted on yet. Each vote cast here adds a pair to the agreement">🌓 sample to vote ({{ sample_todo_n }})</a>
     {% endif %}
   </span>
   <a class="btn btn-small" href="/w/{{ ws.id }}/screening/export.xlsx" style="float:right;">Export to Excel ↓</a>
@@ -334,6 +355,23 @@
 <script>
 poller('scr-form', 'scr-status', 'scr-btn', '/w/{{ ws.id }}/screening/status', 'scr-prog', 'scr-fill');
 
+// The pilot's price follows the percentage: the server quotes the whole pool,
+// and the estimate is linear, so the page scales it. Looked up by id on every
+// call because a redraw replaces the form.
+function sampleEst() {
+  const input = document.getElementById('sample-pct');
+  const out = document.getElementById('sample-est');
+  if (!input || !out) return;
+  const pool = +out.dataset.pool, full = +out.dataset.full;
+  const pct = Math.min(100, Math.max(1, Math.round(+input.value || 0)));
+  const n = Math.max(1, Math.ceil(pool * pct / 100));
+  const cost = full * n / pool;
+  const fmt = cost <= 0 ? '$0.00' : cost < 0.01 ? '<$0.01' : '$' + cost.toFixed(2);
+  out.textContent = `${n} of ${pool} untouched · est. ${fmt}`;
+}
+document.addEventListener('input', (e) => { if (e.target.id === 'sample-pct') sampleEst(); });
+sampleEst();
+
 
 
 // Voting and adjudicating redraw in place. #scr-form is in the list because the
@@ -361,7 +399,7 @@ const live = inplace({
   },
   // The note fields that come back from a redraw are new elements one row
   // high; a two-line note would hide its second line until the next reload.
-  afterRedraw: () => sizeEarmarkNotes(),
+  afterRedraw: () => { sizeEarmarkNotes(); sampleEst(); },
 });
 wireEarmarks('scr-table');
 wireVoteReasons('scr-table');

@@ -1629,6 +1629,24 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
                              Record.is_removed == False,          # noqa: E712
                              Record.id.in_(divergent_sub)).count())
 
+    # the dry-run pilot: records the model has read in a sample that no person
+    # has voted on yet (the list to walk), and the untouched records a new
+    # sample would draw from (what the button counts and prices)
+    shadow_sub = (db.query(ScreenDecision.record_id)
+                    .filter(ScreenDecision.workspace_id == ws.id,
+                            ScreenDecision.stage == "screen1",
+                            ScreenDecision.reviewer_kind == "shadow")
+                    .scalar_subquery())
+    _live = (Record.workspace_id == ws.id, Record.is_removed == False)  # noqa: E712
+    if ws.dry_run_enabled:
+        sample_todo_n = db.query(Record).filter(*_live, Record.id.in_(shadow_sub),
+                                                ~Record.id.in_(_human)).count()
+        sample_pool_n = db.query(Record).filter(*_live, Record.screen1_decision == "pending",
+                                                ~Record.id.in_(_human),
+                                                ~Record.id.in_(shadow_sub)).count()
+    else:
+        sample_todo_n = sample_pool_n = 0
+
     mine_marked = my_earmark_ids(db, ws.id, user.id)
 
     tq = db.query(Record).filter(Record.workspace_id == ws.id, Record.is_removed == False)  # noqa: E712
@@ -1653,6 +1671,10 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         # the dry run's whole point: walk the records where the model, run again
         # under the criteria as they stand, would not have voted as a reviewer did.
         tq = tq.filter(Record.id.in_(shadow_stats["disagree_ids"] or [-1]))
+    elif decision == "shadow_unvoted":
+        # the pilot to vote on: sampled by the dry run, not yet voted by anyone.
+        # Each vote cast here moves a record into the agreement matrix.
+        tq = tq.filter(Record.id.in_(shadow_sub), ~Record.id.in_(_human))
     tq, rv_sel, rv_choices, adj = _vote_filters(db, ws, user, is_owner, tq, "screen1", rv, adj)
     tq = _apply_record_filters(tq, q, source, rtype, yf, yt, sort, order)
     records, page, n_pages, matched_n = _paginate(tq, page)
@@ -1680,9 +1702,11 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     # records the current reviewer has already voted on → their votes are revealed
     my_voted = {v.record_id for v in all_votes
                 if v.reviewer_kind == "user" and v.reviewer_id == user.id}
-    # same definition as divergent_sub, for the marker on the rows on screen
+    # same definition as divergent_sub, for the marker on the rows on screen —
+    # deciding voices only, or a dry run differing from the model would mark a
+    # record contested that the divergent count rightly leaves out
     divergent_ids = {rid for rid, vs in votes.items()
-                     if len({v.decision for v in vs}) > 1}
+                     if len({v.decision for v in vs if v.reviewer_kind in DECIDING_KINDS}) > 1}
     # The blind rule for the votes on a row, in one place. The template used to
     # carry two that disagreed: the compact vote strip under the decision was
     # revealed to the owner on every record, while the named list beside the
@@ -1713,6 +1737,11 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         return "<$0.01" if x < 0.01 else f"${x:.2f}"
     shadow_chars = _chars(Record.id.in_(_human))
     est_shadow = _fmt(screening.estimate_cost(model, system, manual_n, shadow_chars))
+    # the price of sampling the whole pool; the page scales it by the percentage,
+    # which is fair because the estimate is linear in records and characters
+    sample_chars = _chars(Record.screen1_decision == "pending", ~Record.id.in_(_human),
+                          ~Record.id.in_(shadow_sub))
+    est_sample_full = screening.estimate_cost(model, system, sample_pool_n, sample_chars)
     est_pending = _fmt(screening.estimate_cost(model, system, counts["pending"], pending_chars))
     est_rerun = _fmt(screening.estimate_cost(model, system, counts["pending"] + model_n,
                                              pending_chars + model_chars))
@@ -1721,6 +1750,8 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
         "counts": counts,
         "model_n": model_n, "manual_n": manual_n, "model": model,
         "est_pending": est_pending, "est_rerun": est_rerun, "est_shadow": est_shadow,
+        "est_sample_full": est_sample_full,
+        "sample_todo_n": sample_todo_n, "sample_pool_n": sample_pool_n,
         "shadow_matrix": shadow_matrix, "shadow": shadow_stats,
         "records": records, "decision": decision,
         "votes": votes, "revealed": revealed,
@@ -1743,6 +1774,7 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
 
 @app.post("/w/{ws_id}/screening/run")
 async def run_screening(ws_id: int, mode: str = Form(""), rerun: str = Form(""),
+                        sample_pct: int = Form(10),
                         user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
@@ -1752,17 +1784,19 @@ async def run_screening(ws_id: int, mode: str = Form(""), rerun: str = Form(""),
     # `rerun` is the old field name, still honoured so a bookmarked POST keeps
     # working. An unknown mode falls back to the safest one rather than erroring.
     mode = mode or ("rerun" if rerun else "pending")
-    if mode not in ("pending", "rerun", "shadow"):
+    if mode not in ("pending", "rerun", "shadow", "sample"):
         mode = "pending"
     # the button is hidden when the setting is off, but hiding a control is not
     # the same as refusing the request it would have sent
-    if mode == "shadow" and not ws.dry_run_enabled:
+    if mode in ("shadow", "sample") and not ws.dry_run_enabled:
         raise HTTPException(403, "The dry run is switched off for this review")
+    if mode == "sample" and not 1 <= sample_pct <= 100:
+        raise HTTPException(400, "The sample must be between 1% and 100% of the pending records")
     from screening import get_job, start_screen1
     job = get_job(ws.id)
     if job and job.get("status") == "running":
         raise HTTPException(409, "Screening already in progress")
-    start_screen1(ws.id, api_key, user.id, mode=mode)
+    start_screen1(ws.id, api_key, user.id, mode=mode, sample_pct=sample_pct)
     return RedirectResponse(f"/w/{ws_id}/screening", status_code=302)
 
 
