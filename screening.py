@@ -87,11 +87,14 @@ def _parse(content: str) -> dict | None:
 
 def _create_with_retry(client, *, tries: int = 3, **kw):
     """Anthropic call with a couple of retries for transient failures
-    (rate limits, 5xx, network blips)."""
+    (rate limits, 5xx, network blips). Streamed, because the SDK refuses a
+    non-streaming request with a cap as high as MAX_OUTPUT_TOKENS; the final
+    message has the same shape as a create() response."""
     import time
     for attempt in range(tries):
         try:
-            return client.messages.create(**kw)
+            with client.messages.stream(**kw) as stream:
+                return stream.get_final_message()
         except Exception:
             if attempt == tries - 1:
                 raise
@@ -111,6 +114,7 @@ def screen_record(client, system_prompt: str, title: str, abstract: str,
     reviewer could not tell those from the model's genuine uncertainty, and the
     bucket the prompt reserves for "ask a human" had quietly become the bucket
     for "the answer was never read"."""
+    from models import MAX_OUTPUT_TOKENS
     user = screening_user(title, abstract)
     resp = _create_with_retry(
         client,
@@ -124,8 +128,9 @@ def screen_record(client, system_prompt: str, title: str, abstract: str,
         # brace, is NOT available here: claude-sonnet-5 rejects it outright
         # ("This model does not support assistant message prefill. The
         # conversation must end with a user message."). So the cap is the lever,
-        # and a higher cap costs nothing on the replies that do not use it.
-        max_tokens=2000,
+        # and a higher cap costs nothing on the replies that do not use it —
+        # hence the shared ceiling (models.MAX_OUTPUT_TOKENS).
+        max_tokens=MAX_OUTPUT_TOKENS,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user}],
     )

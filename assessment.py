@@ -143,6 +143,7 @@ def assess_record(client, system_prompt: str, full_text: str, model: str):
     """Returns (decision, reason, raw_fields, tokens_in, tokens_out). The reader
     keeps the whole full text; the model gets it without references/back matter."""
     from fulltext import strip_back_matter
+    from models import MAX_OUTPUT_TOKENS
     text = strip_back_matter(full_text or "")[:MAX_TEXT_CHARS]
     resp = _stream_with_retry(
         client,
@@ -151,8 +152,9 @@ def assess_record(client, system_prompt: str, full_text: str, model: str):
         # Opus 5) it runs by default when `thinking` is omitted. At 2000 the
         # reasoning used the whole budget and the JSON stopped after one line:
         # 13 of a 16-record pilot came back unparseable. 16000 then cut off two
-        # long basic-science papers of 160, so 32000, which needs streaming.
-        max_tokens=32000,
+        # long basic-science papers of 160, so 32000, which needs streaming;
+        # now the shared ceiling.
+        max_tokens=MAX_OUTPUT_TOKENS,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": assessment_user(text)}],
     )

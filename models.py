@@ -932,6 +932,13 @@ PRICING: dict[str, tuple[float, float]] = {
 }
 DEFAULT_SCREENING_MODEL = "claude-haiku-4-5"
 
+# One output ceiling for every LLM call. On current models (Sonnet 5, Opus 5)
+# thinking runs by default and counts against max_tokens, so a tight cap does
+# not shorten the answer, it cuts it off: that happened at 2000 on assessment,
+# at 32000 on the largest synthesis check. Unused headroom is not billed; a cap
+# this high needs streaming, which every call site uses.
+MAX_OUTPUT_TOKENS = 64000
+
 
 def calc_cost(model: str, tokens_in: int, tokens_out: int) -> float:
     p = PRICING.get(model, PRICING[DEFAULT_SCREENING_MODEL])

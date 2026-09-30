@@ -42,11 +42,13 @@ def translate_query(api_key: str, source_query: str, target_db: str,
     import anthropic
     client = anthropic.Anthropic(api_key=api_key)
     prompt = translate_user(source_db, source_query, target_db, year_from, year_to, apply_years)
-    msg = client.messages.create(
+    from models import MAX_OUTPUT_TOKENS
+    with client.messages.stream(
         model=model,
-        max_tokens=1500,
+        max_tokens=MAX_OUTPUT_TOKENS,
         system=TRANSLATE_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
-    )
+    ) as stream:
+        msg = stream.get_final_message()
     text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
     return _strip_fences(text)

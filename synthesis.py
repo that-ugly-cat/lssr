@@ -674,8 +674,9 @@ def _narrative(client, model, rq, criterion, items):
     and at the old 1500 the whole budget could go to reasoning, leaving a
     truncated or empty paragraph that went straight to the public page. A reply
     that stops for any reason other than finishing is replaced by a note."""
+    from models import MAX_OUTPUT_TOKENS
     with client.messages.stream(
-        model=model, max_tokens=16000,
+        model=model, max_tokens=MAX_OUTPUT_TOKENS,
         system=[{"type": "text", "text": SYNTHESIS_SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": synthesis_user(rq, criterion, items)}],
     ) as stream:
@@ -703,15 +704,16 @@ def _verify(client, model, rq, theme, draft, studies):
     studies it cites, and correct it. Returns (text, changes, tokens_in,
     tokens_out); changes is None when the check did not complete, in which case
     the draft is returned marked as unverified rather than silently kept."""
+    from models import MAX_OUTPUT_TOKENS
     from prompts import VERIFY_SYSTEM, verify_user
     cap = min(VERIFY_TEXT_CHARS, VERIFY_TOTAL_CHARS // max(len(studies), 1))
     studies = [dict(st, full_text=(st.get("full_text") or "")[:cap]) for st in studies]
     sent = sum(len(st["full_text"]) for st in studies)
     try:
         with client.messages.stream(
-            # 64k: with ~350k tokens of full text in, thinking alone used up a
-            # 32k ceiling on the largest paragraph (stop=max_tokens, 32000 out).
-            model=model, max_tokens=64000,
+            # With ~350k tokens of full text in, thinking alone used up a 32k
+            # ceiling on the largest paragraph (stop=max_tokens, 32000 out).
+            model=model, max_tokens=MAX_OUTPUT_TOKENS,
             system=[{"type": "text", "text": VERIFY_SYSTEM, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": verify_user(rq, theme, draft, studies)}],
         ) as stream:
