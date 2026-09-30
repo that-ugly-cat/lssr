@@ -132,7 +132,12 @@ def assess_record(client, system_prompt: str, full_text: str, model: str):
     resp = _create_with_retry(
         client,
         model=model,
-        max_tokens=2000,
+        # Thinking counts against max_tokens, and on current models (Sonnet 5,
+        # Opus 5) it runs by default when `thinking` is omitted. At 2000 the
+        # reasoning used the whole budget and the JSON stopped after one line:
+        # 13 of a 16-record pilot came back unparseable. 16000 is the ceiling
+        # recommended for non-streaming calls.
+        max_tokens=16000,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": assessment_user(text)}],
     )
@@ -141,6 +146,11 @@ def assess_record(client, system_prompt: str, full_text: str, model: str):
     d = str(parsed.get("inclusion_decision", "")).lower()
     decision = d if d in ("include", "exclude", "maybe") else "maybe"  # park the unparseable
     reason = parsed.get("inclusion_reason", "") or ""
+    if not parsed:
+        # say why a record was parked, or a reviewer sees a 'maybe' with no reason
+        reason = ("(draft cut off at the output limit — re-draft this record)"
+                  if resp.stop_reason == "max_tokens"
+                  else "(the model's answer could not be read as JSON — re-draft this record)")
     fields = parsed.get("fields") if isinstance(parsed.get("fields"), dict) else {}
     return decision, reason, fields, resp.usage.input_tokens, resp.usage.output_tokens
 
