@@ -339,7 +339,9 @@ end of that claim, e.g. [S1][S4][S7]. Do NOT write author names, years, DOIs, or
 links yourself — only the tokens. Do not invent findings or tokens; use only the
 material provided. Be neutral.
 
-Return only the paragraph, no headings, no preamble."""
+Write the finished paragraph, and only that, inside <paragraph></paragraph>
+tags. Anything outside the tags is discarded, so if you change your mind, write
+a new complete paragraph in a new pair of tags: only the last one is kept."""
 
 
 def synthesis_user(research_question, theme, items) -> str:

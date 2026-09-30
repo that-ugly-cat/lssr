@@ -462,6 +462,7 @@ def reference_entry(rec) -> str:
 _TOKEN_CLUSTER_RE = re.compile(
     r"\[\s*S\d+(?:\s*[,;]\s*S\d+)*\s*\](?:\s*[,;]?\s*\[\s*S\d+(?:\s*[,;]\s*S\d+)*\s*\])*")
 _TOKEN_RE = re.compile(r"S(\d+)")
+_STRAY_TOKEN_RE = re.compile(r"\[[^\[\]]*\bS\d+\b[^\[\]]*\]")
 
 
 def _cluster_tokens(cluster: str) -> list:
@@ -511,6 +512,9 @@ def render_citations(text: str, num: dict) -> str:
         nums = [num[t] for t in _cluster_tokens(m.group(0)) if t in num]
         return (" " + _render_cluster(nums)) if nums else ""
     out = _TOKEN_CLUSTER_RE.sub(sub, text)
+    # anything token-like the cluster pattern did not recognise ("[S99=S91]",
+    # "[S55… wait]") is not a citation, and must not reach the reader either
+    out = _STRAY_TOKEN_RE.sub("", out)
     out = re.sub(r" {2,}", " ", out)
     out = re.sub(r"\( \\\[", "(\\[", out)
     # a dropped or moved cluster leaves a space before the punctuation after it
@@ -614,9 +618,22 @@ def _narrative(client, model, rq, criterion, items):
     ) as stream:
         resp = stream.get_final_message()
     text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+    text = _last_paragraph(text)
     if resp.stop_reason != "end_turn" or not text:
         text = CUT_OFF
     return text, resp.usage.input_tokens, resp.usage.output_tokens
+
+
+_PARAGRAPH_RE = re.compile(r"<paragraph>(.*?)</paragraph>", re.S)
+
+
+def _last_paragraph(text: str) -> str:
+    """The content of the last <paragraph> tag. A model that corrects itself
+    mid-answer ("… wait. Actually, let me produce the final paragraph") once
+    published both the abandoned draft and the aside; the tags keep only the
+    version it settled on. Untagged output is taken whole, as before."""
+    found = _PARAGRAPH_RE.findall(text or "")
+    return found[-1].strip() if found else (text or "").strip()
 
 
 NO_VALUE = "Not reported / not coded"
