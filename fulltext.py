@@ -365,6 +365,13 @@ def pdf_to_markdown(pdf_bytes: bytes, paper2md_url: str) -> str:
                 f"paper2md timed out at the proxy ({code}, Cloudflare's ~100s limit) — the "
                 "PDF is large/slow to convert. Point PAPER2MD_URL at paper2md's internal "
                 "address so the call skips the proxy.")
+        if code == 504 and "timed out" in body.lower():
+            # paper2md's own ceiling, not the network. It stays Paper2mdUnavailable
+            # so the PDF is held for pass 2; but the conversion it abandoned keeps
+            # running inside paper2md, so the next PDFs queue behind it.
+            raise Paper2mdUnavailable(
+                "paper2md gave up on this PDF after its own time limit (504); a long "
+                "document, or one queued behind another that timed out")
         if code in (502, 503, 504):
             raise Paper2mdUnavailable(f"paper2md unreachable ({code})")
         # surface paper2md's own complaint (bad key, too large, queue full…)
@@ -450,7 +457,15 @@ def ingest_upload(db, workspace_id: int, rec, filename: str, data: bytes) -> str
     convert pass; the text formats already are the full text, so they go straight
     to converted."""
     name = (filename or "").lower()
+    if not data:
+        # The browser sent nothing: a cloud-only file (OneDrive, iCloud) or a
+        # download still in progress. Stored, it would only fail later at
+        # conversion with an error that no longer names the upload.
+        raise ValueError("the file is empty (0 bytes) — is it still downloading, "
+                         "or only in the cloud?")
     if name.endswith(".pdf") or data[:4] == b"%PDF":
+        if b"%PDF" not in data[:1024]:     # the spec allows junk before the header
+            raise ValueError("this is not a PDF, whatever its name says")
         clear_unfound(rec)     # found, even if it still has to be converted
         store_uploaded_pdf(db, workspace_id, rec, data)
         return "fetched"
@@ -823,14 +838,19 @@ def _run_convert(workspace_id: int, paper2md_url: str):
                                        "total": total, "done": 0, "converted": 0, "failed": 0})
         converted = failed = 0
         first_error = None
+        causes: dict[str, list[int]] = {}    # error → record ids, so no cause hides behind the first
         for i, rec in enumerate(targets):
             try:
+                if not Path(rec.full_text_path or "").stat().st_size:
+                    raise RuntimeError("the stored PDF is empty (0 bytes) — upload it again")
                 convert_stored_pdf(db, rec, paper2md_url)
                 converted += 1
             except Exception as exc:
                 failed += 1          # PDF kept, status reverted to "fetched"
+                err = str(exc).removeprefix("paper2md conversion failed: ")
                 if first_error is None:
-                    first_error = str(exc)
+                    first_error = err
+                causes.setdefault(err, []).append(rec.id)
             _update(workspace_id, "convert", done=i + 1, converted=converted, failed=failed)
         if converted == 0 and failed > 0:
             # Nothing came back — usually paper2md is unreachable. Say so instead
@@ -842,11 +862,15 @@ def _run_convert(workspace_id: int, paper2md_url: str):
                 "converted": 0, "failed": failed})
             return
         msg = f"Done. {converted} converted, {failed} failed."
-        if first_error:
-            msg += f" First failure: {first_error}"
+        if causes:
+            msg += " " + " ".join(
+                f"{len(ids)}× {err} (records {', '.join(map(str, ids))})."
+                for err, ids in sorted(causes.items(), key=lambda kv: -len(kv[1])))
         _set(workspace_id, "convert", {"status": "done", "message": msg,
                                        "total": total, "done": total,
-                                       "converted": converted, "failed": failed})
+                                       "converted": converted, "failed": failed,
+                                       "causes": [{"error": e, "records": ids}
+                                                  for e, ids in causes.items()]})
     except Exception as exc:
         _set(workspace_id, "convert", {"status": "error", "message": str(exc), "error": str(exc)})
     finally:
