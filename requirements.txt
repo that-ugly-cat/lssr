@@ -12,7 +12,7 @@ requests
 pandas
 openpyxl
 python-docx
-bibtexparser
+bibtexparser>=1.4,<2
 rispy
 rapidfuzz
 markdown
