@@ -8,7 +8,33 @@
   {% if not has_key %}
   <div class="flash flash-error" style="display:block;">Set your Anthropic API key in <a href="/profile">your profile</a> first.</div>
   {% endif %}
-  <form method="post" action="/w/{{ ws.id }}/synthesis/run" id="sy-form" style="display:inline;">
+  <form method="post" action="/w/{{ ws.id }}/synthesis/run" id="sy-form">
+    <input type="hidden" name="configured" value="1">
+    {% if text_fields %}
+    <div style="margin-bottom:10px;">
+      <div class="small" style="font-weight:600; margin-bottom:4px;">Narrative blocks</div>
+      <div class="muted small" style="margin-bottom:6px;">One block per ticked free-text field. Untick fields that hold identifiers or raw numbers: a paragraph has nothing to say about them.</div>
+      {% for f in text_fields %}
+      <label style="display:inline-flex; gap:5px; align-items:center; margin-right:14px;">
+        <input type="checkbox" name="synth_fields" value="{{ f.key }}" {{ 'checked' if f.in_synthesis is not false else '' }}>
+        {{ f.label }}
+      </label>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if group_fields %}
+    <div style="margin-bottom:10px;">
+      <label class="small" style="font-weight:600;">Group paragraphs by
+        <select name="group_key" style="margin-left:6px;">
+          <option value="">no grouping — one paragraph over all studies</option>
+          {% for f in group_fields %}
+          <option value="{{ f.key }}" {{ 'selected' if ws.synthesis_group_key == f.key else '' }}>{{ f.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="muted small">Each block then gets one paragraph per value of this field, plus one for the studies with no value. More paragraphs, more calls.</div>
+    </div>
+    {% endif %}
     <button class="btn btn-primary" type="submit" id="sy-btn" {{ 'disabled' if not has_key else '' }}>
       {{ 'Regenerate synthesis' if syn else 'Generate synthesis' }}
     </button>

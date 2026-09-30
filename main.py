@@ -2461,16 +2461,22 @@ async def synthesis_page(ws_id: int, request: Request, user: User = Depends(get_
     blocks = sorted(syn.blocks, key=lambda b: b.position) if syn else []
     shares = db.query(PublicShare).filter(PublicShare.workspace_id == ws.id,
                                           PublicShare.active == True).all()  # noqa: E712
+    from models import workspace_extraction_fields
+    fields = workspace_extraction_fields(db, ws)
     return render(request, "workspace_synthesis.html", {
         "user": user, "ws": ws, "tab": "synthesis", "steps_done": workspace_steps_done(ws),
         "syn": syn,
+        "text_fields": [f for f in fields if f.field_type in ("text", "textarea")],
+        "group_fields": [f for f in fields if f.field_type in ("select", "multiselect")],
         "blocks": blocks, "shares": shares, "has_key": bool(_user_api_key(user)),
         "is_owner": ws.owner_id == user.id or user.is_admin,
     })
 
 
 @app.post("/w/{ws_id}/synthesis/run")
-async def run_synthesis(ws_id: int, user: User = Depends(get_current_user),
+async def run_synthesis(ws_id: int, configured: str = Form(""),
+                        synth_fields: list[str] = Form([]), group_key: str = Form(""),
+                        user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
     api_key = _user_api_key(user)
@@ -2480,6 +2486,20 @@ async def run_synthesis(ws_id: int, user: User = Depends(get_current_user),
     job = synthesis.get_job(ws.id)
     if job and job.get("status") == "running":
         raise HTTPException(409, "Synthesis already in progress")
+    # The choices travel with the Generate button and are saved before the run,
+    # so the next run and the next visitor see what produced the current text.
+    # `configured` tells a submitted form with every box unticked from an old
+    # POST that carried no choices at all, which must leave them as they were.
+    if configured:
+        from models import workspace_extraction_fields
+        fields = workspace_extraction_fields(db, ws)
+        chosen = set(synth_fields)
+        for f in fields:
+            if f.field_type in ("text", "textarea"):
+                f.in_synthesis = f.key in chosen
+        groupable = {f.key for f in fields if f.field_type in ("select", "multiselect")}
+        ws.synthesis_group_key = group_key if group_key in groupable else None
+        db.commit()
     synthesis.start_synthesis(ws.id, api_key, user.id)
     return RedirectResponse(f"/w/{ws_id}/synthesis", status_code=302)
 

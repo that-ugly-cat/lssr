@@ -5,8 +5,10 @@ Builds the PRISMA flow counts, then a sequence of blocks:
   • Block 0 — "Study characteristics": a procedural distribution summary of the
     structured "fixed variable" fields (select/multiselect/number: country, study
     year, study type, methodology axes…). No LLM, so no miscounted figures.
-  • One block per assessment criterion (text/textarea field): the LLM aggregates
-    the per-study findings into a narrative paragraph. Citations are NOT authored
+  • One block per free-text (text/textarea) field the review ticks for synthesis
+    (ExtractionField.in_synthesis): the LLM aggregates the per-study findings
+    into a narrative paragraph — or, with Workspace.synthesis_group_key set, one
+    paragraph per value of that select/multiselect field. Citations are NOT authored
     by the LLM — it only inserts a study token ([S1], [S2]…) which we substitute
     procedurally with a citation built from the record (Surname et al., Year,
     DOI/link), so a citation can never be hallucinated.
@@ -457,7 +459,9 @@ def _substitute_citations(text: str, token_cite: dict) -> str:
     drop any token that isn't in the map (a hallucinated reference)."""
     out = _TOKEN_RE.sub(lambda m: f"({token_cite[m.group(1)]})"
                         if m.group(1) in token_cite else "", text)
-    return re.sub(r" {2,}", " ", out).strip()
+    out = re.sub(r" {2,}", " ", out)
+    # a dropped token leaves a space before the punctuation that followed it
+    return re.sub(r" +([.,;:])", r"\1", out).strip()
 
 
 # ── General block: structured "fixed variables" (procedural, no LLM) ────────────
@@ -511,14 +515,49 @@ def general_narrative(structured_fields, extracted, included) -> str:
 from prompts import SYNTHESIS_SYSTEM, synthesis_user  # noqa: E402
 
 
+CUT_OFF = ("_This paragraph was cut off before the model finished it; regenerate the "
+           "synthesis. Nothing partial is shown._")
+
+
 def _narrative(client, model, rq, criterion, items):
-    resp = client.messages.create(
-        model=model, max_tokens=1500,
+    """One paragraph. Streamed with room for thinking: on current models
+    (Sonnet 5, Opus 5) thinking runs by default and counts against max_tokens,
+    and at the old 1500 the whole budget could go to reasoning, leaving a
+    truncated or empty paragraph that went straight to the public page. A reply
+    that stops for any reason other than finishing is replaced by a note."""
+    with client.messages.stream(
+        model=model, max_tokens=16000,
         system=[{"type": "text", "text": SYNTHESIS_SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": synthesis_user(rq, criterion, items)}],
-    )
+    ) as stream:
+        resp = stream.get_final_message()
     text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+    if resp.stop_reason != "end_turn" or not text:
+        text = CUT_OFF
     return text, resp.usage.input_tokens, resp.usage.output_tokens
+
+
+NO_VALUE = "Not reported / not coded"
+
+
+def _groups(group_field, included, extracted) -> list:
+    """(group value, [records]) in the field's own option order, then the records
+    with no value. A multiselect puts a record in every group it ticks, so the
+    groups can overlap; the block says so."""
+    from models import field_visible
+    buckets: dict = {}
+    for rec in included:
+        vals = extracted.get(rec.id, {})
+        v = vals.get(group_field.key) if field_visible(group_field, vals) else None
+        keys = [x for x in v if x not in (None, "")] if isinstance(v, list) else (
+            [v] if v not in (None, "") else [])
+        for k in keys or [NO_VALUE]:
+            buckets.setdefault(str(k), []).append(rec)
+    order = [o for o in group_field.options() if o in buckets]
+    order += sorted(k for k in buckets if k not in order and k != NO_VALUE)
+    if NO_VALUE in buckets:
+        order.append(NO_VALUE)
+    return [(k, buckets[k]) for k in order]
 
 
 def _run(workspace_id: int, api_key: str, user_id: int | None):
@@ -534,7 +573,11 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
         ensure_extraction_fields(db, ws)
         fields = workspace_extraction_fields(db, ws)
         structured_fields = [f for f in fields if f.field_type in ("select", "multiselect", "number")]
-        narrative_fields = [f for f in fields if f.field_type in ("text", "textarea")]
+        narrative_fields = [f for f in fields if f.field_type in ("text", "textarea")
+                            and f.in_synthesis is not False]
+        group_field = next((f for f in structured_fields
+                            if f.key == ws.synthesis_group_key
+                            and f.field_type in ("select", "multiselect")), None)
         _set(workspace_id, {"status": "running", "message": "Building synthesis…",
                             "total": len(narrative_fields), "done": 0})
 
@@ -569,36 +612,84 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
         db.commit()
 
         client = anthropic.Anthropic(api_key=api_key)
-        tin = tout = 0
-        for i, fld in enumerate(narrative_fields):
+
+        def items_for(fld, recs):
             items = []
-            for rec in included:
+            for rec in recs:
                 val = extracted.get(rec.id, {}).get(fld.key)
                 if isinstance(val, list):
                     val = ", ".join(str(v) for v in val)
                 val = (val or "").strip() if isinstance(val, str) else ""
                 if val and val.lower() != "not addressed":
                     items.append({"token": tokens[rec.id], "finding": val})
-            if items:
-                raw, ti, to = _narrative(client, model, ws.research_question, fld.label, items)
-                narrative = _substitute_citations(raw, token_cite)
+            return items
+
+        # Every paragraph to write, as (field index, group or None, theme, items).
+        # With a grouping field each narrative field gets one paragraph per group
+        # value, so the calls multiply; they run in parallel below.
+        groups = _groups(group_field, included, extracted) if group_field else [(None, included)]
+        jobs = []
+        for i, fld in enumerate(narrative_fields):
+            for gval, recs in groups:
+                theme = fld.label if gval is None else f"{fld.label} — {group_field.label}: {gval}"
+                jobs.append((i, gval, theme, items_for(fld, recs)))
+        _set(workspace_id, {"status": "running", "message": "Writing the narratives…",
+                            "total": len(jobs), "done": 0})
+
+        from concurrent.futures import ThreadPoolExecutor
+        results = {}
+        tin = tout = 0
+        done = 0
+
+        def write(job):
+            i, gval, theme, items = job
+            if not items:
+                return job, None, 0, 0
+            raw, ti, to = _narrative(client, model, ws.research_question, theme, items)
+            return job, raw, ti, to
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for job, raw, ti, to in ex.map(write, jobs):
+                results[(job[0], job[1])] = (raw, len(job[3]))
                 tin += ti
                 tout += to
+                done += 1
+                _set(workspace_id, {"status": "running", "message": f"Synthesizing {job[2]}…",
+                                    "total": len(jobs), "done": done})
+
+        for i, fld in enumerate(narrative_fields):
+            if group_field is None:
+                raw, _n = results[(i, None)]
+                narrative = (_substitute_citations(raw, token_cite) if raw
+                             else "_No included studies addressed this field._")
             else:
-                narrative = "_No included studies addressed this field._"
+                parts = []
+                if group_field.field_type == "multiselect":
+                    parts.append(f"_Grouped by {group_field.label}. A study can tick more than "
+                                 f"one value, so it can appear in more than one group._")
+                for gval, recs in groups:
+                    raw, n = results[(i, gval)]
+                    if not raw:
+                        continue
+                    parts.append(f"**{gval}** ({n} stud{'y' if n == 1 else 'ies'})\n\n"
+                                 f"{_substitute_citations(raw, token_cite)}")
+                narrative = ("\n\n".join(parts) if any(r[0] for k, r in results.items() if k[0] == i)
+                             else "_No included studies addressed this field._")
             db.add(SynthesisBlock(synthesis_id=syn.id, heading=fld.label,
                                   narrative=narrative, position=i + 1))
-            db.commit()
-            _set(workspace_id, {"status": "running", "message": f"Synthesizing {fld.label}…",
-                                "total": len(narrative_fields), "done": i + 1})
+        db.commit()
 
         if tin or tout:
             db.add(UserCostLog(user_id=user_id, workspace_id=workspace_id, step="synthesis",
                                input_tokens=tin, output_tokens=tout,
                                cost_usd=calc_cost(model, tin, tout)))
             db.commit()
-        _set(workspace_id, {"status": "done", "message": "Synthesis ready.",
-                            "total": len(narrative_fields), "done": len(narrative_fields)})
+        cut = sum(1 for raw, _n in results.values() if raw == CUT_OFF)
+        _set(workspace_id, {"status": "done",
+                            "message": ("Synthesis ready." if not cut else
+                                        f"Synthesis ready, but {cut} paragraph(s) were cut off: "
+                                        "regenerate."),
+                            "total": len(jobs), "done": len(jobs)})
     except Exception as exc:
         _set(workspace_id, {"status": "error", "message": str(exc), "error": str(exc)})
     finally:

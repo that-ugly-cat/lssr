@@ -118,6 +118,11 @@ class Workspace(Base):
     # text. NULL means "same as screening 1", which is how every workspace
     # behaved before this column existed.
     screen2_reviewers_required = Column(Integer, nullable=True)
+    # Key of a select/multiselect extraction field: the synthesis then writes one
+    # paragraph per value of it inside each narrative block (per study design,
+    # per stage…) instead of one paragraph over every included study. NULL: no
+    # grouping, the behaviour before the option existed.
+    synthesis_group_key = Column(String, nullable=True)
     # Whether this review offers the screening-1 dry run: the model screening
     # again, under current criteria, over records people have already voted on,
     # writing a vote that decides nothing. Off by default, because it costs real
@@ -436,6 +441,11 @@ class ExtractionField(Base):
     show_if_values_json = Column(Text, nullable=True)  # JSON list of parent values that reveal this
     builtin       = Column(Boolean, default=False)
     position      = Column(Integer, default=0)
+    # Free-text fields only: whether the synthesis writes a narrative block for
+    # it. Default on, which is how every field behaved before the choice existed;
+    # off for fields that hold identifiers or raw numbers (a "same study as" list,
+    # a sample size), where a narrative paragraph has nothing to say.
+    in_synthesis  = Column(Boolean, default=True)
 
     __table_args__ = (UniqueConstraint("workspace_id", "key", name="uq_extraction_field_key"),)
 
@@ -1017,6 +1027,10 @@ def init_db():
             # Existing keys were minted when the surface had no writes at all;
             # the default keeps them readers, which is what their owners agreed to.
             "ALTER TABLE api_keys ADD COLUMN can_write BOOLEAN DEFAULT 0",
+            # Synthesis choices. Existing fields default to in synthesis and
+            # existing reviews to no grouping: what they did before.
+            "ALTER TABLE extraction_fields ADD COLUMN in_synthesis BOOLEAN DEFAULT 1",
+            "ALTER TABLE workspaces ADD COLUMN synthesis_group_key VARCHAR",
         ]:
             try:
                 conn.execute(text(stmt))
@@ -1349,6 +1363,7 @@ def duplicate_workspace(db, source: "Workspace", owner: "User", name: str,
         ws.year_from = source.year_from
         ws.year_to = source.year_to
         ws.target_dbs_json = source.target_dbs_json
+        ws.synthesis_group_key = source.synthesis_group_key
     db.add(ws)
     db.flush()          # we need ws.id for the children below
 
@@ -1364,7 +1379,8 @@ def duplicate_workspace(db, source: "Workspace", owner: "User", name: str,
                 workspace_id=ws.id, key=f.key, label=f.label, help=f.help,
                 field_type=f.field_type, options_json=f.options_json,
                 show_if_key=f.show_if_key, show_if_values_json=f.show_if_values_json,
-                builtin=f.builtin, position=f.position))
+                builtin=f.builtin, position=f.position,
+                in_synthesis=f.in_synthesis is not False))
 
     if "members" in parts:
         seen = {owner.id}                       # the new owner is not a member row

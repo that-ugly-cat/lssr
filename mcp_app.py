@@ -468,12 +468,16 @@ def get_protocol(review: str) -> dict:
                 "builtin": bool(f.builtin),
                 "show_if": ({"field": f.show_if_key, "values": f.show_if_values()}
                             if f.show_if_key else None),
+                # free-text fields only: whether the synthesis writes a block for it
+                **({"in_synthesis": f.in_synthesis is not False}
+                   if f.field_type in ("text", "textarea") else {}),
             })
         return {"review": ws.name,
                 "research_question": ws.research_question,
                 "exclusion_criteria": crit("exclusion"),
                 "inclusion_criteria": crit("inclusion"),
-                "extraction_fields": fields}
+                "extraction_fields": fields,
+                "synthesis_group_by": ws.synthesis_group_key}
     except (LookupError, PermissionError) as e:
         return _fail(str(e))
     finally:
