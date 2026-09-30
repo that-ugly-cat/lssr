@@ -17,6 +17,7 @@
   --primary-hover: #0d4fa8;
   --accent: #4a6fa5;
   --accent-light: #63b3ed;
+  --chart-bar: #5b8def;  /* bar fill: validated on --card (L and chroma in band, >=3:1); --accent reads gray here */
   --danger: #fc8181;
   --danger-bg: #2d1515;
   --danger-border: #7b2020;
@@ -53,6 +54,7 @@
   --primary-hover: #0d4fa8;
   --accent: #3767ad;
   --accent-light: #1b5aa3;
+  --chart-bar: #3767ad;  /* = --accent, validated on --card */
   --danger: #b42318;
   --danger-bg: #fdf0ef;
   --danger-border: #eeb0aa;
@@ -604,7 +606,7 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
   border-bottom: 1px solid var(--border); padding-top: 4px;
 }
 .pub-bar { flex: 1 1 0; min-width: 2px; height: 100%; display: flex; align-items: flex-end; }
-.pub-bar-fill { width: 100%; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 1px; }
+.pub-bar-fill { width: 100%; background: var(--chart-bar); border-radius: 2px 2px 0 0; min-height: 1px; }
 .pub-bar:hover .pub-bar-fill { background: var(--accent-light); }
 .pub-hist-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted-2); margin-top: 4px; }
 .pub-cloud { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; line-height: 1.6; }
@@ -696,7 +698,15 @@ tr.row-highlight { background: var(--card-hover) !important; box-shadow: inset 3
 .pub-bar-row { display: grid; grid-template-columns: 130px 1fr 32px; gap: 8px; align-items: center; font-size: 12px; }
 .pub-bar-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted-2); }
 .pub-bar-track { background: var(--border); border-radius: 4px; height: 12px; overflow: hidden; }
-.pub-bar-val { display: block; height: 100%; background: var(--accent); border-radius: 4px; min-width: 2px; }
+.pub-bar-val { display: block; height: 100%; background: var(--chart-bar); border-radius: 4px; min-width: 2px; }
+/* synthesis charts: one per structured field, a grid of small bar charts */
+.syn-charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 18px 28px; margin-top: 12px; }
+.syn-chart-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.syn-chart .pub-bar-row { grid-template-columns: minmax(130px, 50%) 1fr 30px; }
+.syn-chart .pub-bar-label { white-space: normal; line-height: 1.25; }  /* long values wrap rather than truncate */
+.syn-chart .pub-bar-val.is-missing { background: var(--muted-3); }
+.syn-chart .pub-bar-label.is-missing { font-style: italic; }
+.syn-chart .pub-hist { height: 70px; }
 .pub-bar-n { text-align: right; color: var(--muted-2); }
 
 .pub-pie-wrap { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }

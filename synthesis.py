@@ -552,19 +552,72 @@ def counts_line(fields, recs, extracted) -> str:
 
 # ── General block: structured "fixed variables" (procedural, no LLM) ────────────
 
+CHART_MAX_ROWS = 12
+# values that mean "the study did not say": drawn in gray, since they are
+# missing data rather than a category, and never folded into "Other"
+_MISSING_RE = re.compile(r"(?i)^(not (reported|stated|specified|discussed|applicable|verified)|none|n/?a)$")
+
+
+def _bar_rows(counts, order, answered) -> str:
+    """One horizontal bar per value, width = share of the studies that answered
+    the field. Long tails fold into a single 'Other' row."""
+    from html import escape
+    keys = [k for k in order if k in counts]
+    items = [(k, counts[k], False) for k in keys]
+    if len(keys) > CHART_MAX_ROWS:
+        substantive = [k for k in keys if not _MISSING_RE.match(k)]
+        missing = [k for k in keys if _MISSING_RE.match(k)]
+        keep = max(1, CHART_MAX_ROWS - 1 - len(missing))
+        rest = substantive[keep:]
+        items = ([(k, counts[k], False) for k in substantive[:keep]]
+                 + [(f"Other ({len(rest)} values)", sum(counts[k] for k in rest), True)]
+                 + [(k, counts[k], False) for k in missing])
+    rows = []
+    # length compares the values with each other, so it scales to the largest;
+    # the share of all answering studies is in the hover title
+    top = max((n for _l, n, _o in items), default=0)
+    for label, n, other in items:
+        pct = round(100 * n / answered) if answered else 0
+        width = round(100 * n / top) if top else 0
+        miss = " is-missing" if (_MISSING_RE.match(label) and not other) else ""
+        tip = escape(f"{label}: {n} of {answered} studies ({pct}%)")
+        rows.append(f'<div class="pub-bar-row" title="{tip}">'
+                    f'<span class="pub-bar-label{miss}">{escape(label)}</span>'
+                    f'<span class="pub-bar-track"><span class="pub-bar-val{miss}" style="width:{width}%"></span></span>'
+                    f'<span class="pub-bar-n">{n}</span></div>')
+    return '<div class="pub-bars">' + "".join(rows) + "</div>"
+
+
+def _year_hist(nums) -> str:
+    from collections import Counter
+    c = Counter(int(x) for x in nums)
+    lo, hi = min(c), max(c)
+    top = max(c.values())
+    bars = "".join(f'<div class="pub-bar" title="{y}: {c.get(y, 0)}">'
+                   f'<div class="pub-bar-fill" style="height:{round(100 * c.get(y, 0) / top)}%"></div></div>'
+                   for y in range(lo, hi + 1))
+    return (f'<div class="pub-hist" role="img" aria-label="Studies per year, {lo} to {hi}">{bars}</div>'
+            f'<div class="pub-hist-axis"><span>{lo}</span><span>{hi}</span></div>')
+
+
 def general_narrative(structured_fields, extracted, included) -> str:
-    """A deterministic distribution summary of the structured extraction fields
-    across the included studies. No LLM, so no risk of a miscounted figure."""
+    """The distribution of every structured extraction field across the included
+    studies, as a grid of small bar charts (a histogram for numbers). Counted
+    here, no LLM, so no miscounted figure; every bar carries its count as text
+    and a hover title with the share, so nothing is read from colour alone.
+    Rendered as one raw HTML block, which the markdown filter passes through."""
     import statistics
     from collections import Counter
+    from html import escape
     from models import field_visible
 
     if not included:
         return "_No studies were included in the synthesis._"
-    lines = [f"**{len(included)} studies** were included in the synthesis."]
+    charts = []
     for fld in structured_fields:
         counts: Counter = Counter()
         nums: list = []
+        answered = 0
         for rec in included:
             vals = extracted.get(rec.id, {})
             if not field_visible(fld, vals):
@@ -572,6 +625,7 @@ def general_narrative(structured_fields, extracted, included) -> str:
             v = vals.get(fld.key)
             if v in (None, "") or (isinstance(v, list) and not v):
                 continue
+            answered += 1
             if fld.field_type == "number":
                 try:
                     nums.append(float(v))
@@ -583,16 +637,22 @@ def general_narrative(structured_fields, extracted, included) -> str:
                         counts[str(x)] += 1
             else:
                 counts[str(v)] += 1
+        title = f'<div class="syn-chart-title">{escape(fld.label)} <span class="muted small">n={answered}</span></div>'
         if fld.field_type == "number" and nums:
-            lo, hi = int(min(nums)), int(max(nums))
             med = statistics.median(nums)
             med = int(med) if med == int(med) else round(med, 1)
-            span = f"{lo}" if lo == hi else f"{lo}–{hi}"
-            lines.append(f"- **{fld.label}:** {span} (median {med}, n={len(nums)})")
+            charts.append(f'<div class="syn-chart">{title}{_year_hist(nums)}'
+                          f'<div class="muted small">median {med}</div></div>')
         elif counts:
-            parts = ", ".join(f"{k} ({n})" for k, n in counts.most_common())
-            lines.append(f"- **{fld.label}:** {parts}")
-    return "\n".join(lines)
+            order = [o for o in fld.options() if o in counts]
+            order += [k for k, _n in counts.most_common() if k not in order]
+            if len(order) > CHART_MAX_ROWS:   # long lists (countries): by frequency
+                order = [k for k, _n in counts.most_common()]
+            multi = ('<div class="muted small">several values per study possible</div>'
+                     if fld.field_type == "multiselect" else "")
+            charts.append(f'<div class="syn-chart">{title}{_bar_rows(counts, order, answered)}{multi}</div>')
+    head = f"**{len(included)} studies** were included in the synthesis."
+    return head + ("\n\n" + '<div class="syn-charts">' + "".join(charts) + "</div>" if charts else "")
 
 
 # ── LLM narrative per assessment criterion (text/textarea fields) ───────────────
