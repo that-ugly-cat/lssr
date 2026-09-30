@@ -13,6 +13,7 @@ Three surfaces, three credentials:
 """
 import contextlib
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -60,6 +61,8 @@ BASE = Path(__file__).parent
 app = FastAPI(title="LSSR", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
+# uvicorn's own logger, so a line lands in `docker logs` beside the request it explains
+log = logging.getLogger("uvicorn.error")
 
 
 def _md(text: str) -> str:
@@ -1026,6 +1029,8 @@ async def import_file(ws_id: int, file: UploadFile = File(...), database: str = 
     try:
         refs = parse_file(file.filename or "upload", raw)
     except Exception as exc:
+        # the access log only says "400": without this line the reason is lost
+        log.warning("import parse failed (ws %s, %s): %r", ws_id, file.filename, exc)
         raise HTTPException(400, f"Could not parse file: {exc}")
     it = current_iteration(db, ws)
     name = (file.filename or "").lower()
