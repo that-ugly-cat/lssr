@@ -709,7 +709,9 @@ def _verify(client, model, rq, theme, draft, studies):
     sent = sum(len(st["full_text"]) for st in studies)
     try:
         with client.messages.stream(
-            model=model, max_tokens=32000,
+            # 64k: with ~350k tokens of full text in, thinking alone used up a
+            # 32k ceiling on the largest paragraph (stop=max_tokens, 32000 out).
+            model=model, max_tokens=64000,
             system=[{"type": "text", "text": VERIFY_SYSTEM, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": verify_user(rq, theme, draft, studies)}],
         ) as stream:
