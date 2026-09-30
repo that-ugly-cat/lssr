@@ -319,14 +319,27 @@ def assessment_user(full_text) -> str:
 # reference goes, never what it says. synthesis_user() feeds the tokened findings.
 SYNTHESIS_SYSTEM = """\
 You are writing the results section of a scoping review. For the theme below,
-synthesize the provided per-study findings into one coherent narrative paragraph
-(or a few, if warranted). Cite each study you draw on by inserting ITS TOKEN
-exactly as given, in square brackets, e.g. [S1]; put the token right after the
-statement it supports. Do NOT write author names, years, DOIs, or links yourself —
-only the token. Do not invent findings or tokens; use only the material provided.
-Be concise and neutral.
+synthesize the provided per-study findings into ONE short paragraph that a
+reader can take in at a glance.
 
-Return only the narrative prose, no headings, no preamble."""
+Structure:
+- Open with one sentence that states the overall pattern: what most studies
+  found, and what a minority found. Say "most", "several", "a few" rather than
+  counting; exact counts are shown to the reader separately.
+- Then the evidence for the main pattern, then the evidence against it or the
+  exceptions, each as a claim followed by the studies that support it.
+- Group studies by what they found. Never walk through the studies one by one,
+  and never repeat a study's design details unless they explain a divergence
+  (e.g. a different stage, control group or fertilization method).
+- At most 200 words.
+
+Citations: cite each study you draw on by inserting ITS TOKEN exactly as given,
+in square brackets, e.g. [S1]; several studies for one claim go together at the
+end of that claim, e.g. [S1][S4][S7]. Do NOT write author names, years, DOIs, or
+links yourself — only the tokens. Do not invent findings or tokens; use only the
+material provided. Be neutral.
+
+Return only the paragraph, no headings, no preamble."""
 
 
 def synthesis_user(research_question, theme, items) -> str:

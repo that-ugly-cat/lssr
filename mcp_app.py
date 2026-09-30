@@ -477,7 +477,8 @@ def get_protocol(review: str) -> dict:
                 "exclusion_criteria": crit("exclusion"),
                 "inclusion_criteria": crit("inclusion"),
                 "extraction_fields": fields,
-                "synthesis_group_by": ws.synthesis_group_key}
+                "synthesis_group_by": ws.synthesis_group_key,
+                "synthesis_counts_line": json.loads(ws.synthesis_summary_keys_json or "[]")}
     except (LookupError, PermissionError) as e:
         return _fail(str(e))
     finally:
@@ -1227,9 +1228,11 @@ def get_synthesis(review: str) -> dict:
     counts and the public link if the review has one.
 
     The citations inside a block are procedural: the model that wrote the prose
-    only ever placed a token, and the author-year-DOI you read was substituted
-    from the record's own fields afterwards. That is why a reference here cannot
-    be invented — the model chose where a citation goes, never what it says.
+    only ever placed a token, which was replaced by a number afterwards; the
+    numbers point into the final "References" block, whose entries (authors,
+    year, title, journal, DOI) come from the records' own fields. That is why a
+    reference here cannot be invented — the model chose where a citation goes,
+    never what it says.
     """
     db = SessionLocal()
     try:

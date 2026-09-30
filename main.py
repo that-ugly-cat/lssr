@@ -2468,6 +2468,7 @@ async def synthesis_page(ws_id: int, request: Request, user: User = Depends(get_
         "syn": syn,
         "text_fields": [f for f in fields if f.field_type in ("text", "textarea")],
         "group_fields": [f for f in fields if f.field_type in ("select", "multiselect")],
+        "summary_keys": set(json.loads(ws.synthesis_summary_keys_json or "[]")),
         "blocks": blocks, "shares": shares, "has_key": bool(_user_api_key(user)),
         "is_owner": ws.owner_id == user.id or user.is_admin,
     })
@@ -2476,6 +2477,7 @@ async def synthesis_page(ws_id: int, request: Request, user: User = Depends(get_
 @app.post("/w/{ws_id}/synthesis/run")
 async def run_synthesis(ws_id: int, configured: str = Form(""),
                         synth_fields: list[str] = Form([]), group_key: str = Form(""),
+                        summary_fields: list[str] = Form([]),
                         user: User = Depends(get_current_user),
                         db: Session = Depends(get_db)):
     ws = _load_ws(db, user, ws_id)
@@ -2499,6 +2501,7 @@ async def run_synthesis(ws_id: int, configured: str = Form(""),
                 f.in_synthesis = f.key in chosen
         groupable = {f.key for f in fields if f.field_type in ("select", "multiselect")}
         ws.synthesis_group_key = group_key if group_key in groupable else None
+        ws.synthesis_summary_keys_json = json.dumps([k for k in summary_fields if k in groupable])
         db.commit()
     synthesis.start_synthesis(ws.id, api_key, user.id)
     return RedirectResponse(f"/w/{ws_id}/synthesis", status_code=302)

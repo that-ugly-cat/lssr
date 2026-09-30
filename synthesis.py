@@ -10,8 +10,10 @@ Builds the PRISMA flow counts, then a sequence of blocks:
     into a narrative paragraph — or, with Workspace.synthesis_group_key set, one
     paragraph per value of that select/multiselect field. Citations are NOT authored
     by the LLM — it only inserts a study token ([S1], [S2]…) which we substitute
-    procedurally with a citation built from the record (Surname et al., Year,
-    DOI/link), so a citation can never be hallucinated.
+    procedurally with a number, in order of first appearance, linked to a final
+    "References" block whose entries are built from the record (authors, year,
+    title, journal, DOI), so a citation can never be hallucinated. With grouping,
+    each group can open with a procedural counts line over chosen fields.
 
 Values come from each record's authoritative extraction (curated final row, else
 the latest reviewer's, else the model draft). Stored as Synthesis + SynthesisBlock
@@ -434,34 +436,114 @@ def _prisma_svg_two_arms(p: dict, arms: dict, steps_done=None):
 
 # ── Citations (procedural — never authored by the LLM) ──────────────────────────
 
-def citation(rec) -> str:
-    """Full inline citation built from the record's own fields:
-    'Surname et al., Year, https://doi.org/…'. The LLM never writes this — it only
-    emits a study token that we substitute here, so citations can't be hallucinated."""
+def reference_entry(rec) -> str:
+    """One entry of the numbered reference list, built from the record's own
+    fields (authors, year, title, journal, DOI). The LLM never writes this — it
+    only places study tokens — so a reference can't be hallucinated. Returned as
+    HTML, since it goes inside a raw <ol> the markdown filter passes through."""
+    from html import escape
     from authors import split_authors, surname_of
     names = split_authors(rec.authors)
-    year = rec.year or "n.d."
-    if names:
-        surname = surname_of(names[0]) or "Anon"
-        who = f"{surname} et al." if len(names) > 1 else surname
-    else:
-        who = "Anon"
+    shown = [surname_of(n) or n for n in names[:3]]
+    who = ", ".join(shown) + (" et al." if len(names) > 3 else "") if names else "Anon."
+    parts = [f"{escape(who)} ({rec.year or 'n.d.'})."]
+    if rec.title:
+        parts.append(escape(rec.title.rstrip(".")) + ".")
+    if rec.source:
+        parts.append(f"<em>{escape(rec.source)}</em>.")
     link = f"https://doi.org/{rec.doi}" if rec.doi else (rec.url or "")
-    parts = [who, str(year)] + ([link] if link else [])
-    return ", ".join(parts)
+    if link:
+        parts.append(f'<a href="{escape(link)}">{escape(link)}</a>')
+    return " ".join(parts)
 
 
-_TOKEN_RE = re.compile(r"\[(S\d+)\]")
+# One citation cluster: [S1], [S1, S4], [S1][S4], [S1], [S4]… as the model
+# happens to write it. Everything inside is one citation point in the text.
+_TOKEN_CLUSTER_RE = re.compile(
+    r"\[\s*S\d+(?:\s*[,;]\s*S\d+)*\s*\](?:\s*[,;]?\s*\[\s*S\d+(?:\s*[,;]\s*S\d+)*\s*\])*")
+_TOKEN_RE = re.compile(r"S(\d+)")
 
 
-def _substitute_citations(text: str, token_cite: dict) -> str:
-    """Replace each [S#] study token the LLM placed with the procedural citation;
-    drop any token that isn't in the map (a hallucinated reference)."""
-    out = _TOKEN_RE.sub(lambda m: f"({token_cite[m.group(1)]})"
-                        if m.group(1) in token_cite else "", text)
+def _cluster_tokens(cluster: str) -> list:
+    return ["S" + d for d in _TOKEN_RE.findall(cluster)]
+
+
+def number_citations(texts: list, valid: set) -> dict:
+    """Token -> citation number, in order of first appearance across `texts`
+    (which come in the order the reader meets them). Unknown tokens, i.e.
+    hallucinated ones, get no number."""
+    num = {}
+    for t in texts:
+        for m in _TOKEN_CLUSTER_RE.finditer(t or ""):
+            for tok in _cluster_tokens(m.group(0)):
+                if tok in valid and tok not in num:
+                    num[tok] = len(num) + 1
+    return num
+
+
+def _ranges(ns: list) -> list:
+    out, start, prev = [], None, None
+    for n in ns:
+        if start is None:
+            start = prev = n
+        elif n == prev + 1:
+            prev = n
+        else:
+            out.append((start, prev)); start = prev = n
+    if start is not None:
+        out.append((start, prev))
+    return out
+
+
+def _render_cluster(nums: list) -> str:
+    """[1, 3–5] with each end a link to its reference. Brackets escaped so
+    markdown does not read the whole thing as a link."""
+    link = lambda n: f"[{n}](#ref-{n})"   # noqa: E731
+    parts = [link(a) if a == b else (f"{link(a)}, {link(b)}" if b == a + 1 else f"{link(a)}–{link(b)}")
+             for a, b in _ranges(sorted(set(nums)))]
+    return "\\[" + ", ".join(parts) + "\\]"
+
+
+def render_citations(text: str, num: dict) -> str:
+    """Replace every token cluster with its numbered citation; a cluster whose
+    tokens are all unknown is dropped, with the space it leaves."""
+    def sub(m):
+        nums = [num[t] for t in _cluster_tokens(m.group(0)) if t in num]
+        return (" " + _render_cluster(nums)) if nums else ""
+    out = _TOKEN_CLUSTER_RE.sub(sub, text)
     out = re.sub(r" {2,}", " ", out)
-    # a dropped token leaves a space before the punctuation that followed it
-    return re.sub(r" +([.,;:])", r"\1", out).strip()
+    out = re.sub(r"\( \\\[", "(\\[", out)
+    # a dropped or moved cluster leaves a space before the punctuation after it
+    return re.sub(r" +([.,;:)])", r"\1", out).strip()
+
+
+def references_block(num: dict, rec_of_token: dict) -> str:
+    items = sorted(num.items(), key=lambda kv: kv[1])
+    lis = "\n".join(f'<li id="ref-{n}">{reference_entry(rec_of_token[tok])}</li>' for tok, n in items)
+    return f'<ol class="refs">\n{lis}\n</ol>'
+
+
+def counts_line(fields, recs, extracted) -> str:
+    """The procedural line at the head of a group: for each chosen field, how
+    the group's studies split across its values. No LLM: the paragraph under it
+    cannot quietly contradict these numbers."""
+    from collections import Counter
+    from models import field_visible
+    parts = []
+    for fld in fields:
+        c: Counter = Counter()
+        for rec in recs:
+            vals = extracted.get(rec.id, {})
+            if not field_visible(fld, vals):
+                continue
+            v = vals.get(fld.key)
+            for x in (v if isinstance(v, list) else [v]):
+                if x not in (None, ""):
+                    c[str(x)] += 1
+        if c:
+            order = [o for o in fld.options() if o in c] + sorted(k for k in c if k not in fld.options())
+            parts.append(f"{fld.label}: " + " · ".join(f"{k} {c[k]}" for k in order))
+    return ("_" + " — ".join(parts) + "_") if parts else ""
 
 
 # ── General block: structured "fixed variables" (procedural, no LLM) ────────────
@@ -601,9 +683,16 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
                               Record.is_removed == False,               # noqa: E712
                               Record.screen2_decision == "include").all())
         extracted = {rec.id: authoritative_values(db, rec) for rec in included}
-        # stable per-study token → procedural citation (LLM only ever sees the token)
+        # stable per-study token; the LLM only ever sees the token, and the
+        # numbered citation and reference entry are built from the record
         tokens = {rec.id: f"S{i + 1}" for i, rec in enumerate(included)}
-        token_cite = {tokens[rec.id]: citation(rec) for rec in included}
+        rec_of_token = {tokens[rec.id]: rec for rec in included}
+        try:
+            summary_keys = json.loads(ws.synthesis_summary_keys_json or "[]")
+        except (ValueError, TypeError):
+            summary_keys = []
+        summary_fields = [f for f in structured_fields
+                          if f.key in summary_keys and f.field_type in ("select", "multiselect")]
 
         # Block 0: the general "fixed variables" summary — procedural, no LLM.
         db.add(SynthesisBlock(synthesis_id=syn.id, heading="Study characteristics",
@@ -663,10 +752,15 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
                 _set(workspace_id, {"status": "running", "message": f"Synthesizing {job[2]}…",
                                     "total": len(jobs), "done": done})
 
+        # Citations are numbered in the order the reader meets them: block by
+        # block, group by group, the same order the loop below writes them in.
+        num = number_citations([results[(i, gval)][0] or ""
+                                for i in range(len(narrative_fields)) for gval, _r in groups],
+                               set(rec_of_token))
         for i, fld in enumerate(narrative_fields):
             if group_field is None:
                 raw, _n = results[(i, None)]
-                narrative = (_substitute_citations(raw, token_cite) if raw
+                narrative = (render_citations(raw, num) if raw
                              else "_No included studies addressed this field._")
             else:
                 parts = []
@@ -674,15 +768,23 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
                     parts.append(f"_Grouped by {group_field.label}. A study can tick more than "
                                  f"one value, so it can appear in more than one group._")
                 for gval, recs in groups:
-                    raw, n = results[(i, gval)]
+                    raw, _n = results[(i, gval)]
                     if not raw:
                         continue
-                    parts.append(f"**{gval}** ({n} stud{'y' if n == 1 else 'ies'})\n\n"
-                                 f"{_substitute_citations(raw, token_cite)}")
+                    # the group's size, the same denominator as the counts line
+                    n = len(recs)
+                    head = f"**{gval}** ({n} stud{'y' if n == 1 else 'ies'})"
+                    line = counts_line(summary_fields, recs, extracted)
+                    parts.append(head + ("\n\n" + line if line else "") + "\n\n"
+                                 + render_citations(raw, num))
                 narrative = ("\n\n".join(parts) if any(r[0] for k, r in results.items() if k[0] == i)
                              else "_No included studies addressed this field._")
             db.add(SynthesisBlock(synthesis_id=syn.id, heading=fld.label,
                                   narrative=narrative, position=i + 1))
+        if num:
+            db.add(SynthesisBlock(synthesis_id=syn.id, heading="References",
+                                  narrative=references_block(num, rec_of_token),
+                                  position=len(narrative_fields) + 1))
         db.commit()
 
         if tin or tout:

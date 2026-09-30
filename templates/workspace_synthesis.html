@@ -34,6 +34,16 @@
       </label>
       <div class="muted small">Each block then gets one paragraph per value of this field, plus one for the studies with no value. More paragraphs, more calls.</div>
     </div>
+    <div style="margin-bottom:10px;">
+      <div class="small" style="font-weight:600; margin-bottom:4px;">Counts line under each group</div>
+      <div class="muted small" style="margin-bottom:6px;">With grouping on, each group opens with how its studies split across these fields, counted from the extraction, no model involved. The paragraph under it cannot quietly contradict them.</div>
+      {% for f in group_fields %}
+      <label style="display:inline-flex; gap:5px; align-items:center; margin-right:14px;">
+        <input type="checkbox" name="summary_fields" value="{{ f.key }}" {{ 'checked' if f.key in summary_keys else '' }}>
+        {{ f.label }}
+      </label>
+      {% endfor %}
+    </div>
     {% endif %}
     <button class="btn btn-primary" type="submit" id="sy-btn" {{ 'disabled' if not has_key else '' }}>
       {{ 'Regenerate synthesis' if syn else 'Generate synthesis' }}

@@ -123,6 +123,9 @@ class Workspace(Base):
     # per stage…) instead of one paragraph over every included study. NULL: no
     # grouping, the behaviour before the option existed.
     synthesis_group_key = Column(String, nullable=True)
+    # JSON list of select/multiselect field keys: with grouping on, each group
+    # opens with a procedural line of how its studies split across these fields.
+    synthesis_summary_keys_json = Column(String, nullable=True)
     # Whether this review offers the screening-1 dry run: the model screening
     # again, under current criteria, over records people have already voted on,
     # writing a vote that decides nothing. Off by default, because it costs real
@@ -1031,6 +1034,7 @@ def init_db():
             # existing reviews to no grouping: what they did before.
             "ALTER TABLE extraction_fields ADD COLUMN in_synthesis BOOLEAN DEFAULT 1",
             "ALTER TABLE workspaces ADD COLUMN synthesis_group_key VARCHAR",
+            "ALTER TABLE workspaces ADD COLUMN synthesis_summary_keys_json VARCHAR",
         ]:
             try:
                 conn.execute(text(stmt))
@@ -1364,6 +1368,7 @@ def duplicate_workspace(db, source: "Workspace", owner: "User", name: str,
         ws.year_to = source.year_to
         ws.target_dbs_json = source.target_dbs_json
         ws.synthesis_group_key = source.synthesis_group_key
+        ws.synthesis_summary_keys_json = source.synthesis_summary_keys_json
     db.add(ws)
     db.flush()          # we need ws.id for the children below
 
