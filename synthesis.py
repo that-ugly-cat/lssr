@@ -684,6 +684,33 @@ def _narrative(client, model, rq, criterion, items):
     return text, resp.usage.input_tokens, resp.usage.output_tokens
 
 
+VERIFY_TEXT_CHARS = 60_000     # per cited study; a long review is cut, not skipped
+UNVERIFIED = ("\n\n_This paragraph could not be checked against the full texts of the "
+              "studies it cites; read it with care._")
+_CHANGES_RE = re.compile(r"<changes>\s*(\d+)\s*</changes>")
+
+
+def _verify(client, model, rq, theme, draft, studies):
+    """Second pass: check the draft claim by claim against the full texts of the
+    studies it cites, and correct it. Returns (text, changes, tokens_in,
+    tokens_out); changes is None when the check did not complete, in which case
+    the draft is returned marked as unverified rather than silently kept."""
+    from prompts import VERIFY_SYSTEM, verify_user
+    with client.messages.stream(
+        model=model, max_tokens=32000,
+        system=[{"type": "text", "text": VERIFY_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": verify_user(rq, theme, draft, studies)}],
+    ) as stream:
+        resp = stream.get_final_message()
+    raw = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+    found = _PARAGRAPH_RE.findall(raw)
+    if resp.stop_reason != "end_turn" or not found or not found[-1].strip():
+        return draft + UNVERIFIED, None, resp.usage.input_tokens, resp.usage.output_tokens
+    m = _CHANGES_RE.search(raw)
+    return (found[-1].strip(), int(m.group(1)) if m else 0,
+            resp.usage.input_tokens, resp.usage.output_tokens)
+
+
 _PARAGRAPH_RE = re.compile(r"<paragraph>(.*?)</paragraph>", re.S)
 
 
@@ -832,13 +859,29 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
         # with "bad parameter or other API misuse" (the same trap screening.py
         # documents). Workers get plain values only.
         rq = ws.research_question
+        # Full texts for the verification pass, read here for the same reason.
+        from fulltext import strip_back_matter
+        text_of = {tokens[rec.id]: strip_back_matter(rec.full_text_md or "")[:VERIFY_TEXT_CHARS]
+                   for rec in included}
+        verify_log = []            # changes per paragraph; None = check did not complete
 
         def write(job):
             i, gval, theme, items = job
             if not items:
                 return job, None, 0, 0
             raw, ti, to = _narrative(client, model, rq, theme, items)
-            return job, raw, ti, to
+            if raw == CUT_OFF:
+                return job, raw, ti, to
+            cited = []
+            for m in _TOKEN_CLUSTER_RE.finditer(raw):
+                cited += [t for t in _cluster_tokens(m.group(0)) if t not in cited]
+            by_token = {it["token"]: it for it in items}
+            studies = [dict(by_token[t], full_text=text_of.get(t, "")) for t in cited if t in by_token]
+            if not studies:
+                return job, raw, ti, to
+            final, changes, ti2, to2 = _verify(client, model, rq, theme, raw, studies)
+            verify_log.append(changes)
+            return job, final, ti + ti2, to + to2
 
         with ThreadPoolExecutor(max_workers=4) as ex:
             for job, raw, ti, to in ex.map(write, jobs):
@@ -890,10 +933,16 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
                                cost_usd=calc_cost(model, tin, tout)))
             db.commit()
         cut = sum(1 for raw, _n in results.values() if raw == CUT_OFF)
-        _set(workspace_id, {"status": "done",
-                            "message": ("Synthesis ready." if not cut else
-                                        f"Synthesis ready, but {cut} paragraph(s) were cut off: "
-                                        "regenerate."),
+        checked = [c for c in verify_log if c is not None]
+        unverified = len(verify_log) - len(checked)
+        msg = (f"Synthesis ready. {len(checked)} paragraph(s) checked against the cited full "
+               f"texts, {sum(1 for c in checked if c)} corrected ({sum(checked)} citations "
+               f"changed).")
+        if unverified:
+            msg += f" {unverified} could not be checked and are marked as such."
+        if cut:
+            msg += f" {cut} paragraph(s) were cut off: regenerate."
+        _set(workspace_id, {"status": "done", "message": msg,
                             "total": len(jobs), "done": len(jobs)})
     except Exception as exc:
         _set(workspace_id, {"status": "error", "message": str(exc), "error": str(exc)})

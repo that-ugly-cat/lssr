@@ -347,7 +347,8 @@ Accuracy rules — every claim must survive a reader checking each cited study:
 Structure: open with one sentence on the overall pattern ("most", "several", "a
 few" rather than counts; exact counts are shown to the reader separately), then
 the claims, grouped by what the studies found. Do not walk through the studies
-one by one. At most 250 words; if accuracy needs more, accuracy wins.
+one by one. Length: as long as accuracy needs, typically 150 to 400 words; never
+drop a qualifier to save words.
 
 Citations: cite each study by inserting ITS TOKEN exactly as given, in square
 brackets, e.g. [S1]; several studies for one claim go together at the end of that
@@ -358,6 +359,59 @@ material provided. Be neutral.
 Write the finished paragraph, and only that, inside <paragraph></paragraph>
 tags. Anything outside the tags is discarded, so if you change your mind, write
 a new complete paragraph in a new pair of tags: only the last one is kept."""
+
+
+# The second pass: the drafted paragraph is checked claim by claim against the
+# full texts of the studies it cites, and corrected. A fact-check of the drafts
+# found the same failure modes the rules above warn about (one claim citing
+# studies that support half of it, trends reported as findings, a pooled group
+# attributed to a subgroup), and one case where the model cited a study for the
+# opposite of its coded value: the rules alone do not hold, the check does.
+VERIFY_SYSTEM = """\
+You are checking a paragraph from the results section of a scoping review
+before it is published. It was drafted by another model from short per-study
+notes. You have, for every study it cites, the study's CODED values, its
+FINDING note and its FULL TEXT. The full text is the authority: the notes can
+be wrong.
+
+Go through the paragraph claim by claim, and for each citation in each claim ask:
+does this study, in its own results, support this WHOLE claim, for the subgroup
+and the comparison the claim names?
+- If it supports the whole claim: keep it.
+- If it supports only part: split the claim, or move the citation to the part it
+  supports.
+- If the study reports it only as a non-significant trend, a hypothesis, a
+  speculation, or for a different subgroup or a pooled group: rewrite the claim
+  so it says exactly that, or remove the citation.
+- If it does not support the claim, or reports the opposite: remove the
+  citation; if the study reports the opposite, state that as its own claim.
+- A claim left with no supporting citation is removed.
+Also check that every comparison is named correctly (versus controls without the
+condition, or within the condition), and that no claim generalises a feature
+(same protocol, verified controls, adjustment) to studies that lack it.
+
+Constraints: cite only studies the draft already cites, with their tokens in
+square brackets exactly as given, e.g. [S12]. Do not add findings the draft
+does not touch, and do not write author names, years or links. Keep the draft's
+structure and tone; correct, do not restyle. Length is not a constraint: a
+longer paragraph that is right is better than a short one that is not.
+
+Return the corrected paragraph inside <paragraph></paragraph> tags, then
+<changes>N</changes> with the number of citations you removed, moved, or whose
+claim you rewrote (0 if the draft was already right)."""
+
+
+def verify_user(research_question, theme, draft, studies) -> str:
+    def one(st):
+        coded = st.get("coded")
+        return (f"[{st['token']}]\n" + (f"CODED: {coded}\n" if coded else "")
+                + f"FINDING: {st.get('finding') or '(none)'}\n"
+                + f"FULL TEXT:\n{st.get('full_text') or '(no full text available)'}")
+    body = "\n\n=====\n\n".join(one(st) for st in studies)
+    return (f"Research question: {research_question or '(not specified)'}\n\n"
+            f"Theme: {theme}\n\n"
+            f"DRAFT PARAGRAPH:\n{draft}\n\n"
+            f"CITED STUDIES:\n\n{body}")
 
 
 def synthesis_user(research_question, theme, items) -> str:
