@@ -21,8 +21,11 @@ rows, shown on the public /r/{token} page when published. Background job, JOBS
 keyed by workspace_id.
 """
 import json
+import logging
 import re
 import threading
+
+log = logging.getLogger("uvicorn.error")
 
 JOBS: dict[int, dict] = {}
 _lock = threading.Lock()
@@ -685,6 +688,11 @@ def _narrative(client, model, rq, criterion, items):
 
 
 VERIFY_TEXT_CHARS = 60_000     # per cited study; a long review is cut, not skipped
+# Across all studies in one check. A paragraph citing 68 studies at the
+# per-study cap sent ~750k tokens and came back unchecked; the budget is shared
+# out instead, so a crowded paragraph gets shorter texts rather than no check.
+# Results sit early enough in a paper that ~15k characters still reach them.
+VERIFY_TOTAL_CHARS = 1_000_000
 UNVERIFIED = ("\n\n_This paragraph could not be checked against the full texts of the "
               "studies it cites; read it with care._")
 _CHANGES_RE = re.compile(r"<changes>\s*(\d+)\s*</changes>")
@@ -696,14 +704,25 @@ def _verify(client, model, rq, theme, draft, studies):
     tokens_out); changes is None when the check did not complete, in which case
     the draft is returned marked as unverified rather than silently kept."""
     from prompts import VERIFY_SYSTEM, verify_user
-    with client.messages.stream(
-        model=model, max_tokens=32000,
-        system=[{"type": "text", "text": VERIFY_SYSTEM, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": verify_user(rq, theme, draft, studies)}],
-    ) as stream:
-        resp = stream.get_final_message()
-    raw = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
+    cap = min(VERIFY_TEXT_CHARS, VERIFY_TOTAL_CHARS // max(len(studies), 1))
+    studies = [dict(st, full_text=(st.get("full_text") or "")[:cap]) for st in studies]
+    sent = sum(len(st["full_text"]) for st in studies)
+    try:
+        with client.messages.stream(
+            model=model, max_tokens=32000,
+            system=[{"type": "text", "text": VERIFY_SYSTEM, "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": verify_user(rq, theme, draft, studies)}],
+        ) as stream:
+            resp = stream.get_final_message()
+    except Exception as exc:   # a failed check must not take the synthesis down with it
+        log.warning("synthesis verify failed: %r, %d studies, %d sent: %s",
+                    theme[:60], len(studies), sent, exc)
+        return draft + UNVERIFIED, None, 0, 0
+    raw ="".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()
     found = _PARAGRAPH_RE.findall(raw)
+    log.info("synthesis verify: %r, %d studies, %d chars each at most, %d sent, "
+             "stop=%s, in=%d out=%d, paragraph=%s", theme[:60], len(studies), cap, sent,
+             resp.stop_reason, resp.usage.input_tokens, resp.usage.output_tokens, bool(found))
     if resp.stop_reason != "end_turn" or not found or not found[-1].strip():
         return draft + UNVERIFIED, None, resp.usage.input_tokens, resp.usage.output_tokens
     m = _CHANGES_RE.search(raw)
