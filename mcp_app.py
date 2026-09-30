@@ -1027,10 +1027,20 @@ def draft_agreement(review: str, field: str = "", limit: int = 50) -> dict:
                           "matrix": dict(sorted(matrix.items())),
                           "matrix_reads": "draft -> human"},
             "fields_compared_on": len(both_incl),
-            "fields": dict(sorted(per_field.items(),
-                                  key=lambda kv: (kv[1]["pct"] is None, kv[1]["pct"] or 0))),
+            # only fields with at least one comparison, worst agreement first; a
+            # field neither side ever filled has nothing to say and is just named
+            "fields": dict(sorted(((k, v) for k, v in per_field.items() if v["compared"]),
+                                  key=lambda kv: kv[1]["pct"])),
+            "fields_without_data": [k for k, v in per_field.items() if not v["compared"]],
             "not_compared": [f.key for f in fields if f not in comparable],
         }
+        if not both:
+            # nothing reviewed after a draft: say so in one line instead of
+            # listing every field at zero
+            out["fields"] = {}
+            out["fields_without_data"] = len(per_field)
+            out["note"] = ("No record has both a model draft and a human review yet: "
+                           "draft a sample, review it, then read this again.")
         if field:
             if by_key[field].field_type not in ("select", "multiselect", "number"):
                 return _fail(f"'{field}' is free text: it cannot be compared by equality")
