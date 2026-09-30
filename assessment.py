@@ -124,20 +124,35 @@ def _create_with_retry(client, *, tries: int = 3, **kw):
             time.sleep(1.5 * (attempt + 1))
 
 
+def _stream_with_retry(client, *, tries: int = 3, **kw):
+    """Same as _create_with_retry, but streamed: above ~16k output tokens a
+    non-streaming request risks the SDK's HTTP timeout. The final message has
+    the same shape as a create() response."""
+    import time
+    for attempt in range(tries):
+        try:
+            with client.messages.stream(**kw) as stream:
+                return stream.get_final_message()
+        except Exception:
+            if attempt == tries - 1:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+
+
 def assess_record(client, system_prompt: str, full_text: str, model: str):
     """Returns (decision, reason, raw_fields, tokens_in, tokens_out). The reader
     keeps the whole full text; the model gets it without references/back matter."""
     from fulltext import strip_back_matter
     text = strip_back_matter(full_text or "")[:MAX_TEXT_CHARS]
-    resp = _create_with_retry(
+    resp = _stream_with_retry(
         client,
         model=model,
         # Thinking counts against max_tokens, and on current models (Sonnet 5,
         # Opus 5) it runs by default when `thinking` is omitted. At 2000 the
         # reasoning used the whole budget and the JSON stopped after one line:
-        # 13 of a 16-record pilot came back unparseable. 16000 is the ceiling
-        # recommended for non-streaming calls.
-        max_tokens=16000,
+        # 13 of a 16-record pilot came back unparseable. 16000 then cut off two
+        # long basic-science papers of 160, so 32000, which needs streaming.
+        max_tokens=32000,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": assessment_user(text)}],
     )
