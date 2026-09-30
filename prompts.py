@@ -236,7 +236,9 @@ def screening_user(title, abstract) -> str:
 # One call over the full text does both screen-2 (inclusion decision against the
 # *inclusion* criteria) and the structured data extraction — the token-saving
 # "single conditional call" (extraction only when the decision is include). The
-# text is explicit that fields must be grounded in the article (never guessed),
+# text is explicit that fields must be grounded in the article (never guessed:
+# stated about this study, "Not reported" when the article is silent — a first
+# pilot showed the model filling select fields from inference instead),
 # that conditional fields follow their show_if, and that free-text answers should
 # carry a verbatim «guillemet» quote. {rq} / {inclusion} / {fields} are filled by
 # assessment_system(); _fields_spec() renders the field schema the model must obey.
@@ -255,8 +257,20 @@ STEP 2 — Data extraction (only when the decision is "include"). Fill the field
 below from the full text. Rules:
 - Use the exact allowed values for select/multiselect fields; multiselect values
   must be a JSON array of those strings.
-- Omit any field you cannot ground in the text — never guess.
+- Every value must be stated about THIS study in its own methods or results.
+  Do not infer it from the design, from what such studies usually do, or from
+  the introduction or discussion of other literature: a staging system named
+  only in the background was not used, a laparoscopy that diagnosed the disease
+  is not surgery that treated it, a regression run inside one group is not an
+  adjustment of the comparison between groups.
+- When the article does not say, and the field offers a value such as
+  "Not reported", "Not stated" or "Not specified", choose that value. Otherwise
+  omit the field. Never guess.
+- In a multiselect, never combine a "Not ..." value with a substantive one.
 - Fill a conditional field only when its stated condition holds.
+- When you give figures per group, keep each figure with the group the article
+  pairs it with; re-read the table before writing, since swapped labels invert
+  a finding.
 - For free-text fields (text/textarea), where possible support your answer with a
   short EXACT quote from the article, copied verbatim inside «guillemets», after
   your answer.
