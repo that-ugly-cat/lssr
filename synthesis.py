@@ -640,12 +640,18 @@ def _run(workspace_id: int, api_key: str, user_id: int | None):
         results = {}
         tin = tout = 0
         done = 0
+        # Read on this thread, before the pool starts. The commit above expired
+        # `ws`; a worker touching ws.research_question would reload it through the
+        # shared SQLite session from several threads at once, and SQLite answers
+        # with "bad parameter or other API misuse" (the same trap screening.py
+        # documents). Workers get plain values only.
+        rq = ws.research_question
 
         def write(job):
             i, gval, theme, items = job
             if not items:
                 return job, None, 0, 0
-            raw, ti, to = _narrative(client, model, ws.research_question, theme, items)
+            raw, ti, to = _narrative(client, model, rq, theme, items)
             return job, raw, ti, to
 
         with ThreadPoolExecutor(max_workers=4) as ex:
