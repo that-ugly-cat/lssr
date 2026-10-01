@@ -420,6 +420,10 @@ def store_uploaded_pdf(db, workspace_id: int, rec, pdf_bytes: bytes):
     rec.full_text_path = str(path)
     rec.full_text_status = "fetched"
     rec.full_text_note = None      # the human chose this file; drop earlier notes
+    # A replacement: the text converted from the old file is another paper's, or
+    # it would not be replaced. Kept until the convert pass, the reader showed it
+    # under the new file's name.
+    rec.full_text_md = None
     db.commit()
 
 

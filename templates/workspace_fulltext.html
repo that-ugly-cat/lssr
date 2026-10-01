@@ -127,12 +127,25 @@
           <button class="btn btn-small" type="submit">Searched, not found</button>
         </form>
         {% endif %}
-        {% if r.full_text_status != 'converted' %}
-        <form method="post" action="/w/{{ ws.id }}/records/{{ r.id }}/fulltext/upload" enctype="multipart/form-data" style="margin-top:4px;">
+        {% macro upload_form(ws_id, rid, label) %}
+        <form method="post" action="/w/{{ ws_id }}/records/{{ rid }}/fulltext/upload" enctype="multipart/form-data" style="margin-top:4px;">
           <input type="file" name="file" accept=".pdf,.docx,.md,.markdown,.txt" required style="font-size:11px;">
-          <button class="btn btn-small" type="submit">Upload</button>
+          <button class="btn btn-small" type="submit">{{ label }}</button>
           <div class="muted" style="font-size:10px;">PDF, DOCX, Markdown or TXT</div>
         </form>
+        {% endmacro %}
+        {% if r.full_text_status != 'converted' %}
+        {{ upload_form(ws.id, r.id, 'Upload') }}
+        {% else %}
+        {#- A converted text can be the wrong one: another paper's PDF, the
+            French version of a bilingual journal. Without this the only way to
+            swap it was the database. Open by default when the title check has
+            already said the text is not this record's. -#}
+        <details style="margin-top:4px;" {{ 'open' if r.full_text_note and 'does not match' in r.full_text_note else '' }}>
+          <summary class="muted" style="font-size:11px; cursor:pointer;">replace file</summary>
+          {{ upload_form(ws.id, r.id, 'Replace') }}
+          <div class="muted" style="font-size:10px; white-space:normal; max-width:22rem;">The current text is dropped. A PDF then waits for “2 · Convert”; DOCX, Markdown and TXT are ready at once. The model's draft is not redone: re-draft the record.</div>
+        </details>
         {% endif %}
       </td>
     </tr>
