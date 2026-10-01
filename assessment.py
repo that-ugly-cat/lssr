@@ -188,6 +188,27 @@ def _stream_with_retry(client, *, tries: int = 3, **kw):
             time.sleep(1.5 * (attempt + 1))
 
 
+def _fatal(exc) -> bool:
+    """An error that every further call would hit too: no credit, a bad or
+    unauthorised key, a model that does not exist."""
+    import anthropic
+    if isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError,
+                        anthropic.NotFoundError)):
+        return True
+    return (isinstance(exc, anthropic.BadRequestError)
+            and "credit balance" in (_short_error(exc) + str(exc)).lower())
+
+
+def _short_error(exc) -> str:
+    """The API's own message when there is one, not the whole response dump."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        msg = (body.get("error") or {}).get("message")
+        if msg:
+            return f"{type(exc).__name__}: {msg}"[:200]
+    return f"{type(exc).__name__}: {exc}"[:200]
+
+
 def assess_record(client, system_prompt: str, full_text: str, model: str, meta: dict | None = None):
     """Returns (decision, reason, raw_fields, tokens_in, tokens_out). The reader
     keeps the whole full text; the model gets it without references/back matter.
@@ -298,15 +319,34 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
             d, r, fl, i, o = assess_record(client, system, md, model, meta)
             return rid, d, r, fl, i, o
 
+        failed = 0
+        errors: dict[str, list[int]] = {}
+        abort = None
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
             futures = {ex.submit(work, s): s[0] for s in snaps}
             done = 0
             for fut in as_completed(futures):
                 rec_id = futures[fut]
+                if fut.cancelled():
+                    continue     # dropped after a fatal error: not tried, not failed
                 try:
                     _, decision, reason, raw_fields, i, o = fut.result()
                 except Exception as exc:
-                    decision, reason, raw_fields, i, o = "maybe", f"assessment error: {exc}", {}, 0, 0
+                    # A failed call is not a decision. It used to be stored as a
+                    # 'maybe' whose reason was the error text, replacing the
+                    # previous draft and its extraction: a run that ran out of
+                    # credit overwrote 48 drafts that way. Now nothing is written.
+                    failed += 1
+                    done += 1
+                    errors.setdefault(_short_error(exc), []).append(rec_id)
+                    if _fatal(exc) and abort is None:
+                        # Out of credit, bad key, unknown model: every remaining
+                        # call would fail the same way, so stop asking.
+                        abort = _short_error(exc)
+                        for f in futures:
+                            f.cancel()
+                    _update(workspace_id, done=done, failed=failed)
+                    continue
                 rec = db.query(Record).filter(Record.id == rec_id).first()
                 values, dropped = None, []
                 if decision == "include":
@@ -344,10 +384,19 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
         db.add(UserCostLog(user_id=user_id, workspace_id=workspace_id, step="screen2",
                            input_tokens=tin, output_tokens=tout, cost_usd=cost))
         db.commit()
-        _set(workspace_id, {"status": "done",
-                            "message": f"Done. {included} included, {excluded} excluded, {maybe} maybe.",
+        drafted = included + excluded + maybe
+        msg = f"Done. {included} included, {excluded} excluded, {maybe} maybe."
+        if failed:
+            msg += (f" {failed} not drafted, their earlier drafts left as they were: "
+                    + " ".join(f"{len(ids)}× {e.rstrip('.')}." for e, ids in errors.items()))
+        if abort:
+            msg += (f" Stopped early ({total - drafted - failed} not tried): {abort.rstrip('.')}. "
+                    "Fix it and run the re-draft again.")
+        _set(workspace_id, {"status": "error" if abort else "done", "message": msg,
                             "total": total, "done": total, "included": included,
-                            "excluded": excluded, "maybe": maybe, "cost_usd": round(cost, 4)})
+                            "excluded": excluded, "maybe": maybe, "failed": failed,
+                            "errors": [{"error": e, "records": ids} for e, ids in errors.items()],
+                            "cost_usd": round(cost, 4)})
     except Exception as exc:
         _set(workspace_id, {"status": "error", "message": str(exc), "error": str(exc)})
     finally:
