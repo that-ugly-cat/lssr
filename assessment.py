@@ -184,9 +184,11 @@ def _stream_with_retry(client, *, tries: int = 3, **kw):
             time.sleep(1.5 * (attempt + 1))
 
 
-def assess_record(client, system_prompt: str, full_text: str, model: str):
+def assess_record(client, system_prompt: str, full_text: str, model: str, meta: dict | None = None):
     """Returns (decision, reason, raw_fields, tokens_in, tokens_out). The reader
-    keeps the whole full text; the model gets it without references/back matter."""
+    keeps the whole full text; the model gets it without references/back matter.
+    meta: the record's title, authors and year, which the prompt's STEP 0 checks
+    the text against."""
     from fulltext import strip_back_matter
     from models import MAX_OUTPUT_TOKENS
     text = strip_back_matter(full_text or "")[:MAX_TEXT_CHARS]
@@ -201,7 +203,7 @@ def assess_record(client, system_prompt: str, full_text: str, model: str):
         # now the shared ceiling.
         max_tokens=MAX_OUTPUT_TOKENS,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": assessment_user(text)}],
+        messages=[{"role": "user", "content": assessment_user(text, **(meta or {}))}],
     )
     raw = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
     parsed = _parse(raw) or {}
@@ -228,7 +230,7 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
     widens the first, because a drafted record is no longer pending."""
     import math
     import random
-    from models import (Record, ScreenDecision, SessionLocal, UserCostLog, Workspace,
+    from models import (Extraction, Record, ScreenDecision, SessionLocal, UserCostLog, Workspace,
                         calc_cost, ensure_extraction_fields, recompute_record_screen2,
                         upsert_extraction, upsert_screen_decision, workspace_criteria,
                         workspace_extraction_fields)
@@ -277,11 +279,12 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
 
         # Snapshot the full text on the job thread — reading it inside a worker
         # after a commit expired it would hit the shared session cross-thread.
-        snaps = [(r.id, r.full_text_md or "") for r in targets]
+        snaps = [(r.id, r.full_text_md or "",
+                  {"title": r.title, "authors": r.authors, "year": r.year}) for r in targets]
 
         def work(snap):
-            rid, md = snap
-            d, r, fl, i, o = assess_record(client, system, md, model)
+            rid, md, meta = snap
+            d, r, fl, i, o = assess_record(client, system, md, model, meta)
             return rid, d, r, fl, i, o
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
@@ -307,10 +310,18 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
                 if decision == "include":
                     upsert_extraction(db, ws, rec, "model", None, values)
                     included += 1
-                elif decision == "maybe":
-                    maybe += 1
                 else:
-                    excluded += 1
+                    # A re-draft that no longer includes takes the old draft's
+                    # extraction with it: left behind, it pre-filled the review
+                    # form with the values of a paper this draft has just said
+                    # is the wrong file, or does not belong in the review.
+                    (db.query(Extraction)
+                       .filter(Extraction.record_id == rec.id,
+                               Extraction.reviewer_kind == "model").delete())
+                    if decision == "maybe":
+                        maybe += 1
+                    else:
+                        excluded += 1
                 tin += i
                 tout += o
                 done += 1

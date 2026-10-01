@@ -248,6 +248,21 @@ You are conducting the FULL-TEXT stage of a scoping review.
 Research question:
 {rq}
 
+STEP 0 — Is this the right document? The message gives the record (title,
+authors, year) before the full text. Check that the full text is the work the
+record describes before judging anything else.
+- If it is a different work (another paper, a neighbouring abstract on the same
+  page, an editorial that merely mentions it), do not assess it: return "maybe",
+  an inclusion_reason that starts with "Full text mismatch:" and names what the
+  text actually is, and empty fields. A wrong file is a retrieval problem for a
+  person to fix, never a reason to exclude the record.
+- If it is the same work in a language the criteria do not accept and the text
+  points to a version in an accepted language, return "maybe" with an
+  inclusion_reason that starts with "Other language version:" and says where
+  that version is.
+- A translated title, a subtitle, or a different but recognisable form of the
+  same title is the same work. When the record has no title, skip this step.
+
 STEP 1 — Inclusion decision. Include the study only if it meets ALL of these
 inclusion criteria; exclude it if any is clearly not met. Use "maybe" only when
 the full text genuinely does not settle it.
@@ -305,8 +320,13 @@ def assessment_system(rq, inclusion_criteria, fields) -> str:
                                     fields=_fields_spec(fields))
 
 
-def assessment_user(full_text) -> str:
-    return f"Full text:\n\n{full_text}"
+def assessment_user(full_text, title=None, authors=None, year=None) -> str:
+    """The record goes first, so STEP 0 can check that the text is this work.
+    Without it the model judged whatever file was attached: a systematic review
+    whose PDF was another paper's was excluded on that other paper's content."""
+    record = (f"Record:\nTitle: {title or '(no title)'}\n"
+              f"Authors: {authors or '(not given)'}\nYear: {year or '(not given)'}")
+    return f"{record}\n\nFull text:\n\n{full_text}"
 
 
 # ══ Synthesis — narrative per assessment criterion (synthesis.py) ════════════
