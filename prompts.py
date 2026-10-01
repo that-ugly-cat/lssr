@@ -205,7 +205,7 @@ You are screening records for a scoping review at the TITLE + ABSTRACT stage.
 
 Research question:
 {rq}
-
+{context}
 Exclude a record if it meets one or more of these exclusion criteria:
 {criteria}
 
@@ -221,9 +221,26 @@ Return ONLY a JSON object, no prose, no code fences:
   {{"decision": "include" | "exclude" | "maybe", "reason": "<one sentence; name the criterion if excluding>"}}"""
 
 
-def screening_system(research_question, exclusion_criteria) -> str:
+def reference_context(ws) -> str:
+    """The review's reference context, as a prompt block — or "" when it is off
+    or empty, so a review without one gets the prompt it always had. Read from
+    the workspace here rather than at each caller, so the four places that build
+    a system prompt cannot disagree about whether it is on."""
+    text = (getattr(ws, "context_text", None) or "").strip()
+    if not getattr(ws, "context_enabled", False) or not text:
+        return ""
+    label = (getattr(ws, "context_label", None) or "").strip() or "Reference context"
+    return (f"\n{label} (supplied by the review):\n"
+            "Background facts to judge the criteria by. They are not exhaustive: "
+            "something missing from them is not listed, which is not the same as "
+            "absent. Everything about the study itself comes from the study.\n"
+            f"{text}\n")
+
+
+def screening_system(research_question, exclusion_criteria, context: str = "") -> str:
     crit = "\n".join(f"- {c.label}: {c.description or ''}".rstrip() for c in exclusion_criteria)
     return SCREENING_SYSTEM.format(rq=(research_question or "(not specified)").strip(),
+                                   context=context,
                                    criteria=crit or "(no exclusion criteria defined)")
 
 
@@ -247,7 +264,7 @@ You are conducting the FULL-TEXT stage of a scoping review.
 
 Research question:
 {rq}
-
+{context}
 STEP 0 — Is this the right document? The message gives the record (title,
 authors, year) before the full text. Check that the full text is the work the
 record describes before judging anything else.
@@ -313,9 +330,10 @@ def _fields_spec(fields) -> str:
     return "\n".join(lines) or "(no extraction fields defined)"
 
 
-def assessment_system(rq, inclusion_criteria, fields) -> str:
+def assessment_system(rq, inclusion_criteria, fields, context: str = "") -> str:
     inc = "\n".join(f"- {c.label}: {c.description or ''}".rstrip() for c in inclusion_criteria)
     return ASSESSMENT_SYSTEM.format(rq=(rq or "(not specified)").strip(),
+                                    context=context,
                                     inclusion=inc or "(no inclusion criteria defined)",
                                     fields=_fields_spec(fields))
 

@@ -450,6 +450,10 @@ def get_protocol(review: str) -> dict:
     data matrix — `type` and `options` are what a value is allowed to be, and
     `show_if` says a field is asked only when another field has certain values,
     so a blank there is a question not asked rather than an answer missing.
+
+    `reference_context` is the background the model is given beside the
+    criteria when `enabled` is true; when false it exists but the model does
+    not see it.
     """
     db = SessionLocal()
     try:
@@ -474,6 +478,9 @@ def get_protocol(review: str) -> dict:
             })
         return {"review": ws.name,
                 "research_question": ws.research_question,
+                "reference_context": ({"enabled": bool(ws.context_enabled),
+                                       "label": ws.context_label, "text": ws.context_text}
+                                      if (ws.context_text or ws.context_enabled) else None),
                 "exclusion_criteria": crit("exclusion"),
                 "inclusion_criteria": crit("inclusion"),
                 "extraction_fields": fields,
@@ -1673,28 +1680,48 @@ def move_field(review: str, key: str, position: int = 0, after: str = "") -> dic
 
 @mcp.tool()
 def update_details(review: str, research_question: str | None = None,
-                   description: str | None = None) -> dict:
+                   description: str | None = None,
+                   context_text: str | None = None, context_label: str | None = None,
+                   context_enabled: bool | None = None) -> dict:
     """
-    Rewrite the research question or the description of a review. Owner only,
-    writing key.
+    Rewrite the research question, the description, or the reference context
+    of a review. Owner only, writing key.
 
     Omit a parameter to leave it as it is. The model reads the research
     question at every screening and assessment step, and the description is
     what the public page shows, so this is a protocol change like any other
     and is logged as one.
+
+    context_text / context_label / context_enabled: background facts the model
+    is given beside the criteria (a jurisdiction table, a glossary), what the
+    prompt calls them, and whether it sees them at all. An empty string clears
+    the text or the label. Confirm the exact content with the owner before
+    writing it: every vote after it is argued from it.
     """
     from models import log_protocol_change
-    if research_question is None and description is None:
+    if all(v is None for v in (research_question, description, context_text,
+                               context_label, context_enabled)):
         return _fail("Nothing to change.")
     db = SessionLocal()
     try:
         user, ws = _owner_review(db, review)
-        before = {"research_question": ws.research_question, "description": ws.description}
+
+        def snap():
+            return {"research_question": ws.research_question, "description": ws.description,
+                    "context_enabled": bool(ws.context_enabled),
+                    "context_label": ws.context_label, "context_text": ws.context_text}
+        before = snap()
         if research_question is not None:
             ws.research_question = research_question.strip() or None
         if description is not None:
             ws.description = description.strip() or None
-        after = {"research_question": ws.research_question, "description": ws.description}
+        if context_text is not None:
+            ws.context_text = context_text.strip() or None
+        if context_label is not None:
+            ws.context_label = context_label.strip() or None
+        if context_enabled is not None:
+            ws.context_enabled = bool(context_enabled)
+        after = snap()
         log_protocol_change(db, ws.id, user.id, "mcp", "details", "edit", None, before, after)
         db.commit()
         return {"review": ws.name, "changed": before != after,

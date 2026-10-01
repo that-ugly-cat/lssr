@@ -46,7 +46,7 @@ def _update(workspace_id: int, **kw):
 # ── Prompt ─────────────────────────────────────────────────────────────────────
 # All prompt text lives in prompts.py; build_system stays exported under this name
 # so callers keep working.
-from prompts import assessment_system as build_system, assessment_user  # noqa: E402
+from prompts import assessment_system as build_system, assessment_user, reference_context  # noqa: E402
 
 
 # ── Cost estimate (rough, ~4 chars/token; ignores prompt caching, upper bound) ──
@@ -243,7 +243,7 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
         ensure_extraction_fields(db, ws)
         fields = workspace_extraction_fields(db, ws)
         inclusion = workspace_criteria(db, ws, "inclusion")
-        system = build_system(ws.research_question, inclusion, fields)
+        system = build_system(ws.research_question, inclusion, fields, reference_context(ws))
 
         # a record a reviewer already voted on is theirs — never re-drafted
         human_ids = {rid for (rid,) in

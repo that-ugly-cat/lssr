@@ -108,6 +108,14 @@ class Workspace(Base):
     name              = Column(String, nullable=False)
     description       = Column(Text, nullable=True)
     research_question = Column(Text, nullable=True)
+    # Reference context: background facts the review supplies to the model at
+    # every screening and assessment call (a table of jurisdictions and their
+    # consent laws, a glossary, a list of drug names), so it judges criteria
+    # against the review's facts instead of its own memory. Generic on purpose,
+    # and off unless the owner switches it on; the label names it in the prompt.
+    context_enabled   = Column(Boolean, default=False)
+    context_label     = Column(String, nullable=True)
+    context_text      = Column(Text, nullable=True)
     screening_model   = Column(String, default="claude-haiku-4-5")
     # how many independent human votes settle a screen-1 record (1 = single
     # screening; 2 = classic blind double screening). The LLM pre-screens either
@@ -998,6 +1006,9 @@ def init_db():
             "ALTER TABLE workspaces ADD COLUMN screen1_reviewers_required INTEGER DEFAULT 1",
             "ALTER TABLE workspaces ADD COLUMN screen2_reviewers_required INTEGER",
             "ALTER TABLE workspaces ADD COLUMN dry_run_enabled BOOLEAN DEFAULT 0",
+            "ALTER TABLE workspaces ADD COLUMN context_enabled BOOLEAN DEFAULT 0",
+            "ALTER TABLE workspaces ADD COLUMN context_label VARCHAR",
+            "ALTER TABLE workspaces ADD COLUMN context_text TEXT",
             "ALTER TABLE workspaces ADD COLUMN steps_done_json VARCHAR",
             "ALTER TABLE users ADD COLUMN elsevier_key_encrypted VARCHAR",
             "ALTER TABLE users ADD COLUMN elsevier_insttoken_encrypted VARCHAR",
@@ -1365,6 +1376,9 @@ def duplicate_workspace(db, source: "Workspace", owner: "User", name: str,
     if "details" in parts:
         ws.description = source.description
         ws.research_question = source.research_question
+        ws.context_enabled = source.context_enabled
+        ws.context_label = source.context_label
+        ws.context_text = source.context_text
     if "settings" in parts:
         ws.screening_model = source.screening_model
         ws.screen1_reviewers_required = source.screen1_reviewers_required

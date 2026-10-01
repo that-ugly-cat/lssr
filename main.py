@@ -1432,6 +1432,27 @@ async def set_details(ws_id: int, request: Request, description: str = Form(""),
     return _settings_done(request, ws_id)
 
 
+@app.post("/w/{ws_id}/settings/context")
+async def set_context(ws_id: int, request: Request, context_enabled: str = Form(""),
+                      context_label: str = Form(""), context_text: str = Form(""),
+                      user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The reference context the model reads at every screening and assessment
+    call. Logged as a 'details' change: it is protocol like the research
+    question, and the drafts made before it count as stale the same way."""
+    ws = _load_ws(db, user, ws_id)
+    _require_owner(ws, user)
+    before = {"context_enabled": bool(ws.context_enabled), "context_label": ws.context_label,
+              "context_text": ws.context_text}
+    ws.context_enabled = bool(context_enabled)
+    ws.context_label = context_label.strip() or None
+    ws.context_text = context_text.strip() or None
+    log_protocol_change(db, ws.id, user.id, "web", "details", "edit", "context", before,
+                        {"context_enabled": bool(ws.context_enabled),
+                         "context_label": ws.context_label, "context_text": ws.context_text})
+    db.commit()
+    return _settings_done(request, ws_id)
+
+
 @app.post("/w/{ws_id}/settings/screening")
 async def set_screening_config(ws_id: int, request: Request, reviewers_required: int = Form(...),
                                reviewers_required_2: str = Form(""),
@@ -1721,7 +1742,8 @@ async def screening_page(ws_id: int, request: Request, decision: str = "pending"
     # cost estimate for the screening buttons
     import screening
     model = ws.screening_model or "claude-haiku-4-5"
-    system = screening.build_system(ws.research_question, workspace_criteria(db, ws, "exclusion"))
+    system = screening.build_system(ws.research_question, workspace_criteria(db, ws, "exclusion"),
+                                    screening.reference_context(ws))
 
     def _chars(*filters):
         expr = func.coalesce(func.length(Record.title), 0) + func.coalesce(func.length(Record.abstract), 0)
@@ -2203,7 +2225,8 @@ async def assessment_page(ws_id: int, request: Request, decision: str = "all",
     model = ws.screening_model or "claude-haiku-4-5"
     system = assessment.build_system(ws.research_question,
                                      workspace_criteria(db, ws, "inclusion"),
-                                     workspace_extraction_fields(db, ws))
+                                     workspace_extraction_fields(db, ws),
+                                     assessment.reference_context(ws))
 
     def _fmt(recs):
         e = assessment.estimate_cost(model, system, len(recs),

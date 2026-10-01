@@ -14,6 +14,23 @@
     {% if not is_owner %}The protocol (details, model, criteria, extraction fields) is changed by the review's owner.{% endif %}</p>
 </div>
 
+<div class="cards-label">Reference context for the model</div>
+<div class="card live-region" id="set-context">
+  <form method="post" action="/w/{{ ws.id }}/settings/context">
+    <label class="inline-form" style="gap:6px;">
+      <input type="checkbox" name="context_enabled" value="1" {{ 'checked' if ws.context_enabled else '' }} {{ '' if is_owner else 'disabled' }}>
+      Pass this to the model at every screening and assessment call
+    </label>
+    <label>Name <input type="text" name="context_label" value="{{ ws.context_label or '' }}"
+           placeholder="e.g. Jurisdiction reference" {{ '' if is_owner else 'disabled' }}></label>
+    <label>Content <textarea name="context_text" rows="8" {{ '' if is_owner else 'disabled' }}
+           placeholder="Background facts the criteria depend on: a table of jurisdictions and their laws, a glossary, a list of names. Markdown is fine.">{{ ws.context_text or '' }}</textarea></label>
+    {% if is_owner %}<button class="btn btn-small" type="submit" style="margin-top:8px;">Save context</button>{% endif %}
+  </form>
+  <p class="muted small">Optional, and off unless ticked. The model is told the content is not exhaustive and that facts about the study come from the study.
+    A change counts as a protocol change: it is logged, and drafts made before it show as stale.</p>
+</div>
+
 <div class="cards-label">Screening / assessment model</div>
 <div class="card live-region" id="set-model">
   <form method="post" action="/w/{{ ws.id }}/settings/model" class="inline-form">
@@ -268,10 +285,11 @@
 // typed, unsaved, in the others. Within the redrawn section the same holds,
 // so a field edited but not saved is put back after the swap.
 // The delete-review form is not intercepted: it leaves the page.
-const SECTIONS = ['set-details', 'set-model', 'set-reviewers', 'set-members',
+const SECTIONS = ['set-details', 'set-context', 'set-model', 'set-reviewers', 'set-members',
                   'set-crit-exclusion', 'set-crit-inclusion', 'set-fields'];
 const LABELS = [
   [/\/settings\/details$/, 'Details saved'],
+  [/\/settings\/context$/, 'Reference context saved'],
   [/\/settings\/model$/, 'Model saved'],
   [/\/settings\/screening$/, 'Reviewer settings saved'],
   [/\/members\/add$/, 'Member added'],

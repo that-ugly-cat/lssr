@@ -51,7 +51,7 @@ def _update(workspace_id: int, **kw):
 # ── Prompt ─────────────────────────────────────────────────────────────────────
 # All prompt text lives in prompts.py; build_system stays exported under this name
 # so callers keep working.
-from prompts import screening_system as build_system, screening_user  # noqa: E402
+from prompts import reference_context, screening_system as build_system, screening_user  # noqa: E402
 
 
 # ── Cost estimate (rough, ~4 chars/token; ignores prompt caching, so it reads as
@@ -175,7 +175,8 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, mode: str = "pend
     try:
         ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
         model = ws.screening_model or "claude-haiku-4-5"
-        system = build_system(ws.research_question, workspace_criteria(db, ws, "exclusion"))
+        system = build_system(ws.research_question, workspace_criteria(db, ws, "exclusion"),
+                              reference_context(ws))
         human = human_voted_subq(db, workspace_id, "screen1")
         q = (db.query(Record).filter(Record.workspace_id == workspace_id,
                                      Record.is_removed == False))    # noqa: E712
