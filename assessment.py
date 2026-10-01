@@ -21,7 +21,11 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 MAX_WORKERS = 4
-MAX_TEXT_CHARS = 200_000
+# At 200k a 310-page thesis was read for its first third, introduction and
+# literature, never its results, and nothing said so. 800k characters is about
+# 200k tokens, well inside a 1M-token context; a text still longer is cut and
+# the draft's reason says where.
+MAX_TEXT_CHARS = 800_000
 
 JOBS: dict[int, dict] = {}
 _lock = threading.Lock()
@@ -191,7 +195,12 @@ def assess_record(client, system_prompt: str, full_text: str, model: str, meta: 
     the text against."""
     from fulltext import strip_back_matter
     from models import MAX_OUTPUT_TOKENS
-    text = strip_back_matter(full_text or "")[:MAX_TEXT_CHARS]
+    text = strip_back_matter(full_text or "")
+    cut = len(text) > MAX_TEXT_CHARS
+    if cut:
+        cut_note = (f" [Read only the first {MAX_TEXT_CHARS:,} of {len(text):,} characters: "
+                    "the rest of the full text was not seen.]")
+        text = text[:MAX_TEXT_CHARS]
     resp = _stream_with_retry(
         client,
         model=model,
@@ -216,6 +225,8 @@ def assess_record(client, system_prompt: str, full_text: str, model: str, meta: 
                   if resp.stop_reason == "max_tokens"
                   else "(the model's answer could not be read as JSON — re-draft this record)")
     fields = parsed.get("fields") if isinstance(parsed.get("fields"), dict) else {}
+    if cut:
+        reason += cut_note
     return decision, reason, fields, resp.usage.input_tokens, resp.usage.output_tokens
 
 

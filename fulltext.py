@@ -837,15 +837,28 @@ def _run_convert(workspace_id: int, paper2md_url: str):
                              Record.screen1_decision == "include",
                              _not_dropped_at_screen2(),
                              Record.full_text_status == "fetched").all())
+
+        # Smallest first. When paper2md times out it answers 504 but keeps
+        # converting the abandoned file, so everything sent after it waits in its
+        # queue and times out too, a four-page abstract as much as a thesis. In
+        # size order, what follows a timeout is only larger: stop there and leave
+        # the rest as they are, rather than spend five minutes on each to fail.
+        def _size(rec):
+            try:
+                return Path(rec.full_text_path or "").stat().st_size
+            except OSError:
+                return 0
+        targets.sort(key=_size)
         total = len(targets)
         _set(workspace_id, "convert", {"status": "running", "message": f"Converting {total} PDFs…",
                                        "total": total, "done": 0, "converted": 0, "failed": 0})
         converted = failed = 0
         first_error = None
         causes: dict[str, list[int]] = {}    # error → record ids, so no cause hides behind the first
+        skipped: list[int] = []
         for i, rec in enumerate(targets):
             try:
-                if not Path(rec.full_text_path or "").stat().st_size:
+                if not _size(rec):
                     raise RuntimeError("the stored PDF is empty (0 bytes) — upload it again")
                 convert_stored_pdf(db, rec, paper2md_url)
                 converted += 1
@@ -855,24 +868,35 @@ def _run_convert(workspace_id: int, paper2md_url: str):
                 if first_error is None:
                     first_error = err
                 causes.setdefault(err, []).append(rec.id)
+                if isinstance(exc.__cause__, Paper2mdUnavailable):
+                    skipped = [r.id for r in targets[i + 1:]]
+                    _update(workspace_id, "convert", done=total, converted=converted, failed=failed)
+                    break
             _update(workspace_id, "convert", done=i + 1, converted=converted, failed=failed)
         if converted == 0 and failed > 0:
             # Nothing came back — usually paper2md is unreachable. Say so instead
             # of reporting a quiet "done" the user can't act on.
             _set(workspace_id, "convert", {
                 "status": "error",
-                "message": f"No PDFs converted ({failed} failed). paper2md at {paper2md_url} — {first_error}",
+                "message": (f"No PDFs converted ({failed} failed). paper2md at {paper2md_url} — {first_error}"
+                            + (f" {len(skipped)} larger PDFs not tried (records "
+                               f"{', '.join(map(str, skipped))})." if skipped else "")),
                 "error": first_error, "total": total, "done": total,
-                "converted": 0, "failed": failed})
+                "converted": 0, "failed": failed, "skipped": skipped})
             return
         msg = f"Done. {converted} converted, {failed} failed."
         if causes:
             msg += " " + " ".join(
                 f"{len(ids)}× {err} (records {', '.join(map(str, ids))})."
                 for err, ids in sorted(causes.items(), key=lambda kv: -len(kv[1])))
+        if skipped:
+            msg += (f" Stopped after paper2md gave up: {len(skipped)} larger PDFs not tried "
+                    f"(records {', '.join(map(str, skipped))}). Convert them once paper2md "
+                    "is free, or upload their text as .txt.")
         _set(workspace_id, "convert", {"status": "done", "message": msg,
                                        "total": total, "done": total,
                                        "converted": converted, "failed": failed,
+                                       "skipped": skipped,
                                        "causes": [{"error": e, "records": ids}
                                                   for e, ids in causes.items()]})
     except Exception as exc:
