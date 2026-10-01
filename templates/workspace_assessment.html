@@ -4,6 +4,29 @@
 {% block body %}
 {% include "_ws_tabs.html" %}
 
+{#- The same bar as on Screening, over the screen-1 included pool. "model draft"
+    says how much of it nobody has confirmed yet: here the draft decides a record
+    until a reviewer votes, so the bar alone would read as settled. -#}
+<div class="card" id="as-summary">
+  <div class="screen-progress" title="{{ counts.include }} included · {{ counts.maybe }} maybe · {{ counts.exclude }} excluded · {{ counts.conflict }} conflict · {{ counts.pending }} pending">
+    {% if counts.total > 0 %}
+    {% if counts.include %}<div class="seg seg-inc" style="width: {{ (counts.include / counts.total * 100)|round(2) }}%"></div>{% endif %}
+    {% if counts.maybe %}<div class="seg" style="width: {{ (counts.maybe / counts.total * 100)|round(2) }}%; background: var(--accent);"></div>{% endif %}
+    {% if counts.exclude %}<div class="seg seg-exc" style="width: {{ (counts.exclude / counts.total * 100)|round(2) }}%"></div>{% endif %}
+    {% if counts.conflict %}<div class="seg" style="width: {{ (counts.conflict / counts.total * 100)|round(2) }}%; background: var(--warn);"></div>{% endif %}
+    {% if counts.pending %}<div class="seg seg-pend" style="width: {{ (counts.pending / counts.total * 100)|round(2) }}%"></div>{% endif %}
+    {% endif %}
+  </div>
+  <div class="screen-legend">
+    <span><span class="dot dot-inc"></span> ✅ {{ counts.include }} included</span>
+    <span><span class="dot" style="background: var(--accent);"></span> 🤔 {{ counts.maybe }} maybe</span>
+    <span><span class="dot dot-exc"></span> ❌ {{ counts.exclude }} excluded</span>
+    <span><span class="dot" style="background: var(--warn);"></span> ⚠️ {{ counts.conflict }} conflict</span>
+    <span><span class="dot dot-pend"></span> ❓ {{ counts.pending }} to do</span>
+    <span class="muted">of {{ counts.total }}{% if drafted %} · 🤖 {{ drafted }} model draft{{ 's' if drafted != 1 else '' }} not yet reviewed{% endif %} · {{ reviewers_required }} reviewer{{ 's' if reviewers_required != 1 else '' }} required</span>
+  </div>
+</div>
+
 <div class="cards-label">Screening 2 + extraction (full text)</div>
 <div class="card">
   <p class="muted small" style="margin-top:0;">
@@ -312,7 +335,7 @@ sampleEst();
 // unfiltered one, every time. #as-form is redrawn because a saved review is a
 // draft confirmed, which is one fewer for the model to draft.
 const live = inplace({
-  regions: ['as-form', 'as-filters', 'as-table'],
+  regions: ['as-summary', 'as-form', 'as-filters', 'as-table'],
   jobs: [['as-status', 'as-btn']],
   roots: ['as-table', 'review-body'],
   lastTouch: 'as-filters',
