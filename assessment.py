@@ -81,9 +81,43 @@ def _parse(content: str) -> dict | None:
 
 # ── Validation against the field schema ────────────────────────────────────────
 
-def coerce_values(fields, raw: dict) -> dict:
+# "Name (CODE)" with an ISO-style code only: "Decrease (crowding-out reported)"
+# must not answer to a bare "Decrease", whose parenthesis carries the meaning.
+_OPTION_CODE = re.compile(r"^(.*\S)\s*\(([A-Z]{2}(?:-[A-Z0-9]{1,3})?)\)$")
+
+
+def _option_lookup(opts: list[str]) -> dict[str, str]:
+    """Every spelling the model uses for an option, folded, → the option itself.
+
+    The model writes "Netherlands" where the schema says "Netherlands (NL)", at
+    random from one run to the next: about one country in four came back that
+    way and was dropped without a word. So an option of the form "Name (CODE)",
+    CODE being a country-style code, also answers to its name. Not to the bare code: "NA" written for "not
+    available" would become Namibia. A spelling two options share answers to
+    neither: guessing between them would invent a value."""
+    seen: dict[str, set] = {}
+    for o in opts:
+        keys = {o.casefold()}
+        m = _OPTION_CODE.match(o)
+        if m:
+            keys.add(m.group(1).casefold())
+        for k in keys:
+            seen.setdefault(k, set()).add(o)
+    return {k: next(iter(v)) for k, v in seen.items() if len(v) == 1}
+
+
+def _match_option(s: str, opts: list[str], lookup: dict[str, str]) -> str | None:
+    if s in opts:
+        return s
+    return lookup.get(" ".join(s.split()).casefold())
+
+
+def coerce_values(fields, raw: dict, dropped: list | None = None) -> dict:
     """Keep only what the schema allows: known keys, valid options, numeric
-    numbers, and fields whose show_if condition holds."""
+    numbers, and fields whose show_if condition holds. A select value is
+    matched loosely (see _option_lookup); what still fits no option is
+    appended to `dropped` as (field key, value), so the caller can say so
+    instead of losing it."""
     from models import field_visible
     out = {}
     for f in fields:
@@ -91,15 +125,26 @@ def coerce_values(fields, raw: dict) -> dict:
             continue
         v = raw[f.key]
         opts = f.options()
+        lookup = _option_lookup(opts) if opts else {}
         if f.field_type == "multiselect":
             vals = [str(x).strip() for x in v] if isinstance(v, list) else [str(v).strip()]
-            vals = [x for x in vals if x and (not opts or x in opts)]
-            if vals:
-                out[f.key] = vals
+            kept = []
+            for x in filter(None, vals):
+                m = _match_option(x, opts, lookup) if opts else x
+                if m is None:
+                    if dropped is not None:
+                        dropped.append((f.key, x))
+                elif m not in kept:
+                    kept.append(m)
+            if kept:
+                out[f.key] = kept
         elif f.field_type == "select":
             s = str(v).strip()
-            if s and (not opts or s in opts):
-                out[f.key] = s
+            m = (_match_option(s, opts, lookup) if opts else s) if s else None
+            if m:
+                out[f.key] = m
+            elif s and dropped is not None:
+                dropped.append((f.key, s))
         elif f.field_type == "number":
             s = str(v).strip()
             if re.fullmatch(r"-?\d+(\.\d+)?", s):
@@ -249,10 +294,18 @@ def _run(workspace_id: int, api_key: str, user_id: int | None, rerun: bool = Fal
                 except Exception as exc:
                     decision, reason, raw_fields, i, o = "maybe", f"assessment error: {exc}", {}, 0, 0
                 rec = db.query(Record).filter(Record.id == rec_id).first()
+                values, dropped = None, []
+                if decision == "include":
+                    values = coerce_values(fields, raw_fields, dropped)
+                if dropped:
+                    # A value outside the schema is not data, but its absence is
+                    # news: say it where the reviewer reads the draft.
+                    reason = (reason + " [Dropped, not in the schema: "
+                              + "; ".join(f"{k} = {v!r}" for k, v in dropped) + "]").strip()
                 upsert_screen_decision(db, rec, "screen2", "model", None, decision, reason)
                 recompute_record_screen2(db, ws, rec)
                 if decision == "include":
-                    upsert_extraction(db, ws, rec, "model", None, coerce_values(fields, raw_fields))
+                    upsert_extraction(db, ws, rec, "model", None, values)
                     included += 1
                 elif decision == "maybe":
                     maybe += 1
