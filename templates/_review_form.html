@@ -1,6 +1,9 @@
-{# AI-assisted: when this reviewer hasn't voted yet, the model's draft decision
-   is pre-selected and its field values pre-filled — confirm or edit. #}
-{% set mydec = my_vote.decision if my_vote else (model_vote.decision if model_vote else '') %}
+{# AI-assisted: the model's field values are pre-filled — confirm or edit. Its
+   decision is shown, never pre-selected: a reviewer who saved without touching
+   the radio cast the model's vote under their own name, and draft_agreement
+   then counted it as agreement. With nothing selected, a save without a choice
+   stores the extraction and leaves the decision open. #}
+{% set mydec = my_vote.decision if my_vote else '' %}
 {% import "_earmark.html" as em %}
 <div class="review-head">
   <div>
@@ -60,10 +63,12 @@
     </div>
 
     <div class="rev-section-label">Screening 2 — include on full text?
-      {% if model_vote and not my_vote %}<span class="badge badge-muted">🤖 AI draft: {{ model_vote.decision }}</span>{% endif %}
+      {% if model_vote %}<span class="badge badge-muted">🤖 AI draft: {{ model_vote.decision }}</span>{% endif %}
     </div>
-    {% if model_vote and model_vote.reason and not my_vote %}
-    <div class="muted small" style="margin-bottom:6px; font-style:italic;">{{ model_vote.reason }}</div>
+    {#- Kept after you vote: it is what you compare yours with, and hiding it
+        made the empty reason box below read as the model having given none. -#}
+    {% if model_vote and model_vote.reason %}
+    <div class="muted small" style="margin-bottom:6px; font-style:italic;">🤖 {{ model_vote.reason }}</div>
     {% endif %}
     <div class="rev-decision">
       {% for d, em in [('include','✅ include'),('maybe','🤔 maybe'),('exclude','❌ exclude')] %}
@@ -78,7 +83,7 @@
       </label>
       {% endif %}
     </div>
-    <input type="text" name="screen2_reason" value="{{ my_vote.reason if my_vote and my_vote.reason != 'full-text review' else '' }}" placeholder="reason (optional)" style="width:100%; margin-top:6px;">
+    <input type="text" name="screen2_reason" value="{{ my_vote.reason if my_vote and my_vote.reason != 'full-text review' else '' }}" placeholder="{{ 'your reason (optional) — the model’s is above' if model_vote and model_vote.reason else 'your reason (optional)' }}" style="width:100%; margin-top:6px;">
 
     {% if other_votes | selectattr('reviewer_kind','equalto','user') | rejectattr('reviewer_id','equalto',user.id) | list %}
     <div class="muted small" style="margin-top:6px;">Others:
