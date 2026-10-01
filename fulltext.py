@@ -757,13 +757,19 @@ def _fetch_record(db, workspace_id: int, rec, email: str, keys: dict,
 # so both passes skip it. Without this a re-run keeps walking the OA ladder for
 # papers the reviewer has already dropped — and keeps them in the "to fetch" count.
 def _not_dropped_at_screen2():
-    """SQLAlchemy clause for "not excluded at screening 2", NULL-safe: a plain
-    `!= "exclude"` drops rows whose decision is NULL, which would quietly shrink
-    the pool instead of failing."""
+    """SQLAlchemy clause for "not excluded at screening 2 by a person", NULL-safe:
+    a plain `!= "exclude"` drops rows whose decision is NULL, which would quietly
+    shrink the pool instead of failing.
+
+    A model's exclusion does not count. It is a draft, and often a draft of the
+    wrong file: a systematic review whose PDF was another paper's was excluded on
+    that paper, the right PDF was uploaded, and convert then skipped it because
+    of the very exclusion the new file was meant to overturn."""
     from sqlalchemy import or_
     from models import Record
     return or_(Record.screen2_decision.is_(None),
-               Record.screen2_decision != "exclude")
+               Record.screen2_decision != "exclude",
+               Record.screen2_by == "model")
 
 
 def _run_fetch(workspace_id: int, email: str, keys: dict | None = None,
