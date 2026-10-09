@@ -3,6 +3,47 @@
   <div style="display:flex; justify-content:center; margin:8px 0 4px;">
     {{ prisma_svg(prisma, steps_done) }}
   </div>
+  {% if prisma_export %}
+  <div style="display:flex; justify-content:flex-end; gap:6px; margin:4px 0;">
+    <a class="btn btn-small" href="/w/{{ ws.id }}/prisma.svg" title="Download the diagram as an SVG file">Export SVG</a>
+    <button class="btn btn-small" type="button" id="prisma-png" data-src="/w/{{ ws.id }}/prisma.svg"
+            title="Download the diagram as a PNG image (3× resolution)">Export PNG</button>
+  </div>
+  <p class="muted small" id="prisma-png-error" role="alert" style="text-align:right; margin:0;" hidden></p>
+  <script>
+  // The PNG is drawn from the same SVG file the other button downloads, so the
+  // two cannot disagree. 3× keeps the text sharp in a slide or a Word document.
+  document.getElementById('prisma-png').addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget, label = btn.textContent;
+    const err = document.getElementById('prisma-png-error');
+    err.hidden = true;
+    btn.disabled = true; btn.textContent = 'Exporting…';
+    try {
+      const res = await fetch(btn.dataset.src, {credentials: 'same-origin'});
+      if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+      const name = ((res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/) || [, 'prisma.svg'])[1]
+                     .replace(/\.svg$/, '.png');
+      const url = URL.createObjectURL(new Blob([await res.text()], {type: 'image/svg+xml'}));
+      const img = new Image();
+      await new Promise((ok, fail) => { img.onload = ok; img.onerror = () => fail(new Error('the SVG could not be drawn')); img.src = url; });
+      const k = 3, c = document.createElement('canvas');
+      c.width = img.naturalWidth * k; c.height = img.naturalHeight * k;
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      const png = await new Promise(r => c.toBlob(r, 'image/png'));
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(png); a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch (e) {
+      err.textContent = 'PNG export failed: ' + e.message;
+      err.hidden = false;
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
+  });
+  </script>
+  {% endif %}
   {% if 'records' in steps_done %}
   <details style="margin-top:8px;">
     <summary class="muted small">exact counts</summary>

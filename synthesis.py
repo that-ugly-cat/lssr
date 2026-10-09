@@ -206,6 +206,33 @@ def _box(x, y0, w, h, lines, bold=False, boldlast=False, muted=False, dashed=Fal
     return "".join(out)
 
 
+# The light theme's values for the custom properties the diagram uses. A file
+# leaves the page and its stylesheet behind, so it carries the colours itself —
+# light, because it goes into a report or a slide, whatever theme it was saved from.
+_PRISMA_EXPORT_COLOURS = {
+    "--text": "#1a202c", "--muted": "#4a5568", "--muted-2": "#5f6a7c",
+    "--border": "#d8dee9", "--card": "#ffffff", "--card-hover": "#eef1f6",
+}
+
+
+def prisma_svg_export(prisma: dict, steps_done=None) -> str:
+    """The PRISMA diagram as a standalone SVG file: same drawing as the page,
+    with the theme variables resolved, a white background, and an intrinsic
+    size instead of the page's fluid width. Empty string when there is nothing
+    to draw."""
+    svg = str(prisma_svg(prisma, steps_done))
+    if not svg:
+        return ""
+    svg = re.sub(r"var\((--[a-z0-9-]+)\)",
+                 lambda m: _PRISMA_EXPORT_COLOURS.get(m.group(1), "#1a202c"), svg)
+    vb = re.search(r'viewBox="0 0 (\d+) (\d+)"', svg)
+    w, h = vb.group(1), vb.group(2)
+    svg = re.sub(r' style="[^"]*"', f' width="{w}" height="{h}"', svg, count=1)
+    head_end = svg.index(">") + 1
+    svg = svg[:head_end] + f'<rect width="{w}" height="{h}" fill="#ffffff"/>' + svg[head_end:]
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + svg + "\n"
+
+
 def prisma_svg(prisma: dict, steps_done=None):
     """Render the PRISMA counts as a top-to-bottom flow diagram (inline SVG).
     Colours come from the page's CSS custom properties, so it follows the theme.

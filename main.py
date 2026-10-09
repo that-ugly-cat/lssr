@@ -494,7 +494,25 @@ async def workspace_overview(ws_id: int, request: Request,
         "members": members, "shares": shares, "steps_done": workspace_steps_done(ws),
         "iterations": iterations, "iter_new": iter_new,
         "prisma": _compute_prisma(db, ws.id),
+        "prisma_export": True,
     })
+
+
+@app.get("/w/{ws_id}/prisma.svg")
+async def export_prisma_svg(ws_id: int, user: User = Depends(get_current_user),
+                            db: Session = Depends(get_db)):
+    """The Overview's PRISMA diagram as a file, as it stands now: the same live
+    counts and the same pending boxes for steps not marked done."""
+    ws = db.query(Workspace).filter(Workspace.id == ws_id).first()
+    if not ws or not can_access(db, user, ws):
+        raise HTTPException(404, "Workspace not found")
+    from synthesis import prisma_svg_export
+    svg = prisma_svg_export(_compute_prisma(db, ws.id), workspace_steps_done(ws))
+    if not svg:
+        raise HTTPException(404, "Nothing to draw yet")
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", (ws.name or "workspace")).strip("_")[:60] or "workspace"
+    return Response(content=svg, media_type="image/svg+xml",
+                    headers={"Content-Disposition": f'attachment; filename="{safe}-prisma.svg"'})
 
 
 @app.post("/w/{ws_id}/steps/{step}/toggle")
